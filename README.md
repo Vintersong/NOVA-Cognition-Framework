@@ -1,5 +1,3 @@
-# NOVA-Cognition-Framework
-Stateless recursive architecture for emergent cognition using LLMs
 # NOVA: Stateless Recursive Cognition Framework
 
 This repository documents NOVA — a recursive, stateless cognitive system that simulates memory, executive function, and self-reflection using language models (LLMs) without persistent storage.
@@ -19,11 +17,12 @@ NOVA emerged as a coping structure for nonlinear cognition (ADHD) and evolved in
 - Metacognition simulation
 
 ## 📄 Key Files
-- [`NOVA Framework.pdf`](./NOVA%20Framework.pdf) – Core whitepaper
-- [`Unified Consciousness Diagram.pdf`](./Unified%20Consciousness%20Diagram.pdf) – Theory integration
-- [`Executive Summary.pdf`](./Executive%20Summary.pdf) – TL;DR for quick review
-- [`Pitch Deck`](./NOVA_Pitch_Deck.pptx) – Visual walkthrough
-- [`CV - Andrei Moldovean.pdf`](./CV%20-%20Andrei%20Moldovean.pdf) – My academic/professional background
+- [`NOVA Framework.pdf`](./NOVA%20Framework.pdf) – Core whitepaper outlining the architecture and cognitive scaffolding
+- [`Unified Consciousness Diagram.pdf`](./Unified%20Consciousness%20Diagram.pdf) – Visual synthesis of theoretical integration
+- [`Unified Consciousness Model.pdf`](./Unified%20Consciousness%20Model.pdf) – Detailed mapping of framework to major cognitive theories
+- [`Executive Summary.pdf`](./Executive%20Summary.pdf) – TL;DR for high-level reviewers
+- [`NOVA_Pitch_Deck.pptx`](./NOVA_Pitch_Deck.pptx) – Visual walkthrough for presentations and outreach
+- [`NOVA Shard Memory Architecture.pdf`](./NOVA%20Shard%20Memory%20Architecture.pdf) *(optional)* – Deep-dive into recursive memory simulation
 
 ## 💡 Application Context
 This repository was created in support of my application to OpenAI’s Applied AI Research Engineer role. I hope it demonstrates both the originality and functional viability of this recursive cognitive architecture.
