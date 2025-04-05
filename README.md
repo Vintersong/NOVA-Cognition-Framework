@@ -25,7 +25,7 @@ NOVA emerged as a coping structure for nonlinear cognition (ADHD) and evolved in
 - [`NOVA Shard Memory Architecture.pdf`](./NOVA%20Shard%20Memory%20Architecture.pdf) *(optional)* – Deep-dive into recursive memory simulation
 
 ## 💡 Application Context
-This repository was created in support of my application to OpenAI’s Applied AI Research Engineer role. I hope it demonstrates both the originality and functional viability of this recursive cognitive architecture.
+This repository was created to showcase NOVA, a recursive cognitive architecture that demonstrates both originality and functional viability. My goal is to introduce this innovative concept to organizations exploring the future of AI, highlighting its potential to advance adaptive reasoning processes in AI systems.
 
 ---
 
