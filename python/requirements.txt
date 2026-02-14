@@ -1,3 +1,7 @@
+# NOVA — Core dependencies
 fastapi
 uvicorn
 openai
+python-dotenv
+pydantic>=2.0.0
+numpy
