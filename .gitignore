@@ -1,0 +1,11 @@
+.env
+.mcp.json
+__pycache__/
+*.pyc
+*.pyo
+shard_index.json
+shard_graph.json
+nova_usage.jsonl
+shards/
+*.pdf
+*.pptx

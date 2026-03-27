@@ -8,10 +8,15 @@ by the MCP server for search/list operations.
 
 import os
 import json
+from pathlib import Path
 from datetime import datetime, timedelta
 
-SHARD_DIR = os.environ.get("NOVA_SHARD_DIR", "shards")
-INDEX_FILE = os.environ.get("NOVA_INDEX_FILE", "shard_index.json")
+# Anchor defaults to repo root (two levels up from python/) so the script
+# works correctly regardless of the working directory it's run from.
+_REPO_ROOT = Path(__file__).parent.parent
+
+SHARD_DIR = os.environ.get("NOVA_SHARD_DIR", str(_REPO_ROOT / "shards"))
+INDEX_FILE = os.environ.get("NOVA_INDEX_FILE", str(_REPO_ROOT / "shard_index.json"))
 
 
 def load_shard_file(filepath: str) -> dict | None:

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__nova__nova_shard_consolidate",
+      "Read(//c/Users/Moldo/.claude/**)",
+      "Read(//c/Users/Moldo/**)"
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "version": "1.0",
+  "description": "[Short description of what these hooks do]",
+  "hooks": {
+    "SessionStart": [
+      {
+        "id": "session-start-[purpose]",
+        "description": "[What this hook does on session start]",
+        "matcher": "[regex or keyword pattern]",
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/[script-name].cmd [args]",
+        "async": false,
+        "timeout_ms": 5000,
+        "conditions": {
+          "require_files": [],
+          "env_vars": []
+        }
+      }
+    ],
+    "PreToolCall": [],
+    "PostToolCall": [],
+    "OnFileEdit": [],
+    "OnError": [],
+    "SessionEnd": []
+  }
+}

@@ -1,135 +1,91 @@
-# NOVA: Stateless Recursive Cognition Framework
+# NOVA-Cognition-Framework
 
-**NOVA** (Non-Organic Virtual Architecture) is a modular, stateless cognition system that externalizes memory into discrete, revisitable units called *shards* -- enabling language models to simulate working memory, executive function, and self-reflection without persistent memory or built-in context retention.
-
-**Core design principle**: Structure over processing power. Intelligence emerges from recursive interaction with well-organized modular memory, not from larger models or longer context windows.
-
-First implemented in April 2025. Built on stateless ChatGPT with no memory between sessions -- the constraint that forced the invention.
+A unified repository containing **NOVA** (persistent AI memory) and **Forgemaster** (multi-agent orchestration). NOVA is the memory layer. Forgemaster is the execution layer. They share one repo and one data store.
 
 ---
 
-## Architecture
+## What is NOVA?
 
-NOVA operates through three components:
+NOVA is a persistent memory system for AI agents. It stores conversations and decisions as modular JSON "shards" — each with metadata, confidence scores, and decay rates. A knowledge graph tracks relationships between shards so agents can retrieve contextually relevant memory, not just recent history.
 
-**Shards** are modular memory containers. Each shard is a JSON file holding a focused topic -- a conversation thread, a project state, a reflection, a decision, or a knowledge fragment. Shards carry metadata (intent, theme, usage count, timestamps) and can be enriched with semantic embeddings for retrieval.
+NOVA runs as an MCP server, meaning any MCP-compatible client (Claude Desktop, Claude Code, Cursor) can connect to it and query/write memory using structured tool calls.
 
-**The Processor** is the LLM. Stateless by design. It interprets and synthesizes based on whichever shards are loaded into context, then writes results back. The processor adds depth, not permanence.
-
-**The User** is the executive function. The user decides which shards to load, when to create new ones, when to merge or archive. Without the user, NOVA is inert.
-
-```
-User (executive function)
-  --> selects shards
-Shard System (modular memory)
-  --> loaded into context
-LLM Processor (stateless reasoning)
-  --> synthesizes and updates
-Evolved Shards (recursion)
-```
+**Key capabilities:**
+- Store and retrieve memory shards with semantic search
+- Confidence-weighted recall with time-based decay
+- Automatic deduplication and shard consolidation
+- Knowledge graph of shard relationships
+- Usage logging for memory health monitoring
 
 ---
 
-## Shard Schema
+## What is Forgemaster?
 
-```json
-{
-  "shard_id": "unique identifier derived from filename",
-  "guiding_question": "the core question or purpose this shard serves",
-  "conversation_history": [
-    {
-      "timestamp": "ISO 8601",
-      "user": "user message",
-      "ai": "AI response"
-    }
-  ],
-  "meta_tags": {
-    "intent": "cognitive function (reflection, planning, research, brainstorm, archive)",
-    "theme": "domain (game_design, philosophy, career, technical)",
-    "usage_count": 0,
-    "last_used": "ISO 8601"
-  },
-  "context": {
-    "summary": "GPT-generated summary (via context_extractor)",
-    "topics": ["topic tags"],
-    "conversation_type": "e.g., debugging, philosophy, design",
-    "embedding": [0.012, -0.034, "... ada-002 vector"],
-    "last_context_update": "ISO 8601"
-  }
-}
+Forgemaster is a multi-agent orchestration layer built on top of NOVA. It decomposes tasks into typed tickets and routes each to the optimal model — Claude for architecture and review, Gemini Flash for implementation and boilerplate, GPT-4o for research and documentation.
+
+Agents run in parallel sandboxed lanes and return results as PRs for human review. NOVA is Forgemaster's memory backplane: every sprint reads project context from shards and writes decisions back.
+
+**Key capabilities:**
+- Task decomposition from design docs
+- Model routing by task type
+- Parallel sandboxed execution lanes
+- Human-in-the-loop at design, plan, and PR stages
+- Full NOVA integration for persistent project context
+
+---
+
+## How They Connect
+
+```
+You (design doc / feature request)
+        │
+        ▼
+  Forgemaster Orchestrator
+  ├── loads NOVA shards (project context)
+  ├── decomposes into typed tickets
+  ├── routes tickets to optimal models
+  │       ├── claude-sonnet  → architecture, review
+  │       ├── gemini-flash   → implementation, boilerplate
+  │       └── gpt-4o         → research, documentation
+  ├── agents execute in parallel lanes
+  ├── results returned as PRs
+  └── decisions written back to NOVA shards
 ```
 
 ---
 
-## Repository Structure
+## Quick Start
 
-```
-/
-  python/                   Original FastAPI implementation (April 2025)
-    main.py                 FastAPI server: /interact, /create_shard, /search, /list_shards
-    shard_index.py          Unified index manager: metadata, tag classification, search
-    context_extractor.py    Semantic enrichment: GPT-4 summaries + ada-002 embeddings
-    dedup_json.py           Duplicate shard detection and removal
-    rename_shards.py        Filename normalization (one-time migration)
-    requirements.txt        Python dependencies
-
-  mcp/                      MCP server translation (current direction)
-    nova_server.py          7 tools + 2 resources via Model Context Protocol
-    SKILL.md                Cognitive architecture instructions for LLMs
-    requirements.txt        MCP dependencies
-
-  NOVA Framework.pdf        White paper
-  Executive Summary.pdf     Overview document
-  NOVA Shard Memory Architectur.pdf
-  Unified Conciousness Model.pdf
-  Unified Conciousness Diagram.pdf
-  NOVA_Pitch_Deck.pptx      Pitch deck
-```
-
----
-
-## Two Implementations
-
-### FastAPI Server (python/main.py)
-
-The original implementation. Runs as a web service, calls OpenAI directly for completion, and manages shards via REST endpoints. The LLM lives inside the server.
-
-Endpoints: `/interact`, `/create_shard`, `/search`, `/list_shards`
-
-Features: auto-select shards via semantic search (cosine similarity on embeddings with token overlap fallback), usage tracking, citation validation, placeholder shard generation.
+### 1. Install dependencies
 
 ```bash
-cd python
+cd mcp/
 pip install -r requirements.txt
-# Requires OPENAI_API_KEY in .env
-uvicorn main:app --reload
 ```
 
-### MCP Server (mcp/nova_server.py)
-
-The current direction. Exposes the shard system as tools that any MCP-compatible LLM client can discover and call natively. No OpenAI dependency -- the server manages shards, the connected LLM handles reasoning. This is the cleaner architecture because it decouples memory from processing.
-
-Tools: `nova_shard_interact`, `nova_shard_create`, `nova_shard_update`, `nova_shard_search`, `nova_shard_list`, `nova_shard_merge`, `nova_shard_archive`
-
-Resources: `nova://skill` (SKILL.md), `nova://index` (shard index)
+### 2. Configure environment
 
 ```bash
-cd mcp
-pip install -r requirements.txt
-python nova_server.py
+cp .env.example .env
+# Edit .env and set your OPENAI_API_KEY
 ```
 
-Claude Desktop / Claude Code configuration:
+### 3. Run the NOVA MCP server
+
+```bash
+python mcp/nova_server_v2.py
+```
+
+### 4. Connect a client
+
+Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "nova": {
       "command": "python",
-      "args": ["/path/to/mcp/nova_server.py"],
-      "env": {
-        "NOVA_SHARD_DIR": "/path/to/your/shards"
-      }
+      "args": ["path/to/mcp/nova_server_v2.py"]
     }
   }
 }
@@ -137,39 +93,69 @@ Claude Desktop / Claude Code configuration:
 
 ---
 
-## Utility Scripts
+## Directory Structure
 
-**context_extractor.py** -- Enriches shards with GPT-4 generated summaries, topic tags, and ada-002 embedding vectors. These embeddings power semantic search in both the FastAPI and MCP servers. Run periodically or after adding new shards. Skips already-enriched shards unless `--force` is passed.
-
-**dedup_json.py** -- Hashes shard conversation content to detect exact duplicates. Supports `--dry-run` to preview before deleting.
-
-**rename_shards.py** -- Normalizes shard filenames to match their shard_id, theme, or guiding question. One-time migration tool. Supports `--dry-run`.
+```
+NOVA-Cognition-Framework/
+  mcp/
+    nova_server_v2.py       ← active MCP server (11 tools)
+    SKILL_v2.md             ← active cognitive instructions
+    requirements.txt
+    nova_server.py          ← v1 reference (do not delete)
+    SKILL.md                ← v1 reference (do not delete)
+  python/
+    shard_index.py          ← index management (used by v2)
+    context_extractor.py    ← batch semantic enrichment
+    dedup_json.py
+    rename_shards.py
+    main.py
+  shards/                   ← live shard data (do not modify manually)
+  forgemaster/
+    AGENTS.md               ← global agent config and routing rules
+    skills/
+      forgemaster-orchestrator.md
+      forgemaster-parallel-lanes.md
+      forgemaster-writing-plans.md
+      forgemaster-implementation.md
+      forgemaster-systematic-debugging.md
+      forgemaster-verification.md
+      forgemaster-git-workflow.md
+      forgemaster-code-review.md
+      forgemaster-nova-session-handoff.md
+  tools/
+    chatgpt_to_nova.py      ← ChatGPT export migration script
+  shard_index.json          ← auto-generated (do not commit)
+  shard_graph.json          ← auto-generated (do not commit)
+  nova_usage.jsonl          ← auto-generated (do not commit)
+  .env                      ← your secrets (do not commit)
+  .env.example              ← template (committed)
+  .gitignore
+  README.md
+```
 
 ---
 
-## Theoretical Foundations
+## NOVA MCP Tools (v2)
 
-NOVA draws from the Extended Mind Thesis (Clark & Chalmers), Free Energy Principle (Friston), Integrated Information Theory (Tononi), Enactivism and Autopoiesis (Varela & Maturana), Shard Theory (Pope & Turner), and Distributed Cognition (Hutchins).
-
-The framework was originally developed as a cognitive scaffold for managing nonlinear thought patterns (ADHD, aphantasia), then formalized into a general architecture for stateless AI cognition.
-
----
-
-## Industry Convergence
-
-NOVA's architecture -- modular memory with metadata-tagged retrieval, stateless processors, and usage-based relevance -- predates and parallels several developments in the AI industry.
-
-Google's Interactions API (December 2025) shipped persistent sessions via interaction IDs, server-side state management, and rejection of the monolithic context pattern. NOVA implemented these features eight months earlier. The broader research consensus has since converged on modular AI agents with segmented memory as the path forward for scalable, coherent long-term interaction.
-
-The core insight remains the same: the constraint of statelessness is not a limitation to work around. It is the correct architecture. The processor should be stateless. Memory should be external, modular, and retrievable.
-
----
-
-## Contact
-
-**Andrei Moldovean**
-moldovean.i.andrei@gmail.com
+| Tool | Description |
+|---|---|
+| `nova_shard_interact` | Query shards by semantic similarity |
+| `nova_shard_update` | Write or update a shard |
+| `nova_shard_consolidate` | Merge and prune low-confidence shards |
+| `nova_shard_list` | List all shards with metadata |
+| `nova_shard_delete` | Remove a shard by ID |
+| `nova_graph_query` | Traverse the knowledge graph |
+| `nova_graph_link` | Create a relationship between shards |
+| `nova_index_rebuild` | Rebuild the full shard index |
+| `nova_usage_log` | View recent tool usage |
+| `nova_health_check` | Memory health summary |
+| `nova_shard_search` | Full-text search across shard content |
 
 ---
 
-> "AI doesn't need to remember everything -- it needs to remember what matters."
+## Notes
+
+- Never manually edit files in `shards/` — always go through the MCP tools
+- `shard_index.json`, `shard_graph.json`, and `nova_usage.jsonl` are auto-generated and should not be committed
+- `.env` contains your OpenAI key — never commit it
+- `nova_server.py` and `SKILL.md` are kept as v1 reference — do not delete

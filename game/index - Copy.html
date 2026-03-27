@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NETRUNNER // AUTOBATTLE</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg:           #07090f;
+  --surface:      #0d1117;
+  --surface-2:    #111827;
+  --cyan:         #00e5ff;
+  --magenta:      #ff0080;
+  --gold:         #ffd700;
+  --green:        #00ff88;
+  --purple:       #bd00ff;
+  --edgecraft:    #ff2d78;
+  --ballistic:    #ffd700;
+  --ciphernetics: #00e5ff;
+  --mobility:     #bd00ff;
+  --text:         #e2e8f0;
+  --text-dim:     #4a5568;
+  --border:       rgba(0,229,255,0.12);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Rajdhani', sans-serif;
+  height: 100vh;
+  overflow: hidden;
+  background-image:
+    linear-gradient(rgba(0,229,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,255,0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 999;
+}
+
+#game {
+  display: grid;
+  grid-template-rows: 48px 1fr 1fr auto auto;
+  height: 100vh;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 10px;
+  gap: 6px;
+}
+
+/* ── HUD ── */
+#hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.hud-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--cyan);
+  text-shadow: 0 0 20px var(--cyan);
+  letter-spacing: 4px;
+  cursor: default;
+}
+.hud-title:hover { animation: glitch 0.3s steps(2) infinite; }
+
+.hud-stats { display: flex; gap: 28px; align-items: center; }
+
+.stat-block { display: flex; flex-direction: column; align-items: center; }
+.stat-label { font-size: 9px; color: var(--text-dim); letter-spacing: 2px; text-transform: uppercase; }
+.stat-value { font-family: 'Orbitron', monospace; font-size: 15px; font-weight: 700; }
+.stat-value.gold    { color: var(--gold);    text-shadow: 0 0 10px var(--gold); }
+.stat-value.hp      { color: var(--green);   text-shadow: 0 0 10px var(--green); }
+.stat-value.round   { color: var(--cyan);    text-shadow: 0 0 10px var(--cyan); }
+.stat-value.enemyhp { color: var(--magenta); text-shadow: 0 0 10px var(--magenta); }
+
+.phase-indicator {
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  letter-spacing: 3px;
+  padding: 4px 14px;
+  border-radius: 2px;
+}
+.phase-indicator.shop   { color: var(--gold);    border: 1px solid var(--gold);    box-shadow: 0 0 10px rgba(255,215,0,0.25); }
+.phase-indicator.battle { color: var(--magenta); border: 1px solid var(--magenta); box-shadow: 0 0 10px rgba(255,0,128,0.25); animation: blink 0.6s infinite; }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* ── BOARDS ── */
+.board-zone {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.zone-label { font-size: 9px; letter-spacing: 3px; text-transform: uppercase; }
+.zone-label.enemy  { color: rgba(255,0,128,0.5); }
+.zone-label.player { color: rgba(0,229,255,0.5); }
+
+.card-slots {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── CARDS ── */
+.card {
+  width: 108px;
+  min-height: 148px;
+  background: var(--surface-2);
+  border-radius: 5px;
+  border: 1px solid;
+  padding: 7px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.card:hover { transform: translateY(-5px); }
+
+.card.edgecraft    { border-color: var(--edgecraft);    box-shadow: 0 0 8px rgba(255,45,120,0.3); }
+.card.ballistic    { border-color: var(--ballistic);    box-shadow: 0 0 8px rgba(255,215,0,0.3); }
+.card.ciphernetics { border-color: var(--ciphernetics); box-shadow: 0 0 8px rgba(0,229,255,0.3); }
+.card.mobility     { border-color: var(--mobility);     box-shadow: 0 0 8px rgba(189,0,255,0.3); }
+
+.card.edgecraft:hover    { box-shadow: 0 0 22px rgba(255,45,120,0.7); }
+.card.ballistic:hover    { box-shadow: 0 0 22px rgba(255,215,0,0.7); }
+.card.ciphernetics:hover { box-shadow: 0 0 22px rgba(0,229,255,0.7); }
+.card.mobility:hover     { box-shadow: 0 0 22px rgba(189,0,255,0.7); }
+
+.card.selected {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  transform: translateY(-5px);
+}
+
+.card-cost {
+  position: absolute;
+  top: 4px; right: 4px;
+  background: rgba(255,215,0,0.1);
+  border: 1px solid rgba(255,215,0,0.4);
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-family: 'Orbitron', monospace;
+  font-size: 8px;
+  color: var(--gold);
+}
+.card.enemy .card-cost { display: none; }
+
+.card-art {
+  height: 56px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  margin-bottom: 2px;
+  position: relative;
+  overflow: hidden;
+}
+.card.edgecraft    .card-art { background: linear-gradient(135deg,#1a0010,#3d0020); }
+.card.ballistic    .card-art { background: linear-gradient(135deg,#1a1200,#3d2a00); }
+.card.ciphernetics .card-art { background: linear-gradient(135deg,#001519,#003040); }
+.card.mobility     .card-art { background: linear-gradient(135deg,#0a001a,#200048); }
+
+.card-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    45deg, transparent, transparent 6px,
+    rgba(255,255,255,0.02) 6px, rgba(255,255,255,0.02) 7px
+  );
+}
+
+.card-class-tag {
+  font-size: 7px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-weight: 700;
+  opacity: 0.7;
+}
+.card.edgecraft    .card-class-tag { color: var(--edgecraft); }
+.card.ballistic    .card-class-tag { color: var(--ballistic); }
+.card.ciphernetics .card-class-tag { color: var(--ciphernetics); }
+.card.mobility     .card-class-tag { color: var(--mobility); }
+
+.card-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.card-ability {
+  font-size: 9px;
+  color: var(--text-dim);
+  line-height: 1.3;
+  flex: 1;
+}
+.card-ability-name { font-weight: 700; color: var(--text); font-size: 8px; }
+
+.card-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+
+.cstat { display: flex; align-items: center; gap: 3px; font-family: 'Orbitron', monospace; font-size: 12px; font-weight: 700; }
+.cstat.atk { color: var(--magenta); }
+.cstat.hp  { color: var(--green); }
+
+.card-hp-bar {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(0,255,136,0.1);
+  border-radius: 0 0 5px 5px;
+  overflow: hidden;
+}
+.card-hp-fill {
+  height: 100%;
+  background: var(--green);
+  transition: width 0.4s;
+  box-shadow: 0 0 5px var(--green);
+}
+
+/* ── EMPTY SLOT ── */
+.card-slot {
+  width: 108px;
+  min-height: 148px;
+  border: 1px dashed rgba(0,229,255,0.12);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0,229,255,0.1);
+  font-size: 22px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.card-slot:hover { border-color: rgba(0,229,255,0.35); color: rgba(0,229,255,0.25); }
+
+/* ── SHOP ── */
+#shop-area {
+  background: var(--surface);
+  border: 1px solid rgba(255,215,0,0.15);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+
+.shop-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.shop-label { font-family: 'Orbitron', monospace; font-size: 9px; letter-spacing: 3px; color: var(--gold); }
+
+#shop-cards { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── HAND ── */
+#hand-area {
+  background: var(--surface);
+  border: 1px solid rgba(0,229,255,0.08);
+  border-radius: 4px;
+  padding: 8px 12px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.hand-label { font-size: 9px; letter-spacing: 3px; color: var(--text-dim); white-space: nowrap; }
+#hand-cards { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; align-items: center; }
+.hand-actions { display: flex; flex-direction: column; gap: 5px; }
+.sell-hint { font-size: 9px; color: var(--text-dim); text-align: center; }
+
+/* ── BUTTONS ── */
+.btn {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  padding: 5px 14px;
+  border-radius: 3px;
+  border: none;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  background: transparent;
+}
+.btn-cyan    { border: 1px solid var(--cyan);    color: var(--cyan); }
+.btn-cyan:hover    { background: rgba(0,229,255,0.1); box-shadow: 0 0 14px rgba(0,229,255,0.3); }
+.btn-magenta { border: 1px solid var(--magenta); color: var(--magenta); }
+.btn-magenta:hover { background: rgba(255,0,128,0.1); box-shadow: 0 0 14px rgba(255,0,128,0.3); }
+.btn-gold    { border: 1px solid var(--gold);    color: var(--gold); }
+.btn-gold:hover    { background: rgba(255,215,0,0.1); box-shadow: 0 0 14px rgba(255,215,0,0.3); }
+.btn-green   { border: 1px solid var(--green);   color: var(--green); }
+.btn-green:hover   { background: rgba(0,255,136,0.1); box-shadow: 0 0 14px rgba(0,255,136,0.3); }
+.btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+
+/* ── BATTLE LOG ── */
+#battle-log {
+  position: fixed;
+  right: 10px; top: 60px;
+  width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: rgba(7,9,15,0.92);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  display: none;
+  z-index: 100;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cyan) transparent;
+}
+#battle-log.visible { display: block; }
+.log-head { font-size: 9px; letter-spacing: 2px; color: var(--cyan); margin-bottom: 6px; }
+.log-entry { font-size: 10px; color: var(--text-dim); padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); line-height: 1.4; }
+.log-entry.dmg     { color: var(--magenta); }
+.log-entry.heal    { color: var(--green); }
+.log-entry.ability { color: var(--cyan); }
+.log-entry.dead    { color: #444; text-decoration: line-through; }
+.log-entry.header  { color: rgba(255,215,0,0.8); font-weight: 700; }
+
+/* ── OVERLAY ── */
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7,9,15,0.88);
+  z-index: 500;
+}
+#overlay.visible { display: flex; }
+
+.msg-box {
+  background: var(--surface);
+  border: 1px solid var(--cyan);
+  box-shadow: 0 0 50px rgba(0,229,255,0.15), inset 0 0 40px rgba(0,229,255,0.04);
+  border-radius: 6px;
+  padding: 36px 52px;
+  text-align: center;
+  max-width: 420px;
+}
+.msg-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--cyan);
+  text-shadow: 0 0 20px var(--cyan);
+  margin-bottom: 10px;
+  letter-spacing: 4px;
+}
+.msg-body { font-size: 14px; color: var(--text-dim); margin-bottom: 24px; line-height: 1.7; }
+
+/* ── ANIMATIONS ── */
+@keyframes glitch {
+  0%,100% { transform: none; clip-path: none; }
+  33%  { transform: translateX(-3px); clip-path: rect(10px,9999px,25px,0); }
+  66%  { transform: translateX(3px);  clip-path: rect(50px,9999px,65px,0); }
+}
+@keyframes dmg-flash {
+  0%,100% { filter: none; }
+  50%     { filter: brightness(2) saturate(3); }
+}
+@keyframes card-die {
+  to { opacity: 0; transform: scale(0.5) rotate(12deg); filter: blur(4px); }
+}
+.taking-damage { animation: dmg-flash 0.25s 2; }
+.dying         { animation: card-die 0.45s forwards; }
+
+/* ── EMPTY HAND TEXT ── */
+.empty-text { font-size: 11px; letter-spacing: 2px; color: var(--text-dim); padding: 10px; }
+</style>
+</head>
+<body>
+
+<div id="game">
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="hud-title">NETRUNNER//COMBAT</div>
+    <div class="hud-stats">
+      <div class="stat-block">
+        <div class="stat-label">Round</div>
+        <div class="stat-value round" id="d-round">1</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Gold</div>
+        <div class="stat-value gold" id="d-gold">4 ¥</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Your HP</div>
+        <div class="stat-value hp" id="d-hp">25</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Enemy HP</div>
+        <div class="stat-value enemyhp" id="d-ehp">25</div>
+      </div>
+    </div>
+    <div class="phase-indicator shop" id="d-phase">// SHOP PHASE //</div>
+  </div>
+
+  <!-- Enemy Board -->
+  <div class="board-zone">
+    <div class="zone-label enemy">// ENEMY BOARD //</div>
+    <div class="card-slots" id="enemy-board">
+      <div class="empty-text">// ENEMY UNITS HIDDEN UNTIL COMBAT //</div>
+    </div>
+  </div>
+
+  <!-- Player Board -->
+  <div class="board-zone">
+    <div class="zone-label player">// YOUR BOARD — click slot to place selected card //</div>
+    <div class="card-slots" id="player-board"></div>
+  </div>
+
+  <!-- Shop -->
+  <div id="shop-area">
+    <div class="shop-header">
+      <div class="shop-label">// MARKETPLACE //</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-gold" id="refresh-btn" onclick="refreshShop()">⟳ REFRESH (1¥)</button>
+        <button class="btn btn-green" id="battle-btn" onclick="startBattle()">▶ START COMBAT</button>
+      </div>
+    </div>
+    <div id="shop-cards"></div>
+  </div>
+
+  <!-- Hand -->
+  <div id="hand-area">
+    <div class="hand-label">// HAND //</div>
+    <div id="hand-cards"></div>
+    <div class="hand-actions" id="hand-actions"></div>
+  </div>
+
+</div>
+
+<!-- Battle Log -->
+<div id="battle-log">
+  <div class="log-head">// COMBAT LOG //</div>
+</div>
+
+<!-- Overlay -->
+<div id="overlay">
+  <div class="msg-box">
+    <div class="msg-title" id="msg-title">ROUND COMPLETE</div>
+    <div class="msg-body"  id="msg-body">Combat resolved.</div>
+    <button class="btn btn-cyan" id="msg-btn" onclick="dismissOverlay()">CONTINUE //</button>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+//  CARD DATA
+// ─────────────────────────────────────────────
+const ICONS  = { edgecraft:'⚔️', ballistic:'🎯', ciphernetics:'🔮', mobility:'⚡' };
+const LABELS = { edgecraft:'EDGECRAFT', ballistic:'BALLISTIC PROTOCOLS', ciphernetics:'CIPHERNETICS', mobility:'CYBER MOBILITY' };
+
+const POOL = [
+  // Edgecraft
+  { id:'blade_dancer',    name:'Blade Dancer',   cls:'edgecraft',    atk:3, hp:3, ability:'BLADE DANCE',      desc:'Strikes twice per combat turn', cost:3 },
+  { id:'mono_slicer',     name:'Mono Slicer',    cls:'edgecraft',    atk:2, hp:4, ability:'VIRAL EDGE',       desc:'Applies -1 poison after each hit', cost:2 },
+  { id:'kinetic_striker', name:'Kinetic Striker',cls:'edgecraft',    atk:5, hp:2, ability:'KINETIC EDGE',     desc:'+1 ATK each kill', cost:4 },
+  // Ballistic
+  { id:'burst_trooper',   name:'Burst Trooper',  cls:'ballistic',    atk:4, hp:2, ability:'CTRL BURST',       desc:'Deals 1 splash to all enemies', cost:3 },
+  { id:'quickload',       name:'Quickload',      cls:'ballistic',    atk:2, hp:3, ability:'QUICKLOAD',        desc:'Bonus attack on kill', cost:2 },
+  { id:'prec_ghost',      name:'Prec. Ghost',    cls:'ballistic',    atk:3, hp:3, ability:'PRECISION',        desc:'25% chance to crit (double DMG)', cost:4 },
+  // Ciphernetics
+  { id:'data_ghost',      name:'Data Ghost',     cls:'ciphernetics', atk:1, hp:5, ability:'GHOST MODE',       desc:'Negates the very first hit taken', cost:3 },
+  { id:'neural_hacker',   name:'Neural Hacker',  cls:'ciphernetics', atk:2, hp:3, ability:'NEURAL PARASITE',  desc:'Drains 1 HP extra per hit', cost:2 },
+  { id:'overload_unit',   name:'Overload Unit',  cls:'ciphernetics', atk:3, hp:2, ability:'OVERLOAD',         desc:'Stuns attacker 1 turn on death', cost:4 },
+  // Mobility
+  { id:'phantom_runner',  name:'Phantom Runner', cls:'mobility',     atk:2, hp:4, ability:'PHANTOM DASH',     desc:'30% chance to evade each hit', cost:3 },
+  { id:'temporal_agent',  name:'Temporal Agent', cls:'mobility',     atk:3, hp:2, ability:'TEMPORAL DRIFT',   desc:'Always attacks before enemies', cost:4 },
+  { id:'swift_runner',    name:'Swift Runner',   cls:'mobility',     atk:1, hp:6, ability:'SWIFT STRIDE',     desc:'+1 ATK each time it evades', cost:2 },
+  // Gemini Worker batch 1
+  { id:'chrome_crusader', name:'Chrome Crusader', cls:'edgecraft',    atk:4, hp:7, ability:'SUNDER ARMOR',   desc:"Each hit reduces target's ATK by 1 (stacks)", cost:3 },
+  { id:'sniper_drone',    name:'Sniper Drone',    cls:'ballistic',    atk:3, hp:5, ability:'OVERWATCH',      desc:'Skips attack — gains +3 ATK next turn', cost:2 },
+  { id:'net_weaver',      name:'Net Weaver',      cls:'ciphernetics', atk:2, hp:6, ability:'SYSTEM SHOCK',   desc:'Every 3rd attack stuns target for 1 turn', cost:4 },
+];
+
+let _uid = 0;
+function clone(card) {
+  return { ...card, uid: ++_uid, cur: card.hp, max: card.hp, fx: [] };
+}
+function rand(pool) { return clone(pool[Math.floor(Math.random() * pool.length)]); }
+
+// ─────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────
+let G = {
+  phase:   'shop',
+  round:   1,
+  gold:    4,
+  pHp:     25,
+  eHp:     25,
+  board:   [null,null,null,null,null],  // player board slots
+  hand:    [],
+  shop:    [],
+  eboard:  null,   // enemy board (only during battle)
+  sel:     null,   // selected hand index
+};
+
+// ─────────────────────────────────────────────
+//  RENDER
+// ─────────────────────────────────────────────
+function cardEl(card, ctx) {
+  const d = document.createElement('div');
+  d.className = `card ${card.cls}`;
+  d.dataset.uid = card.uid;
+  const pct = Math.max(0, (card.cur / card.max) * 100);
+  d.innerHTML = `
+    <div class="card-cost">${card.cost}¥</div>
+    <div class="card-art">${ICONS[card.cls]}</div>
+    <div class="card-class-tag">${LABELS[card.cls]}</div>
+    <div class="card-name">${card.name}</div>
+    <div class="card-ability">
+      <span class="card-ability-name">${card.ability}</span><br>${card.desc}
+    </div>
+    <div class="card-stats">
+      <div class="cstat atk">⚔ ${card.atk}</div>
+      <div class="cstat hp">♥ ${card.cur}</div>
+    </div>
+    <div class="card-hp-bar"><div class="card-hp-fill" style="width:${pct}%"></div></div>`;
+  return d;
+}
+
+function slotEl(i) {
+  const d = document.createElement('div');
+  d.className = 'card-slot';
+  d.dataset.slot = i;
+  d.textContent = '+';
+  d.onclick = () => placeCard(i);
+  return d;
+}
+
+function render() {
+  document.getElementById('d-round').textContent = G.round;
+  document.getElementById('d-gold').textContent  = `${G.gold} ¥`;
+  document.getElementById('d-hp').textContent    = G.pHp;
+  document.getElementById('d-ehp').textContent   = G.eHp;
+
+  const phEl = document.getElementById('d-phase');
+  if (G.phase === 'shop') {
+    phEl.className = 'phase-indicator shop';
+    phEl.textContent = '// SHOP PHASE //';
+  } else {
+    phEl.className = 'phase-indicator battle';
+    phEl.textContent = '// BATTLE //';
+  }
+
+  // Player board
+  const pb = document.getElementById('player-board');
+  pb.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    if (G.board[i]) {
+      const el = cardEl(G.board[i], 'board');
+      el.onclick = () => returnToHand(i);
+      pb.appendChild(el);
+    } else {
+      pb.appendChild(slotEl(i));
+    }
+  }
+
+  // Enemy board
+  const eb = document.getElementById('enemy-board');
+  eb.innerHTML = '';
+  if (G.eboard) {
+    G.eboard.forEach(c => {
+      const el = cardEl(c, 'enemy');
+      el.style.cursor = 'default';
+      eb.appendChild(el);
+    });
+  } else {
+    eb.innerHTML = '<div class="empty-text">// ENEMY UNITS HIDDEN UNTIL COMBAT //</div>';
+  }
+
+  // Shop
+  const sc = document.getElementById('shop-cards');
+  sc.innerHTML = '';
+  G.shop.forEach((c, i) => {
+    const el = cardEl(c, 'shop');
+    if (G.gold < c.cost) el.style.opacity = '0.45';
+    else el.onclick = () => buyCard(i);
+    sc.appendChild(el);
+  });
+
+  // Hand
+  const hc = document.getElementById('hand-cards');
+  hc.innerHTML = '';
+  if (G.hand.length === 0) {
+    hc.innerHTML = '<div class="empty-text">// HAND EMPTY //</div>';
+  } else {
+    G.hand.forEach((c, i) => {
+      const el = cardEl(c, 'hand');
+      if (G.sel === i) el.classList.add('selected');
+      el.onclick = () => selectHand(i);
+      hc.appendChild(el);
+    });
+  }
+
+  const ha = document.getElementById('hand-actions');
+  ha.innerHTML = '';
+  if (G.sel !== null) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-magenta';
+    btn.textContent = '× SELL (1¥)';
+    btn.onclick = sellCard;
+    ha.appendChild(btn);
+    const h = document.createElement('div');
+    h.className = 'sell-hint';
+    h.textContent = 'click board slot to place';
+    ha.appendChild(h);
+  }
+
+  document.getElementById('refresh-btn').disabled = G.gold < 1;
+}
+
+// ─────────────────────────────────────────────
+//  ACTIONS
+// ─────────────────────────────────────────────
+function buyCard(i) {
+  const c = G.shop[i];
+  if (!c || G.gold < c.cost) return;
+  G.gold -= c.cost;
+  G.hand.push({ ...c, uid: ++_uid, cur: c.hp, max: c.hp, fx: [] });
+  G.shop.splice(i, 1);
+  render();
+}
+
+function selectHand(i) {
+  G.sel = (G.sel === i) ? null : i;
+  render();
+}
+
+function returnToHand(i) {
+  if (G.phase !== 'shop') return;
+  const c = G.board[i];
+  if (c) { G.hand.push(c); G.board[i] = null; render(); }
+}
+
+function placeCard(slot) {
+  if (G.sel === null) return;
+  const c = G.hand[G.sel];
+  if (G.board[slot]) {
+    G.hand[G.sel] = G.board[slot];
+    G.board[slot] = c;
+  } else {
+    G.board[slot] = c;
+    G.hand.splice(G.sel, 1);
+  }
+  G.sel = null;
+  render();
+}
+
+function sellCard() {
+  if (G.sel === null) return;
+  G.hand.splice(G.sel, 1);
+  G.gold += 1;
+  G.sel = null;
+  render();
+}
+
+function refreshShop() {
+  if (G.gold < 1) return;
+  G.gold -= 1;
+  G.shop = genShop();
+  render();
+}
+
+function genShop()   { return Array.from({length:5}, () => rand(POOL)); }
+function genEnemy(r) {
+  const n = Math.min(2 + Math.floor(r / 2), 5);
+  return Array.from({length:n}, () => {
+    const c = rand(POOL);
+    const bonus = Math.floor(r / 3);
+    c.atk += bonus;
+    c.hp  += bonus;
+    c.cur  = c.hp;
+    c.max  = c.hp;
+    return c;
+  });
+}
+
+// ─────────────────────────────────────────────
+//  BATTLE
+// ─────────────────────────────────────────────
+const LOG = document.getElementById('battle-log');
+
+function log(txt, cls='') {
+  const e = document.createElement('div');
+  e.className = `log-entry ${cls}`;
+  e.textContent = txt;
+  LOG.appendChild(e);
+  LOG.scrollTop = LOG.scrollHeight;
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function startBattle() {
+  const active = G.board.filter(Boolean);
+  if (active.length === 0) {
+    showOverlay('NO UNITS', 'Place at least one unit on your board.', false);
+    return;
+  }
+
+  G.phase   = 'battle';
+  G.eboard  = genEnemy(G.round);
+
+  LOG.innerHTML = '<div class="log-head">// COMBAT LOG //</div>';
+  LOG.classList.add('visible');
+  document.getElementById('shop-area').style.display  = 'none';
+  document.getElementById('hand-area').style.display  = 'none';
+  document.getElementById('battle-btn').style.display = 'none';
+
+  render();
+  log(`──── ROUND ${G.round} ────`, 'header');
+  await delay(600);
+
+  // Deep copies for combat sim
+  let pUnits = G.board.filter(Boolean).map(c => ({ ...c }));
+  let eUnits = G.eboard.map(c => ({ ...c }));
+
+  // Temporal Drift: sort player units so temporal agents go first
+  pUnits.sort((a,b) => (b.ability==='TEMPORAL DRIFT'?1:0)-(a.ability==='TEMPORAL DRIFT'?1:0));
+
+  let tick = 0;
+  while (pUnits.length > 0 && eUnits.length > 0 && tick < 25) {
+    tick++;
+
+    // Player attacks
+    for (let i = 0; i < pUnits.length && eUnits.length > 0; i++) {
+      await doAttack(pUnits[i], eUnits, pUnits, false);
+      eUnits = eUnits.filter(u => u.cur > 0);
+    }
+
+    // Enemy attacks
+    for (let i = 0; i < eUnits.length && pUnits.length > 0; i++) {
+      await doAttack(eUnits[i], pUnits, eUnits, true);
+      pUnits = pUnits.filter(u => u.cur > 0);
+    }
+
+    syncBoards(pUnits, eUnits);
+    await delay(350);
+  }
+
+  await delay(500);
+
+  const pWin = pUnits.length > 0 && eUnits.length === 0;
+  const eWin = eUnits.length > 0 && pUnits.length === 0;
+
+  if (pWin) {
+    const bonus = 2 + Math.floor(G.round / 2);
+    G.gold  += bonus;
+    G.eHp    = Math.max(0, G.eHp - Math.ceil(G.round * 1.5));
+    log(`VICTORY — +${bonus}¥`, 'heal');
+    if (G.eHp <= 0) { endGame(true); return; }
+    await delay(400);
+    showOverlay('VICTORY', `Enemy neutralised. +${bonus}¥ earned.\nEnemy HP remaining: ${G.eHp}`, true);
+  } else if (eWin) {
+    const dmg = eUnits.reduce((s,u) => s + u.atk, 0);
+    G.pHp = Math.max(0, G.pHp - dmg);
+    log(`DEFEAT — −${dmg} HP`, 'dmg');
+    if (G.pHp <= 0) { endGame(false); return; }
+    await delay(400);
+    showOverlay('DEFEAT', `Enemy broke through. You took ${dmg} damage.\nYour HP: ${G.pHp}`, true);
+  } else {
+    G.gold += 1;
+    log('DRAW — +1¥', 'ability');
+    await delay(400);
+    showOverlay('DRAW', 'Both sides fought to a standstill. +1¥', true);
+  }
+}
+
+async function doAttack(attacker, defGroup, atkGroup, isEnemy) {
+  if (defGroup.length === 0) return;
+  const target = defGroup[0];
+
+  // Ghost Mode — negate first hit
+  if (target.ability === 'GHOST MODE' && !target._ghostUsed) {
+    target._ghostUsed = true;
+    log(`${target.name}: GHOST MODE — hit negated!`, 'ability');
+    await delay(200);
+    return;
+  }
+
+  // Phantom Dash — dodge chance
+  if (target.ability === 'PHANTOM DASH' && Math.random() < 0.3) {
+    if (target.ability === 'SWIFT STRIDE') target.atk++;
+    log(`${target.name} evaded!`, 'ability');
+    await delay(200);
+    return;
+  }
+  // Swift Stride — separate dodge tracking
+  if (target.ability === 'SWIFT STRIDE' && Math.random() < 0.3) {
+    target.atk++;
+    log(`${target.name}: SWIFT STRIDE evade — ATK now ${target.atk}`, 'ability');
+    await delay(200);
+    return;
+  }
+
+  let dmg = attacker.atk;
+
+  // Precision crit
+  if (attacker.ability === 'PRECISION' && Math.random() < 0.25) {
+    dmg *= 2;
+    log(`${attacker.name}: CRITICAL HIT!`, 'ability');
+  }
+
+  target.cur -= dmg;
+  log(`${attacker.name} → ${target.name}: −${dmg}  (${Math.max(0,target.cur)}/${target.max})`, isEnemy?'dmg':'');
+
+  // Neural Parasite — extra drain
+  if (attacker.ability === 'NEURAL PARASITE') {
+    target.cur -= 1;
+    log(`Neural Parasite: −1`, 'ability');
+  }
+
+  // Controlled Burst — splash 1 to all others
+  if (attacker.ability === 'CTRL BURST') {
+    defGroup.slice(1).forEach(u => {
+      u.cur -= 1;
+      log(`Ctrl Burst: ${u.name} −1`, isEnemy?'dmg':'');
+    });
+  }
+
+  // Blade Dance — second strike
+  if (attacker.ability === 'BLADE DANCE') {
+    await delay(180);
+    target.cur -= attacker.atk;
+    log(`${attacker.name}: BLADE DANCE second strike −${attacker.atk}`, 'ability');
+  }
+
+  // Kill effects
+  if (target.cur <= 0) {
+    log(`${target.name} ELIMINATED`, 'dead');
+
+    if (attacker.ability === 'KINETIC EDGE') {
+      attacker.atk++;
+      log(`${attacker.name}: Kinetic Edge — ATK now ${attacker.atk}`, 'ability');
+    }
+
+    if (attacker.ability === 'QUICKLOAD') {
+      const next = defGroup.find(u => u !== target && u.cur > 0);
+      if (next) {
+        next.cur -= attacker.atk;
+        log(`${attacker.name}: QUICKLOAD — bonus hit on ${next.name}`, 'ability');
+      }
+    }
+  }
+
+  await delay(280);
+  syncBoards(
+    isEnemy ? defGroup : atkGroup,
+    isEnemy ? atkGroup : defGroup
+  );
+}
+
+function syncBoards(pUnits, eUnits) {
+  const pb = document.getElementById('player-board');
+  pb.innerHTML = '';
+  pUnits.filter(u => u.cur > 0).forEach(c => pb.appendChild(cardEl(c,'board')));
+
+  const eb = document.getElementById('enemy-board');
+  eb.innerHTML = '';
+  eUnits.filter(u => u.cur > 0).forEach(c => {
+    const el = cardEl(c,'enemy');
+    el.style.cursor = 'default';
+    eb.appendChild(el);
+  });
+}
+
+// ─────────────────────────────────────────────
+//  ROUND CYCLE
+// ─────────────────────────────────────────────
+function nextRound() {
+  G.round++;
+  G.phase  = 'shop';
+  G.gold  += Math.min(G.round + 2, 9);
+  G.eboard = null;
+  G.shop   = genShop();
+  G.sel    = null;
+
+  // Reset HP of surviving board units
+  G.board.forEach(c => {
+    if (c) { c.cur = c.max; c._ghostUsed = false; }
+  });
+
+  document.getElementById('shop-area').style.display  = '';
+  document.getElementById('hand-area').style.display  = '';
+  document.getElementById('battle-btn').style.display = '';
+  LOG.classList.remove('visible');
+
+  render();
+}
+
+// ─────────────────────────────────────────────
+//  OVERLAY
+// ─────────────────────────────────────────────
+function showOverlay(title, body, hasContinue) {
+  document.getElementById('msg-title').textContent = title;
+  document.getElementById('msg-body').textContent  = body;
+  const btn = document.getElementById('msg-btn');
+  btn.textContent = hasContinue ? 'CONTINUE //' : 'OK //';
+  btn.onclick     = hasContinue ? dismissOverlay : () => document.getElementById('overlay').classList.remove('visible');
+  document.getElementById('overlay').classList.add('visible');
+}
+
+function dismissOverlay() {
+  document.getElementById('overlay').classList.remove('visible');
+  nextRound();
+}
+
+function endGame(won) {
+  const title = won ? 'MISSION COMPLETE' : 'JACKED OUT';
+  const body  = won
+    ? `Enemy flatlined after ${G.round} rounds.\nThe net is yours, runner.`
+    : `You flatlined after ${G.round} rounds.\nRespawn and try again.`;
+  document.getElementById('msg-title').style.color = won ? 'var(--green)' : 'var(--magenta)';
+  document.getElementById('msg-title').style.textShadow = won ? '0 0 20px var(--green)' : '0 0 20px var(--magenta)';
+  showOverlay(title, body, false);
+  document.getElementById('msg-btn').textContent = 'PLAY AGAIN //';
+  document.getElementById('msg-btn').onclick = () => location.reload();
+}
+
+// ─────────────────────────────────────────────
+//  INIT
+// ─────────────────────────────────────────────
+G.shop = genShop();
+render();
+</script>
+</body>
+</html>
