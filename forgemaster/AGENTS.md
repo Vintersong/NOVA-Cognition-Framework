@@ -17,6 +17,7 @@ tools_allowed:
   - bash
   - git
   - mcp_nova
+  - mcp_gemini
   - mcp_stitch
 context_files:
   - forgemaster/AGENTS.md
