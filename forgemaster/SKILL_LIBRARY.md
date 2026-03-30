@@ -22,6 +22,7 @@ Internal orchestration and execution skills. Always loaded first.
 | Verification | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-verification.md` | Evidence before completion claims |
 | Git Workflow | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-git-workflow.md` | Branch setup and PR integration |
 | Code Review | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-code-review.md` | Two-stage spec + quality review |
+| QA Review | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-qa-review.md` | Stage 3 structural QA: thresholds, anti-patterns, JIRA comments |
 | Session Handoff | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-nova-session-handoff.md` | Persist state across sessions |
 
 ---

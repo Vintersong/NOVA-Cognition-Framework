@@ -1,4 +1,3 @@
-.env
 .mcp.json
 __pycache__/
 *.pyc
@@ -9,3 +8,5 @@ nova_usage.jsonl
 shards/
 *.pdf
 *.pptx
+.env
+.env.*
