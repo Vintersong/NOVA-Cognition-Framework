@@ -1,0 +1,22 @@
+name: Shard Health Check
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  compact-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r mcp/requirements.txt
+      - name: Check shard bloat
+        run: python tools/shard_compact.py --fail-on-bloat --dry-run
