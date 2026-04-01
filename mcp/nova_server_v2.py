@@ -64,6 +64,7 @@ from nova_embeddings_local import enrich_shard, _generate_compaction_summary
 from permissions import ToolPermissionContext
 from models import UsageSummary
 from session_store import SessionStore, NovaSession
+from forgemaster_runtime import ForgemasterRuntime
 
 # === Environment ===
 # Paths default to repo root (one level up from mcp/) so the server works
@@ -125,6 +126,7 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_session_flush",
     "nova_session_load",
     "nova_session_list",
+    "nova_forgemaster_sprint",
 )
 
 
@@ -1398,8 +1400,46 @@ async def nova_session_list(params: SessionListInput) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# MCP RESOURCES
+# FORGEMASTER TOOLS
 # ═══════════════════════════════════════════════════════════
+
+class ForgemasterSprintInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    sprint_id: str = Field(..., min_length=1)
+    design_doc: str = Field(..., min_length=1)
+    shard_ids: Optional[str] = Field(default=None)
+
+
+@mcp.tool(name="nova_forgemaster_sprint")
+async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
+    """
+    Run a full Forgemaster sprint: orchestrator → planner → implementer → reviewer.
+    Loads optional shards into context, executes the 4-turn pipeline, flushes the
+    session, and returns a sprint summary.
+
+    ``shard_ids`` is an optional comma-separated list of shard IDs to load into
+    context before the sprint begins (same pattern as nova_shard_interact).
+    """
+    if _permission_context.blocks("nova_forgemaster_sprint"):
+        return _permission_error("nova_forgemaster_sprint")
+
+    shard_id_list: list[str] = (
+        [s.strip() for s in params.shard_ids.split(",") if s.strip()]
+        if params.shard_ids
+        else []
+    )
+
+    runtime = ForgemasterRuntime(_session_store, _permission_context)
+    try:
+        summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+
+    log_operation("nova_forgemaster_sprint", shard_id_list, {"sprint_id": params.sprint_id})
+    return json.dumps(summary, indent=2)
+
+
+
 
 @mcp.resource("nova://skill")
 async def nova_skill() -> str:
