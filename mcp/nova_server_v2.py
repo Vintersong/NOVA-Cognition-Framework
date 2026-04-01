@@ -61,6 +61,9 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field, ConfigDict
 from filelock import FileLock
 from nova_embeddings_local import enrich_shard, _generate_compaction_summary
+from permissions import ToolPermissionContext
+from models import UsageSummary
+
 # === Environment ===
 # Paths default to repo root (one level up from mcp/) so the server works
 # correctly regardless of the working directory it's launched from.
@@ -80,7 +83,52 @@ MERGE_SIMILARITY_THRESHOLD = float(os.environ.get("NOVA_MERGE_THRESHOLD", "0.85"
 
 os.makedirs(SHARD_DIR, exist_ok=True)
 
+# === Permission context ===
+# Populated from env vars at startup.  Default: all tools permitted.
+_denied_tools_env = os.environ.get("NOVA_DENIED_TOOLS", "")
+_denied_prefixes_env = os.environ.get("NOVA_DENIED_PREFIXES", "")
+_permission_context: ToolPermissionContext = ToolPermissionContext.from_iterables(
+    deny_tools=[t for t in _denied_tools_env.split(",") if t.strip()],
+    deny_prefixes=[p for p in _denied_prefixes_env.split(",") if p.strip()],
+)
+
+# === Session usage tracking ===
+_session_usage: UsageSummary = UsageSummary()
+
 mcp = FastMCP("nova_mcp_v2")
+
+# ═══════════════════════════════════════════════════════════
+# PERMISSION HELPERS
+# ═══════════════════════════════════════════════════════════
+
+_ALL_TOOL_NAMES: tuple[str, ...] = (
+    "nova_shard_interact",
+    "nova_shard_create",
+    "nova_shard_update",
+    "nova_shard_search",
+    "nova_shard_list",
+    "nova_shard_get",
+    "nova_shard_merge",
+    "nova_shard_archive",
+    "nova_shard_forget",
+    "nova_shard_consolidate",
+    "nova_graph_query",
+    "nova_graph_relate",
+)
+
+
+def get_permitted_tools(permission_context: ToolPermissionContext | None = None) -> list[str]:
+    """Return the subset of NOVA tool names not blocked by *permission_context*."""
+    ctx = permission_context if permission_context is not None else _permission_context
+    return [name for name in _ALL_TOOL_NAMES if not ctx.blocks(name)]
+
+
+def _permission_error(tool_name: str) -> str:
+    """Return a structured JSON error for a blocked tool call."""
+    return json.dumps(
+        {"error": f"Tool '{tool_name}' is not permitted in the current permission context."},
+        indent=2,
+    )
 
 
 # ═══════════════════════════════════════════════════════════
@@ -637,6 +685,11 @@ class ShardGetInput(BaseModel):
 @mcp.tool(name="nova_shard_interact")
 async def nova_shard_interact(params: ShardInteractInput) -> str:
     """Load shards into context for synthesis. Auto-selects relevant shards if none specified. Confidence-weighted."""
+    global _session_usage
+
+    if _permission_context.blocks("nova_shard_interact"):
+        return _permission_error("nova_shard_interact")
+
     shard_ids = [s.strip() for s in params.shard_ids.split(",") if s.strip()] if params.shard_ids else []
     inferred = False
 
@@ -679,19 +732,31 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
         except FileNotFoundError:
             errors.append(f"Shard '{sid}' not found.")
 
-    log_operation("nova_shard_interact", shard_ids)
-
-    return json.dumps({
+    response_payload = {
         "status": "loaded",
         "inferred": inferred,
         "shards": loaded,
         "errors": errors
-    }, indent=2)
+    }
+    response_str = json.dumps(response_payload, indent=2)
+
+    # Update session token usage (word-count estimate)
+    _session_usage = _session_usage.add_turn(params.message, response_str)
+
+    log_operation("nova_shard_interact", shard_ids, {
+        "session_input_tokens": _session_usage.input_tokens,
+        "session_output_tokens": _session_usage.output_tokens,
+        "session_total_tokens": _session_usage.total_tokens,
+    })
+
+    return response_str
 
 
 @mcp.tool(name="nova_shard_create")
 async def nova_shard_create(params: ShardCreateInput) -> str:
     """Create a new shard. Triggers post-write enrichment hook and registers in knowledge graph."""
+    if _permission_context.blocks("nova_shard_create"):
+        return _permission_error("nova_shard_create")
     base_name = sanitize_filename(f"{params.theme}_{params.intent}")
     filename = get_unique_filename(base_name)
     filepath = os.path.join(SHARD_DIR, filename)
@@ -755,6 +820,8 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
 @mcp.tool(name="nova_shard_update")
 async def nova_shard_update(params: ShardUpdateInput) -> str:
     """Append to a shard. Triggers post-write enrichment hook and auto-compaction if threshold exceeded."""
+    if _permission_context.blocks("nova_shard_update"):
+        return _permission_error("nova_shard_update")
     try:
         data, filepath = load_shard(params.shard_id)
     except FileNotFoundError:
@@ -797,6 +864,8 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
 @mcp.tool(name="nova_shard_search")
 async def nova_shard_search(params: ShardSearchInput) -> str:
     """Search shards with confidence weighting. High-confidence shards rank higher for same relevance score."""
+    if _permission_context.blocks("nova_shard_search"):
+        return _permission_error("nova_shard_search")
     index = load_index() or update_index()
     results = []
     query_tokens = set(params.query.lower().split())
@@ -848,6 +917,8 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
 @mcp.tool(name="nova_shard_list")
 async def nova_shard_list() -> str:
     """List all shards with confidence scores and status tags."""
+    if _permission_context.blocks("nova_shard_list"):
+        return _permission_error("nova_shard_list")
     index = update_index()
 
     shards = []
@@ -874,6 +945,8 @@ async def nova_shard_list() -> str:
 @mcp.tool(name="nova_shard_get")
 async def nova_shard_get(params: ShardGetInput) -> str:
     """Read the full raw content of a shard from disk. Read-only, no side effects. For inspection and correction workflows."""
+    if _permission_context.blocks("nova_shard_get"):
+        return _permission_error("nova_shard_get")
     try:
         data, _ = load_shard(params.shard_id)
     except FileNotFoundError:
@@ -899,6 +972,8 @@ async def nova_shard_get(params: ShardGetInput) -> str:
 @mcp.tool(name="nova_shard_merge")
 async def nova_shard_merge(params: ShardMergeInput) -> str:
     """Merge multiple shards into a meta-shard. Updates knowledge graph relations."""
+    if _permission_context.blocks("nova_shard_merge"):
+        return _permission_error("nova_shard_merge")
     merged_history = []
     source_questions = []
     shard_ids_list = [s.strip() for s in params.shard_ids.split(",") if s.strip()]
@@ -968,6 +1043,8 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
 @mcp.tool(name="nova_shard_archive")
 async def nova_shard_archive(params: ShardArchiveInput) -> str:
     """Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion."""
+    if _permission_context.blocks("nova_shard_archive"):
+        return _permission_error("nova_shard_archive")
     try:
         data, filepath = load_shard(params.shard_id)
     except FileNotFoundError:
@@ -994,6 +1071,8 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
     This is different from archive — forgotten shards are intentionally excluded,
     not just deprioritized.
     """
+    if _permission_context.blocks("nova_shard_forget"):
+        return _permission_error("nova_shard_forget")
     try:
         data, filepath = load_shard(params.shard_id)
     except FileNotFoundError:
@@ -1027,6 +1106,8 @@ async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
     
     Run this periodically (on startup, daily, or when things feel cluttered).
     """
+    if _permission_context.blocks("nova_shard_consolidate"):
+        return _permission_error("nova_shard_consolidate")
     index = load_index() or update_index()
     decayed = []
     compacted = []
@@ -1115,6 +1196,8 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
 
     Relation types: influences, depends_on, contradicts, extends, references, merged_from
     """
+    if _permission_context.blocks("nova_graph_query"):
+        return _permission_error("nova_graph_query")
     if params.transitive:
         root_id = params.source or params.target
         if not root_id:
@@ -1182,6 +1265,8 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
       extends      — shard A builds on shard B
       references   — shard A cites or mentions shard B
     """
+    if _permission_context.blocks("nova_graph_relate"):
+        return _permission_error("nova_graph_relate")
     add_relation(params.source_id, params.target_id, params.relation_type, params.notes)
 
     return json.dumps({
@@ -1221,17 +1306,29 @@ async def nova_graph() -> str:
 
 @mcp.resource("nova://usage")
 async def nova_usage() -> str:
-    """Return last 100 operation log entries."""
+    """Return last 100 operation log entries plus running session token totals."""
     if not os.path.exists(USAGE_LOG_FILE):
-        return json.dumps({"entries": [], "total": 0})
-    lines = []
-    try:
-        with open(USAGE_LOG_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except Exception:
-        pass
-    recent = [json.loads(l) for l in lines[-100:] if l.strip()]
-    return json.dumps({"entries": recent, "total": len(lines)}, indent=2)
+        entries = []
+        total_lines = 0
+    else:
+        lines = []
+        try:
+            with open(USAGE_LOG_FILE, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            pass
+        entries = [json.loads(l) for l in lines[-100:] if l.strip()]
+        total_lines = len(lines)
+
+    return json.dumps({
+        "entries": entries,
+        "total": total_lines,
+        "session_tokens": {
+            "input_tokens": _session_usage.input_tokens,
+            "output_tokens": _session_usage.output_tokens,
+            "total_tokens": _session_usage.total_tokens,
+        },
+    }, indent=2)
 
 
 # ═══════════════════════════════════════════════════════════
