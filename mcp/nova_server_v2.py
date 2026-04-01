@@ -63,6 +63,7 @@ from filelock import FileLock
 from nova_embeddings_local import enrich_shard, _generate_compaction_summary
 from permissions import ToolPermissionContext
 from models import UsageSummary
+from session_store import SessionStore, NovaSession
 
 # === Environment ===
 # Paths default to repo root (one level up from mcp/) so the server works
@@ -95,6 +96,13 @@ _permission_context: ToolPermissionContext = ToolPermissionContext.from_iterable
 # === Session usage tracking ===
 _session_usage: UsageSummary = UsageSummary()
 
+# === Session store ===
+# Defaults to a nova_sessions/ subdirectory next to the shard store.
+_SESSION_STORE_DIR = os.environ.get(
+    "NOVA_SESSION_STORE_DIR", str(_REPO_ROOT / "nova_sessions")
+)
+_session_store: SessionStore = SessionStore(_SESSION_STORE_DIR)
+
 mcp = FastMCP("nova_mcp_v2")
 
 # ═══════════════════════════════════════════════════════════
@@ -114,6 +122,9 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_shard_consolidate",
     "nova_graph_query",
     "nova_graph_relate",
+    "nova_session_flush",
+    "nova_session_load",
+    "nova_session_list",
 )
 
 
@@ -606,6 +617,7 @@ class ShardInteractInput(BaseModel):
     shard_ids: str = Field(default="")
     message: str = Field(..., min_length=1)
     auto_select: bool = Field(default=True)
+    session_id: Optional[str] = Field(default=None)
 
 
 class ShardCreateInput(BaseModel):
@@ -743,11 +755,26 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
     # Update session token usage (word-count estimate)
     _session_usage = _session_usage.add_turn(params.message, response_str)
 
-    log_operation("nova_shard_interact", shard_ids, {
+    # Session tracking — if a session_id was supplied, log this interaction
+    _session_id = params.session_id
+    _active_session = None
+    if _session_id:
+        existing = _session_store.get(_session_id)
+        _active_session = existing if existing is not None else _session_store.create(_session_id)
+        _active_session = _active_session.add_message("user", params.message)
+        _active_session = _active_session.add_message("assistant", response_str)
+        _session_store.update(_active_session)
+
+    log_entry: dict = {
         "session_input_tokens": _session_usage.input_tokens,
         "session_output_tokens": _session_usage.output_tokens,
         "session_total_tokens": _session_usage.total_tokens,
-    })
+    }
+    if _session_id and _active_session is not None:
+        log_entry["session_id"] = _session_id
+        log_entry["session_message_count"] = len(_active_session.messages)
+
+    log_operation("nova_shard_interact", shard_ids, log_entry)
 
     return response_str
 
@@ -1275,6 +1302,98 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
         "target": params.target_id,
         "type": params.relation_type,
         "notes": params.notes
+    }, indent=2)
+
+
+# ═══════════════════════════════════════════════════════════
+# SESSION TOOLS
+# ═══════════════════════════════════════════════════════════
+
+class SessionFlushInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    session_id: str = Field(..., min_length=1)
+
+
+class SessionLoadInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    session_id: str = Field(..., min_length=1)
+
+
+class SessionListInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+
+
+@mcp.tool(name="nova_session_flush")
+async def nova_session_flush(params: SessionFlushInput) -> str:
+    """Persist an active session to disk and remove it from memory. Returns JSON confirmation with token totals."""
+    if _permission_context.blocks("nova_session_flush"):
+        return _permission_error("nova_session_flush")
+
+    session = _session_store.get(params.session_id)
+    if session is None:
+        return json.dumps({
+            "error": f"Session '{params.session_id}' is not active in memory.",
+            "hint": "Use nova_session_load to restore a previously flushed session.",
+        }, indent=2)
+
+    try:
+        _session_store.flush(params.session_id)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+
+    return json.dumps({
+        "status": "flushed",
+        "session_id": params.session_id,
+        "message_count": len(session.messages),
+        "token_totals": {
+            "input_tokens": session.usage.input_tokens,
+            "output_tokens": session.usage.output_tokens,
+            "total_tokens": session.usage.total_tokens,
+        },
+    }, indent=2)
+
+
+@mcp.tool(name="nova_session_load")
+async def nova_session_load(params: SessionLoadInput) -> str:
+    """Load a previously flushed session from disk into memory. Returns JSON with session metadata and message count."""
+    if _permission_context.blocks("nova_session_load"):
+        return _permission_error("nova_session_load")
+
+    try:
+        session = _session_store.load(params.session_id)
+    except FileNotFoundError:
+        return json.dumps({
+            "error": f"No persisted session found for '{params.session_id}'.",
+            "available": _session_store.list_sessions(),
+        }, indent=2)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+
+    return json.dumps({
+        "status": "loaded",
+        "session_id": session.session_id,
+        "message_count": len(session.messages),
+        "created_at": session.created_at,
+        "last_active": session.last_active,
+        "token_totals": {
+            "input_tokens": session.usage.input_tokens,
+            "output_tokens": session.usage.output_tokens,
+            "total_tokens": session.usage.total_tokens,
+        },
+    }, indent=2)
+
+
+@mcp.tool(name="nova_session_list")
+async def nova_session_list(params: SessionListInput) -> str:
+    """List all session IDs currently persisted on disk."""
+    if _permission_context.blocks("nova_session_list"):
+        return _permission_error("nova_session_list")
+
+    sessions = _session_store.list_sessions()
+    return json.dumps({
+        "status": "ok",
+        "sessions": sessions,
+        "count": len(sessions),
     }, indent=2)
 
 
