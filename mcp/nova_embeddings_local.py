@@ -17,6 +17,8 @@ Model: all-MiniLM-L6-v2
   - Apache 2.0 license
 """
 
+from datetime import datetime
+
 # ═══════════════════════════════════════════════════════════
 # LOCAL EMBEDDING MODEL
 # ═══════════════════════════════════════════════════════════
@@ -127,7 +129,7 @@ def enrich_shard(shard_id: str, shard_data: dict):
             "topics": keywords,
             "conversation_type": shard_data.get("meta_tags", {}).get("intent", "general"),
             "embedding": embedding,
-            "last_context_update": __import__('datetime').datetime.now().isoformat(),
+            "last_context_update": datetime.now().isoformat(),
             "embedding_model": "all-MiniLM-L6-v2"
         }
         shard_data["meta_tags"]["enrichment_status"] = "enriched_local"

@@ -2,12 +2,19 @@ from pydantic import BaseModel, Field, ConfigDict
 from google import genai
 from typing import Optional
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 import json
 
 MODEL = "gemini-2.5-flash"
 _client = None
 _ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
+
+# Restrict file access to the repository root (two levels up from mcp/Gemini/)
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# Outputs must land inside a dedicated workspace directory
+_workspace_env = Path(os.environ.get("GEMINI_OUTPUT_DIR", str(_REPO_ROOT / "workspace"))).resolve()
+_WORKSPACE_DIR = _workspace_env if _workspace_env.is_relative_to(_REPO_ROOT) else _REPO_ROOT / "workspace"
 
 
 def get_client() -> genai.Client:
@@ -77,11 +84,13 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
             result = re.sub(r'\n```$', '', result)
 
             if params.output_file:
-                output_path = os.path.abspath(params.output_file)
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                output_path = (_WORKSPACE_DIR / params.output_file).resolve()
+                if not output_path.is_relative_to(_WORKSPACE_DIR.resolve()):
+                    return json.dumps({"status": "error", "message": "Access denied: output path is outside the allowed workspace directory."})
+                os.makedirs(output_path.parent, exist_ok=True)
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(result)
-                return json.dumps({"status": "success", "saved_to": output_path, "code": result})
+                return json.dumps({"status": "success", "saved_to": str(output_path), "code": result})
 
             return json.dumps({"status": "success", "code": result})
 
@@ -106,9 +115,12 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
         text-based file type.
         """
         try:
-            with open(params.filepath, "r", encoding="utf-8") as f:
+            resolved = Path(params.filepath).resolve()
+            if not resolved.is_relative_to(_REPO_ROOT):
+                return json.dumps({"status": "error", "message": "Access denied: path is outside the allowed directory."})
+            with open(resolved, "r", encoding="utf-8") as f:
                 content = f.read()
-            return json.dumps({"status": "success", "filepath": params.filepath, "content": content})
+            return json.dumps({"status": "success", "filepath": str(resolved), "content": content})
         except FileNotFoundError:
             return json.dumps({"status": "error", "message": f"File not found: {params.filepath}"})
         except Exception as e:
