@@ -16,16 +16,16 @@ C:\Users\Moldo\Master Project NOVA\repos\forgemaster-harvest\NOVA-Cognition-Fram
 
 ### NOVA v2 Core (mcp/)
 
-- [ ] `mcp/nova_server_v2.py` — the active server with 11 tools
+- [ ] `mcp/nova_server.py` — the active server with 16 tools
 - [ ] `mcp/nova_embeddings_local.py` — local sentence-transformers embedding functions
 - [ ] `mcp/SKILL_v2.md` — v2 cognitive architecture instructions
 - [ ] `mcp/requirements.txt` — should contain `sentence-transformers`, NOT `openai`
 - [ ] `mcp/nova_server.py` — v1 reference (should exist but not be active)
 - [ ] `mcp/SKILL.md` — v1 reference (should exist)
 
-**Check nova_server_v2.py for:**
-- Line ~60: `from nova_embeddings_local import enrich_shard_async, _generate_compaction_summary`
-- No local definition of `enrich_shard_async` below that import (would shadow it)
+**Check nova_server.py for:**
+- Line ~60: `from nova_embeddings_local import enrich_shard, _generate_compaction_summary`
+- No local definition of `enrich_shard` below that import (would shadow it)
 - No local definition of `_generate_compaction_summary` below that import
 - No active `OPENAI_API_KEY` usage (should be commented out or removed)
 
@@ -75,7 +75,7 @@ C:\Users\Moldo\Master Project NOVA\repos\forgemaster-harvest\NOVA-Cognition-Fram
 - [ ] `shard_graph.json` — knowledge graph, created on first run of v2 server
 - [ ] Shards enriched with local embeddings — need to run batch enrichment script
 - [ ] `.env` file created from `.env.example` (not committed, but should exist locally)
-- [ ] Claude Desktop config updated to point at `nova_server_v2.py`
+- [ ] Claude Desktop config updated to point at `nova_server.py`
 
 ---
 

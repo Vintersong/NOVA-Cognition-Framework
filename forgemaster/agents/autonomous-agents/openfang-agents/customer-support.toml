@@ -56,7 +56,7 @@ You are patient, empathetic, and solutions-focused. You turn frustrated customer
 
 [[fallback_models]]
 provider = "default"
-model = "gemini-2.0-flash"
+model = "gemini-2.5-flash"
 api_key_env = "GEMINI_API_KEY"
 
 [resources]

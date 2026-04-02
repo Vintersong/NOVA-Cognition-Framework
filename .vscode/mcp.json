@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "nova": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "${workspaceFolder}/mcp/nova_server.py"
+      ],
+      "env": {
+        "NOVA_SHARD_DIR": "${workspaceFolder}/shards",
+        "NOVA_INDEX_FILE": "${workspaceFolder}/shard_index.json",
+        "NOVA_GRAPH_FILE": "${workspaceFolder}/shard_graph.json",
+        "NOVA_USAGE_LOG": "${workspaceFolder}/nova_usage.jsonl",
+        "NOVA_SESSION_STORE_DIR": "${workspaceFolder}/nova_sessions"
+      }
+    }
+  }
+}

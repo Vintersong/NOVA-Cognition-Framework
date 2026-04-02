@@ -1,6 +1,6 @@
 import ast
 
-for fname in ["nova_server_v2.py", "nova_embeddings_local.py"]:
+for fname in ["nova_server.py", "nova_embeddings_local.py"]:
     with open(fname, "r", encoding="utf-8") as f:
         src = f.read()
     ast.parse(src)
@@ -12,7 +12,7 @@ print("Import OK: enrich_shard, _generate_compaction_summary")
 from filelock import FileLock
 print("Import OK: FileLock")
 
-with open("nova_server_v2.py", "r", encoding="utf-8") as f:
+with open("nova_server.py", "r", encoding="utf-8") as f:
     src = f.read()
 
 assert "enrich_shard_async" not in src, "FAIL: old name still present in server"

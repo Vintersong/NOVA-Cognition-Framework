@@ -1,5 +1,5 @@
 """
-nova_embeddings_local.py — Local embedding backend for nova_server_v2.py
+nova_embeddings_local.py — Local embedding backend for nova_server.py
 
 Provides enrich_shard and _generate_compaction_summary using local sentence-transformers.
 No API key required. Fully local and offline after first run.
@@ -84,7 +84,7 @@ def generate_local_summary(turns: list[dict], shard_id: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# REPLACEMENT FUNCTIONS — paste these into nova_server_v2.py
+# REPLACEMENT FUNCTIONS — paste these into nova_server.py
 # ═══════════════════════════════════════════════════════════
 
 def enrich_shard(shard_id: str, shard_data: dict):

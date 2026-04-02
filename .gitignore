@@ -5,6 +5,7 @@ __pycache__/
 shard_index.json
 shard_graph.json
 nova_usage.jsonl
+nova_autoresearch.jsonl
 shards/
 *.pdf
 *.pptx

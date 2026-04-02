@@ -1,0 +1,229 @@
+<!-- PROTOTYPE - NOT FOR PRODUCTION
+// Question: Is the core Snake loop fun and responsive at variable tick speeds?
+// Date: 2026-03-31 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snake Game Prototype</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #222;
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: #eee;
+            user-select: none;
+        }
+        canvas {
+            background-color: #1a1a1a;
+            border: 2px solid #555;
+            display: block;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.4);
+        }
+        #game-info {
+            margin-top: 20px;
+            font-size: 1.2em;
+            text-align: center;
+        }
+        #score {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        #game-over {
+            margin-top: 10px;
+            color: #FF6347;
+            font-size: 1.5em;
+            display: none;
+            line-height: 1.4;
+        }
+        #game-over button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            margin-top: 15px;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+            transition: background-color 0.2s;
+        }
+        #game-over button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>Snake Prototype</h1>
+    <canvas id="gameCanvas" width="400" height="400"></canvas>
+    <div id="game-info">
+        Score: <span id="score">0</span>
+        <div id="game-over">
+            GAME OVER!<br>
+            Press 'R' or click to Restart
+            <button onclick="initGame()">Restart</button>
+        </div>
+    </div>
+
+    <script>
+        // PROTOTYPE - NOT FOR PRODUCTION
+        // Question: Is the core Snake loop fun and responsive at variable tick speeds?
+        // Date: 2026-03-31
+
+        const CANVAS_SIZE = 400;
+        const GRID_SIZE = 20;
+        const CELL_SIZE = CANVAS_SIZE / GRID_SIZE;
+        const INITIAL_TICK_SPEED = 150;
+        const MIN_TICK_SPEED = 60;
+        const SPEED_INCREASE_INTERVAL = 5;
+        const SPEED_DECREMENT = 5;
+        const SCORE_PER_FOOD = 10;
+
+        let canvas, ctx;
+        let snake, food, direction;
+        let score, gameOver, gameInterval, tickSpeed, foodEatenCount, changingDirection;
+
+        const scoreDisplay = document.getElementById('score');
+        const gameOverDisplay = document.getElementById('game-over');
+
+        document.addEventListener('DOMContentLoaded', () => {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            initGame();
+        });
+
+        function initGame() {
+            snake = [
+                { x: 10, y: 10 },
+                { x: 9, y: 10 },
+                { x: 8, y: 10 }
+            ];
+            direction = 'right';
+            score = 0;
+            gameOver = false;
+            tickSpeed = INITIAL_TICK_SPEED;
+            foodEatenCount = 0;
+            changingDirection = false;
+
+            clearInterval(gameInterval);
+            gameInterval = setInterval(gameLoop, tickSpeed);
+
+            spawnFood();
+            updateScoreDisplay();
+            gameOverDisplay.style.display = 'none';
+            draw();
+        }
+
+        function gameLoop() {
+            if (gameOver) return;
+            changingDirection = false;
+
+            const head = { x: snake[0].x, y: snake[0].y };
+            switch (direction) {
+                case 'up':    head.y--; break;
+                case 'down':  head.y++; break;
+                case 'left':  head.x--; break;
+                case 'right': head.x++; break;
+            }
+
+            if (checkCollision(head.x, head.y)) {
+                endGame();
+                return;
+            }
+
+            snake.unshift(head);
+
+            if (head.x === food.x && head.y === food.y) {
+                score += SCORE_PER_FOOD;
+                foodEatenCount++;
+                updateScoreDisplay();
+                spawnFood();
+                if (foodEatenCount % SPEED_INCREASE_INTERVAL === 0 && tickSpeed > MIN_TICK_SPEED) {
+                    increaseSpeed();
+                }
+            } else {
+                snake.pop();
+            }
+
+            draw();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            drawRect(food.x, food.y, 'red');
+            for (let i = 0; i < snake.length; i++) {
+                drawRect(snake[i].x, snake[i].y, i === 0 ? '#4CAF50' : '#8BC34A');
+            }
+        }
+
+        function drawRect(gridX, gridY, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(gridX * CELL_SIZE, gridY * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            ctx.strokeStyle = '#1a1a1a';
+            ctx.strokeRect(gridX * CELL_SIZE, gridY * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+        }
+
+        function updateScoreDisplay() {
+            scoreDisplay.textContent = score;
+        }
+
+        function checkCollision(headX, headY) {
+            if (headX < 0 || headX >= GRID_SIZE || headY < 0 || headY >= GRID_SIZE) return true;
+            for (let i = 1; i < snake.length; i++) {
+                if (headX === snake[i].x && headY === snake[i].y) return true;
+            }
+            return false;
+        }
+
+        function spawnFood() {
+            let newFoodX, newFoodY, collisionWithSnake;
+            do {
+                newFoodX = Math.floor(Math.random() * GRID_SIZE);
+                newFoodY = Math.floor(Math.random() * GRID_SIZE);
+                collisionWithSnake = snake.some(s => s.x === newFoodX && s.y === newFoodY);
+            } while (collisionWithSnake);
+            food = { x: newFoodX, y: newFoodY };
+        }
+
+        function endGame() {
+            gameOver = true;
+            clearInterval(gameInterval);
+            gameOverDisplay.style.display = 'block';
+        }
+
+        function increaseSpeed() {
+            tickSpeed = Math.max(MIN_TICK_SPEED, tickSpeed - SPEED_DECREMENT);
+            clearInterval(gameInterval);
+            gameInterval = setInterval(gameLoop, tickSpeed);
+        }
+
+        document.addEventListener('keydown', e => {
+            if (gameOver && (e.key === 'r' || e.key === 'R')) {
+                initGame();
+                return;
+            }
+            if (changingDirection) return;
+
+            let validChange = false;
+            switch (e.key.toLowerCase()) {
+                case 'arrowup':
+                case 'w': if (direction !== 'down')  { direction = 'up';    validChange = true; } break;
+                case 'arrowdown':
+                case 's': if (direction !== 'up')    { direction = 'down';  validChange = true; } break;
+                case 'arrowleft':
+                case 'a': if (direction !== 'right') { direction = 'left';  validChange = true; } break;
+                case 'arrowright':
+                case 'd': if (direction !== 'left')  { direction = 'right'; validChange = true; } break;
+            }
+            if (validChange) changingDirection = true;
+        });
+    </script>
+</body>
+</html>

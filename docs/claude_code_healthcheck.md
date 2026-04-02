@@ -8,7 +8,7 @@ You are running a full health check on the NOVA v2 + Forgemaster codebase. Check
 
 ## Step 1: Verify the Import Chain
 
-Check `mcp/nova_server_v2.py`:
+Check `mcp/nova_server.py`:
 
 1. Find the import line for `nova_embeddings_local` — should be near the top
 2. Search the entire file for any function definitions named `enrich_shard_async` or `_generate_compaction_summary` AFTER the import line
@@ -40,21 +40,26 @@ Pick 3 shards from `shards/` — one ai_ml, one game_design, one personal theme.
 
 ---
 
-## Step 4: Verify the 11 MCP Tools
+## Step 4: Verify the 16 MCP Tools
 
-In `nova_server_v2.py`, confirm all 11 tools are defined with `@mcp.tool`:
+In `nova_server.py`, confirm all 16 tools are defined with `@mcp.tool`:
 
 1. nova_shard_interact
 2. nova_shard_create
 3. nova_shard_update
 4. nova_shard_search
 5. nova_shard_list
-6. nova_shard_merge
-7. nova_shard_archive
-8. nova_shard_forget
-9. nova_shard_consolidate
-10. nova_graph_query
-11. nova_graph_relate
+6. nova_shard_get
+7. nova_shard_merge
+8. nova_shard_archive
+9. nova_shard_forget
+10. nova_shard_consolidate
+11. nova_graph_query
+12. nova_graph_relate
+13. nova_session_flush
+14. nova_session_load
+15. nova_session_list
+16. nova_forgemaster_sprint
 
 For each tool, check the function signature matches its input model.
 
@@ -62,7 +67,7 @@ For each tool, check the function signature matches its input model.
 
 ## Step 5: Verify the Knowledge Graph Functions
 
-In `nova_server_v2.py`:
+In `nova_server.py`:
 
 1. Find `load_graph()`, `save_graph()`, `add_shard_to_graph()`, `add_relation()`, `query_graph()`
 2. Confirm `GRAPH_FILE` path resolves to repo root (not inside `mcp/`)
@@ -75,7 +80,7 @@ In `nova_server_v2.py`:
 
 1. Find `SHARD_DIR`, `INDEX_FILE`, `GRAPH_FILE`, `USAGE_LOG_FILE` definitions
 2. Confirm they use `_REPO_ROOT = Path(__file__).parent.parent` as base
-3. This means when `nova_server_v2.py` runs from `mcp/`, all files resolve to repo root
+3. This means when `nova_server.py` runs from `mcp/`, all files resolve to repo root
 4. Confirm `os.makedirs(SHARD_DIR, exist_ok=True)` is called at startup
 
 ---
@@ -105,7 +110,7 @@ For each file in `forgemaster/skills/`:
 ## Step 9: Check CLAUDE.md
 
 1. Confirm `CLAUDE.md` exists at repo root
-2. Confirm it references `nova_server_v2.py` as the active server
+2. Confirm it references `nova_server.py` as the active server
 3. Confirm it has the session handoff protocol section
 4. Confirm it has the sprint workflow section
 5. Confirm it does NOT reference OpenAI key as required

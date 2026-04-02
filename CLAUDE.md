@@ -4,7 +4,7 @@
 
 This repository contains two interconnected systems:
 
-**NOVA v2** — Persistent memory MCP server. Stores conversations as modular JSON shards with confidence decay, auto-compaction, knowledge graph, and semantic retrieval. 11 tools exposed via Model Context Protocol.
+**NOVA** — Persistent memory MCP server. Stores conversations as modular JSON shards with confidence decay, auto-compaction, knowledge graph, and semantic retrieval. 16 tools exposed via Model Context Protocol.
 
 **Forgemaster** — Multi-agent orchestration layer. Routes tasks to specialized LLM lanes, uses NOVA as persistent memory across sessions. Skill library defines agent behavior.
 
@@ -17,13 +17,12 @@ NOVA is the memory layer. Forgemaster is the orchestration layer. They are one s
 ```
 NOVA-Cognition-Framework/
   mcp/
-    nova_server_v2.py     ← ACTIVE MCP server — always use this one
+    nova_server.py        ← ACTIVE MCP server — always use this one
     SKILL_v2.md           ← ACTIVE skill instructions
-    nova_server.py        ← v1 reference only, do not modify
-    SKILL.md              ← v1 reference only
+    _deprecated/          ← v1 reference only, do not modify
     requirements.txt
   python/
-    shard_index.py        ← index manager, imported by nova_server_v2
+    shard_index.py        ← index manager, imported by nova_server
     context_extractor.py  ← batch enrichment utility
   shards/                 ← live shard data, never modify directly
   forgemaster/
@@ -52,7 +51,7 @@ cp ../.env.example ../.env
 # export NOVA_SHARD_DIR="C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards"
 
 # Run the server
-python nova_server_v2.py
+python nova_server.py
 ```
 
 **Claude Desktop config** (`claude_desktop_config.json`):
@@ -61,7 +60,7 @@ python nova_server_v2.py
   "mcpServers": {
     "nova": {
       "command": "python",
-      "args": ["C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/mcp/nova_server_v2.py"],
+      "args": ["C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/mcp/nova_server.py"],
       "env": {
         "NOVA_SHARD_DIR": "C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards"
       }
@@ -81,12 +80,17 @@ python nova_server_v2.py
 | `nova_shard_update` | Append conversation turn to existing shard |
 | `nova_shard_search` | Search by keyword with confidence weighting |
 | `nova_shard_list` | List all shards sorted by confidence |
+| `nova_shard_get` | Read full shard content, no side effects |
 | `nova_shard_merge` | Merge related shards into meta-shard |
 | `nova_shard_archive` | Soft-archive stale shards |
 | `nova_shard_forget` | Hard exclude with provenance log |
 | `nova_shard_consolidate` | Run full maintenance: decay + compact + merge suggestions |
 | `nova_graph_query` | Query inter-shard knowledge graph |
 | `nova_graph_relate` | Manually add directed relation between shards |
+| `nova_session_flush` | Persist active sprint session to disk |
+| `nova_session_load` | Restore stored session to memory |
+| `nova_session_list` | List all stored session IDs |
+| `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
 
 ---
 
@@ -170,7 +174,7 @@ This is not optional. Without this, every session starts from zero.
 
 **Never commit `.env`, `shard_index.json`, `shard_graph.json`, `nova_usage.jsonl`.** These are runtime files.
 
-**Always use `nova_server_v2.py`.** The v1 server is reference only.
+**Always use `nova_server.py`.** The v1 server (`mcp/_deprecated/`) is reference only.
 
 **Confidence scores matter.** Shards with confidence < 0.4 are tagged `low_confidence` and excluded from default search. They still exist — use `include_low_confidence=True` to recall them deliberately.
 
@@ -211,7 +215,7 @@ cd python && python shard_index.py
 ## What Not To Do
 
 - Do not edit shard JSON files by hand
-- Do not use `nova_server.py` — it is v1 reference only
+- Do not use the v1 server in `mcp/_deprecated/` — it is reference only
 - Do not skip `nova_shard_consolidate` indefinitely — run it every 3 sprints
 - Do not start implementation without loading NOVA context first
 - Do not end a session without writing the handoff to NOVA

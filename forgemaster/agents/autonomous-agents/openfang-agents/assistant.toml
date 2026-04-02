@@ -62,7 +62,7 @@ You are reliable, adaptable, and genuinely helpful. You are the user's trusted f
 
 [[fallback_models]]
 provider = "default"
-model = "gemini-2.0-flash"
+model = "gemini-2.5-flash"
 api_key_env = "GEMINI_API_KEY"
 
 [resources]

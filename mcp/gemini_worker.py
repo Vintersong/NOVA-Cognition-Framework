@@ -1,10 +1,10 @@
 """
 Gemini Worker MCP Server
-Forgemaster tool — routes implementation and boilerplate tickets to Gemini Flash.
+Forgemaster tool — routes implementation and boilerplate tickets to Gemini 2.5 Flash.
 Registered as gemini-worker in .mcp.json.
 
 Tools exposed:
-  gemini_execute_ticket  — execute a Forgemaster ticket via Gemini Flash
+  gemini_execute_ticket  — execute a Forgemaster ticket via Gemini 2.5 Flash
   gemini_load_file       — load a file from disk as codebase context
 
 Confidence threshold routing:
@@ -14,7 +14,7 @@ Confidence threshold routing:
 
 Environment variables:
   GEMINI_API_KEY         — required
-  GEMINI_MODEL           — default: gemini-2.0-flash
+  GEMINI_MODEL           — default: gemini-2.5-flash
   CONFIDENCE_THRESHOLD   — default: 0.65 (below this, escalate to Sonnet)
 """
 
@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
 
 if not GEMINI_API_KEY:
@@ -90,11 +90,17 @@ def gemini_execute_ticket(
             contents=full_prompt,
             config={"system_instruction": SYSTEM_PROMPT},
         )
+        output = response.text
+        # Strip markdown code fences Gemini sometimes wraps output in.
+        # Handles ```lua, ```python, ``` etc. at start and ``` at end.
+        import re
+        output = re.sub(r"^```[a-zA-Z]*\n", "", output.strip())
+        output = re.sub(r"\n```$", "", output)
         return json.dumps({
             "status": "complete",
             "model": GEMINI_MODEL,
             "confidence": confidence,
-            "output": response.text,
+            "output": output,
         })
     except Exception as e:
         return json.dumps({

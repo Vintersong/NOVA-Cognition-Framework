@@ -1,0 +1,143 @@
+/* Google Font Import - Audiowide */
+@import url('https://fonts.googleapis.com/css2?family=Audiowide&display=swap');
+
+:root {
+  /* Colors (OKLCH) */
+  --color-background-dark: oklch(12% 0.02 280);          /* Very dark, slightly purplish-blue */
+  --color-snake: oklch(70% 0.25 330);                    /* Vibrant magenta */
+  --color-food: oklch(85% 0.18 90);                      /* Bright energetic yellow */
+  --color-text-light: oklch(95% 0.01 270);               /* Off-white with a cool tint */
+  --color-ui-accent: var(--color-snake);                 /* Primary UI accent, same as snake */
+  --color-overlay-background: oklch(12% 0.02 280 / 0.8); /* Semi-transparent dark background */
+
+  /* Typography */
+  --font-primary: 'Audiowide', cursive, sans-serif;
+  --font-size-base: 16px;
+  --font-size-score: 2.25em;
+  --font-size-heading: 3.5em;
+  --font-size-button: 1.25em;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 48px;
+
+  /* Motion */
+  --transition-easing: cubic-bezier(0.65, 0.05, 0.36, 1); /* ease-out-expo */
+  --transition-duration-fast: 0.2s;
+  --transition-duration-normal: 0.3s;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: var(--color-background-dark);
+  color: var(--color-text-light);
+  font-family: var(--font-primary);
+  font-size: var(--font-size-base);
+  overflow: hidden;
+}
+
+.game-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+  border-radius: var(--spacing-sm);
+  box-shadow: 0 0 var(--spacing-xl) rgba(0, 0, 0, 0.4),
+              0 0 0 var(--spacing-xs) var(--color-ui-accent);
+  max-width: 500px;
+  box-sizing: border-box;
+}
+
+.score-display {
+  font-size: var(--font-size-score);
+  color: var(--color-text-light);
+  margin-bottom: var(--spacing-md);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-shadow: 0 0 var(--spacing-sm) rgba(255, 255, 255, 0.2);
+}
+
+canvas {
+  background-color: var(--color-background-dark);
+  border: var(--spacing-xs) solid var(--color-ui-accent);
+  display: block;
+}
+
+.game-over-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background-color: var(--color-overlay-background);
+  color: var(--color-text-light);
+  text-align: center;
+  border-radius: var(--spacing-sm);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-duration-normal) var(--transition-easing),
+              visibility var(--transition-duration-normal) var(--transition-easing);
+  pointer-events: none;
+}
+
+.game-over-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.game-over-overlay h2 {
+  font-size: var(--font-size-heading);
+  margin-bottom: var(--spacing-sm);
+  color: var(--color-ui-accent);
+  text-shadow: 0 0 var(--spacing-lg) oklch(70% 0.25 330 / 0.7);
+  letter-spacing: 0.15em;
+  line-height: 1;
+}
+
+.game-over-overlay p {
+  font-size: var(--font-size-button);
+  margin-bottom: var(--spacing-xl);
+  line-height: 1;
+}
+
+.start-restart-button {
+  background-color: var(--color-ui-accent);
+  color: var(--color-background-dark);
+  font-family: var(--font-primary);
+  font-size: var(--font-size-button);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border: none;
+  border-radius: var(--spacing-sm);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: transform var(--transition-duration-fast) var(--transition-easing),
+              background-color var(--transition-duration-fast) var(--transition-easing);
+  box-shadow: 0 var(--spacing-sm) var(--spacing-md) rgba(0, 0, 0, 0.3);
+}
+
+.start-restart-button:hover {
+  transform: translateY(-2px) scale(1.02);
+  background-color: oklch(75% 0.25 330);
+  box-shadow: 0 var(--spacing-sm) var(--spacing-md) rgba(0, 0, 0, 0.4),
+              0 0 var(--spacing-sm) var(--spacing-xs) var(--color-text-light);
+}
+
+.start-restart-button:active {
+  transform: translateY(0) scale(0.98);
+  background-color: oklch(65% 0.25 330);
+}

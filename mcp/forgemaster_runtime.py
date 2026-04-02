@@ -53,7 +53,7 @@ _ROUTING_TABLE: dict[str, str] = {
 # the corresponding lanes are flagged as restricted.
 _WRITE_DEPENDENT_LANES: frozenset[str] = frozenset({"implementer"})
 
-# Canonical write tool names (a subset of _ALL_TOOL_NAMES in nova_server_v2.py)
+# Canonical write tool names (a subset of _ALL_TOOL_NAMES in nova_server.py)
 _WRITE_TOOLS: frozenset[str] = frozenset({
     "nova_shard_create",
     "nova_shard_update",
@@ -69,7 +69,7 @@ class ForgemasterRuntime:
 
     Instantiated per-request in the ``nova_forgemaster_sprint`` MCP tool.
     The module-level ``_session_store`` and ``_permission_context`` singletons
-    from ``nova_server_v2.py`` are injected at construction time so this class
+    from ``nova_server.py`` are injected at construction time so this class
     remains testable in isolation.
     """
 
