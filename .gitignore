@@ -11,3 +11,4 @@ shards/
 *.pptx
 .env
 .env.*
+REFACTOR_ROADMAP.md
