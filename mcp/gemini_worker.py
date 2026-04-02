@@ -27,14 +27,22 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
 
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY not set in environment or .env file")
+_client = None
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+
+def get_client() -> genai.Client:
+    """Lazy-initialize the Gemini client so the key is read at first use,
+    not at server startup — avoids crash when GEMINI_API_KEY is absent."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set in environment or .env file")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 mcp = FastMCP("gemini-worker")
 
@@ -85,7 +93,7 @@ def gemini_execute_ticket(
     full_prompt = "\n".join(prompt_parts)
 
     try:
-        response = client.models.generate_content(
+        response = get_client().models.generate_content(
             model=GEMINI_MODEL,
             contents=full_prompt,
             config={"system_instruction": SYSTEM_PROMPT},

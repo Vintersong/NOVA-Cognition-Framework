@@ -174,11 +174,14 @@ def get_unique_filename(base: str) -> str:
 
 
 def load_shard(shard_id: str) -> tuple[dict, str]:
-    filepath = os.path.join(SHARD_DIR, shard_id + ".json")
-    if not os.path.exists(filepath):
+    shard_dir_resolved = Path(SHARD_DIR).resolve()
+    filepath = (shard_dir_resolved / (shard_id + ".json")).resolve()
+    if not filepath.is_relative_to(shard_dir_resolved):
+        raise ValueError(f"Invalid shard_id: '{shard_id}' resolves outside shard directory.")
+    if not filepath.exists():
         raise FileNotFoundError(f"Shard '{shard_id}' not found.")
     with open(filepath, "r", encoding="utf-8") as f:
-        return json.load(f), filepath
+        return json.load(f), str(filepath)
 
 
 def save_shard(filepath: str, data: dict):
@@ -280,7 +283,7 @@ def maybe_compact_shard(shard_data: dict, shard_id: str) -> bool:
 
     ctx["last_compacted"] = datetime.now().isoformat()
     ctx["compacted_turn_count"] = ctx.get("compacted_turn_count", 0) + len(older_turns)
-    shard_data["meta_tags"]["last_compacted"] = datetime.now().isoformat()
+    shard_data.setdefault("meta_tags", {})["last_compacted"] = datetime.now().isoformat()
 
     return True
 
@@ -434,6 +437,7 @@ def query_graph_transitive(
     graph = load_graph()
     relations = graph.get("relations", [])
     visited = set()
+    visited.add(root_id)
     queue = [(root_id, 0, [root_id])]
     results = []
 
@@ -823,7 +827,7 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
         })
 
     # Post-write enrichment hook — runs in thread pool to avoid blocking the event loop
-    await asyncio.get_event_loop().run_in_executor(None, enrich_shard, shard_id, shard_data)
+    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, shard_id, shard_data)
 
     save_shard(filepath, shard_data)
     patch_index_entry(shard_id, shard_data)
@@ -876,7 +880,7 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     compacted = maybe_compact_shard(data, params.shard_id)
 
     # Post-write enrichment hook — runs in thread pool to avoid blocking the event loop
-    await asyncio.get_event_loop().run_in_executor(None, enrich_shard, params.shard_id, data)
+    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, params.shard_id, data)
 
     save_shard(filepath, data)
     patch_index_entry(params.shard_id, data)
@@ -1046,7 +1050,7 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
     }
 
     # Runs in thread pool to avoid blocking the event loop
-    await asyncio.get_event_loop().run_in_executor(None, enrich_shard, new_id, meta_shard)
+    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, new_id, meta_shard)
     save_shard(filepath, meta_shard)
 
     if params.archive_originals:
