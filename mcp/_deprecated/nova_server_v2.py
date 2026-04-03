@@ -1,5 +1,5 @@
 """
-nova_server.py — NOVA MCP Server
+nova_server_v2.py — NOVA v2 MCP Server
 
 NOVA v2 adds three automation layers on top of v1:
 
@@ -33,7 +33,7 @@ Architecture:
   Knowledge Graph (inter-shard navigation)
     --> relationships, entities, pattern queries
 
-Tools (16 total):
+Tools (12 total):
   nova_shard_interact   — load shards into context
   nova_shard_create     — create new shard (+ post-write hook)
   nova_shard_update     — append to shard (+ post-write hook + auto-compact)
@@ -42,68 +42,47 @@ Tools (16 total):
   nova_shard_get        — read full raw shard content, no side effects
   nova_shard_merge      — merge shards into meta-shard
   nova_shard_archive    — soft-delete (sets intent=archived)
-  nova_shard_forget     — hard soft-delete with provenance log
-  nova_shard_consolidate — run decay + compact + merge suggestion cycle
-  nova_graph_query      — query inter-shard knowledge graph
-  nova_graph_relate     — manually add directed relation between shards
-  nova_session_flush    — persist active sprint session to disk
-  nova_session_load     — restore stored session to memory
-  nova_session_list     — list all stored session IDs
-  nova_forgemaster_sprint — full 4-turn sprint pipeline
+  nova_shard_forget     — NEW: hard soft-delete with provenance log
+  nova_shard_consolidate — NEW: run decay + compact + merge suggestion cycle
+  nova_graph_query      — NEW: query inter-shard knowledge graph
+  nova_graph_relate     — NEW: manually add directed relation between shards
 """
 
-import asyncio
-import json
 import os
-import sys as _sys
-from datetime import datetime
-from pathlib import Path
+import re
+import json
+import math
+import difflib
+from datetime import datetime, timedelta
 from typing import Optional
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
-from config import (
-    SHARD_DIR, INDEX_FILE, GRAPH_FILE, USAGE_LOG_FILE,
-    SESSION_STORE_DIR, MAX_FRAGMENTS,
-    COMPACT_THRESHOLD, COMPACT_KEEP_RECENT,
-    DECAY_RATE, DECAY_INTERVAL_DAYS, MERGE_SIMILARITY_THRESHOLD,
-    HUGINN_CONFIDENCE_THRESHOLD, NOTT_COUNT_THRESHOLD,
-)
-from schemas import (
-    ShardInteractInput, ShardCreateInput, ShardUpdateInput, ShardSearchInput,
-    ShardMergeInput, ShardArchiveInput, ShardForgetInput, ShardGetInput,
-    ShardConsolidateInput, GraphQueryInput, GraphRelationInput,
-    SessionFlushInput, SessionLoadInput, SessionListInput,
-    ForgemasterSprintInput,
-)
-from store import (
-    sanitize_filename, get_unique_filename,
-    load_shard, save_shard, update_shard_usage, extract_fragments,
-    load_index, save_index, classify_tags, update_index, patch_index_entry,
-    guess_relevant_shards,
-)
-from graph import (
-    load_graph, save_graph,
-    add_shard_to_graph, add_relation,
-    query_graph, query_graph_transitive,
-)
-from maintenance import (
-    get_confidence, apply_confidence_decay, confidence_weighted_score,
-    maybe_compact_shard, cosine_similarity, find_merge_candidates,
-)
-from usage import log_operation
-from nova_embeddings_local import enrich_shard
+from pydantic import BaseModel, Field, ConfigDict
+from filelock import FileLock
+from nova_embeddings_local import enrich_shard, _generate_compaction_summary
 from permissions import ToolPermissionContext
 from models import UsageSummary
 from session_store import SessionStore, NovaSession
 from forgemaster_runtime import ForgemasterRuntime
-from ravens import Huginn, Muninn
-from nott import Nott, NottTrigger
-from hooks import NovaHookRegistry, NovaHookEvent
 
-_sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Gemini"))
-from gemini_mcp import register_gemini_tools
+# === Environment ===
+# Paths default to repo root (one level up from mcp/) so the server works
+# correctly regardless of the working directory it's launched from.
+_REPO_ROOT = Path(__file__).parent.parent
 
-# Bootstrap
+SHARD_DIR = os.environ.get("NOVA_SHARD_DIR", str(_REPO_ROOT / "shards"))
+INDEX_FILE = os.environ.get("NOVA_INDEX_FILE", str(_REPO_ROOT / "shard_index.json"))
+GRAPH_FILE = os.environ.get("NOVA_GRAPH_FILE", str(_REPO_ROOT / "shard_graph.json"))
+USAGE_LOG_FILE = os.environ.get("NOVA_USAGE_LOG", str(_REPO_ROOT / "nova_usage.jsonl"))
+MAX_FRAGMENTS = int(os.environ.get("NOVA_MAX_FRAGMENTS", "10"))
+COMPACT_THRESHOLD = int(os.environ.get("NOVA_COMPACT_THRESHOLD", "30"))
+COMPACT_KEEP_RECENT = int(os.environ.get("NOVA_COMPACT_KEEP", "15"))
+DECAY_RATE = float(os.environ.get("NOVA_DECAY_RATE", "0.05"))
+DECAY_INTERVAL_DAYS = int(os.environ.get("NOVA_DECAY_DAYS", "7"))
+MERGE_SIMILARITY_THRESHOLD = float(os.environ.get("NOVA_MERGE_THRESHOLD", "0.85"))
+# OPENAI_API_KEY removed — using local embeddings via nova_embeddings_local
+
 os.makedirs(SHARD_DIR, exist_ok=True)
 
 # === Permission context ===
@@ -119,18 +98,13 @@ _permission_context: ToolPermissionContext = ToolPermissionContext.from_iterable
 _session_usage: UsageSummary = UsageSummary()
 
 # === Session store ===
-_session_store: SessionStore = SessionStore(SESSION_STORE_DIR)
-
-# === Norse Pantheon — agent singletons ===
-# Instantiated after env vars are resolved. Function references injected into
-# NÓTT after the utility functions are defined below.
-_huginn: Huginn          # bound after env setup
-_muninn: Muninn          # bound after env setup
-_nott: Nott              # bound after utility functions are defined
-_hooks: NovaHookRegistry # bound after nott is initialized
+# Defaults to a nova_sessions/ subdirectory next to the shard store.
+_SESSION_STORE_DIR = os.environ.get(
+    "NOVA_SESSION_STORE_DIR", str(_REPO_ROOT / "nova_sessions")
+)
+_session_store: SessionStore = SessionStore(_SESSION_STORE_DIR)
 
 mcp = FastMCP("nova_mcp_v2")
-register_gemini_tools(mcp)
 
 # ═══════════════════════════════════════════════════════════
 # PERMISSION HELPERS
@@ -171,45 +145,551 @@ def _permission_error(tool_name: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# NORSE PANTHEON — AGENT INITIALISATION
-# All utility functions above must be defined before this block.
-# NÓTT receives function references to avoid circular imports.
+# SHARD I/O
 # ═══════════════════════════════════════════════════════════
 
-_huginn = Huginn(
-    shard_dir=SHARD_DIR,
-    usage_log_file=USAGE_LOG_FILE,
-    confidence_threshold=HUGINN_CONFIDENCE_THRESHOLD,
-)
+def sanitize_filename(name: str) -> str:
+    name = name.lower().strip()
+    name = re.sub(r'[^a-z0-9_]+', '_', name)
+    return name[:40]
 
-_muninn = Muninn(
-    shard_dir=SHARD_DIR,
-    usage_log_file=USAGE_LOG_FILE,
-)
 
-_nott = Nott(
-    shard_dir=SHARD_DIR,
-    graph_file=GRAPH_FILE,
-    usage_log_file=USAGE_LOG_FILE,
-    load_index_fn=load_index,
-    update_index_fn=update_index,
-    load_shard_fn=load_shard,
-    save_shard_fn=save_shard,
-    decay_fn=apply_confidence_decay,
-    compact_fn=maybe_compact_shard,
-    merge_fn=find_merge_candidates,
-    load_graph_fn=load_graph,
-    save_graph_fn=save_graph,
-)
+def get_unique_filename(base: str) -> str:
+    filename = base + ".json"
+    i = 1
+    while os.path.exists(os.path.join(SHARD_DIR, filename)):
+        filename = f"{base}_{i}.json"
+        i += 1
+    return filename
 
-# ── Hook registry — event-driven dispatch (replaces bespoke create_task calls) ──
-_hooks = NovaHookRegistry()
-_hooks.register(NovaHookEvent.SESSION_START,
-                lambda **_kw: _nott.run(NottTrigger.SESSION_START))
-_hooks.register(NovaHookEvent.POST_SPRINT,
-                lambda **_kw: _nott.run(NottTrigger.POST_SPRINT))
-_hooks.register(NovaHookEvent.COUNT_THRESHOLD,
-                lambda **_kw: _nott.run(NottTrigger.COUNT_THRESHOLD))
+
+def load_shard(shard_id: str) -> tuple[dict, str]:
+    filepath = os.path.join(SHARD_DIR, shard_id + ".json")
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Shard '{shard_id}' not found.")
+    with open(filepath, "r", encoding="utf-8") as f:
+        return json.load(f), filepath
+
+
+def save_shard(filepath: str, data: dict):
+    lock_path = filepath + ".lock"
+    with FileLock(lock_path, timeout=5):
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+
+def update_shard_usage(data: dict):
+    meta = data.setdefault("meta_tags", {})
+    meta["usage_count"] = meta.get("usage_count", 0) + 1
+    meta["last_used"] = datetime.now().isoformat()
+
+
+def extract_fragments(shard_data: dict, shard_id: str) -> list[str]:
+    fragments = []
+    for entry in shard_data.get("conversation_history", []):
+        if entry.get("user"):
+            fragments.append(f"[SHARD: {shard_id}] User: {entry['user']}")
+        if entry.get("ai"):
+            fragments.append(f"[SHARD: {shard_id}] NOVA: {entry['ai']}")
+    return fragments
+
+
+# ═══════════════════════════════════════════════════════════
+# CONFIDENCE DECAY
+# ═══════════════════════════════════════════════════════════
+
+def get_confidence(shard_data: dict) -> float:
+    """Get current confidence score. Default 1.0 for shards without it."""
+    return shard_data.get("meta_tags", {}).get("confidence", 1.0)
+
+
+def apply_confidence_decay(shard_data: dict) -> float:
+    """
+    Decay confidence for shards not accessed in DECAY_INTERVAL_DAYS.
+    Formula: MAX(0.1, confidence * (1 - decay_rate))
+    Stolen from OpenFang's consolidation.rs — credit where it's due.
+    Returns new confidence value.
+    """
+    meta = shard_data.setdefault("meta_tags", {})
+    current_confidence = meta.get("confidence", 1.0)
+    last_used_str = meta.get("last_used")
+
+    if not last_used_str:
+        return current_confidence
+
+    try:
+        last_used = datetime.fromisoformat(last_used_str)
+        days_since = (datetime.now() - last_used).days
+
+        if days_since >= DECAY_INTERVAL_DAYS:
+            periods = days_since // DECAY_INTERVAL_DAYS
+            new_confidence = current_confidence
+            for _ in range(periods):
+                new_confidence = max(0.1, new_confidence * (1.0 - DECAY_RATE))
+            meta["confidence"] = round(new_confidence, 4)
+            return new_confidence
+    except (ValueError, TypeError):
+        pass
+
+    return current_confidence
+
+
+def confidence_weighted_score(base_score: float, confidence: float) -> float:
+    """Weight search relevance by confidence. High confidence + high relevance = top result."""
+    return base_score * confidence
+
+
+# ═══════════════════════════════════════════════════════════
+# AUTO-COMPACTION
+# ═══════════════════════════════════════════════════════════
+
+def maybe_compact_shard(shard_data: dict, shard_id: str) -> bool:
+    """
+    If conversation_history exceeds COMPACT_THRESHOLD, auto-compact:
+    - Summarize older turns into context.summary
+    - Keep only last COMPACT_KEEP_RECENT turns in full
+    Returns True if compaction happened.
+    """
+    history = shard_data.get("conversation_history", [])
+    if len(history) < COMPACT_THRESHOLD:
+        return False
+
+    older_turns = history[:-COMPACT_KEEP_RECENT]
+    recent_turns = history[-COMPACT_KEEP_RECENT:]
+
+    # Generate compaction summary — use GPT if available, fallback to naive
+    compaction_summary = _generate_compaction_summary(older_turns, shard_id)
+
+    shard_data["conversation_history"] = recent_turns
+    ctx = shard_data.setdefault("context", {})
+    existing_summary = ctx.get("summary", "")
+    if existing_summary:
+        ctx["summary"] = f"{existing_summary}\n\n[COMPACTED — {len(older_turns)} earlier turns]: {compaction_summary}"
+    else:
+        ctx["summary"] = f"[COMPACTED — {len(older_turns)} turns]: {compaction_summary}"
+
+    ctx["last_compacted"] = datetime.now().isoformat()
+    ctx["compacted_turn_count"] = ctx.get("compacted_turn_count", 0) + len(older_turns)
+    shard_data["meta_tags"]["last_compacted"] = datetime.now().isoformat()
+
+    return True
+
+
+# ═══════════════════════════════════════════════════════════
+# POST-WRITE ENRICHMENT HOOKS
+# ═══════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════
+# COSINE SIMILARITY + MERGE SUGGESTIONS
+# ═══════════════════════════════════════════════════════════
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def find_merge_candidates(shard_id: str, shard_data: dict, index: dict) -> list[dict]:
+    """
+    Compare this shard's embedding against all others.
+    Returns list of candidates with similarity > MERGE_SIMILARITY_THRESHOLD.
+    """
+    my_embedding = shard_data.get("context", {}).get("embedding")
+    if not my_embedding:
+        return []
+
+    candidates = []
+    for other_id, entry in index.items():
+        if other_id == shard_id:
+            continue
+        if "archived" in entry.get("tags", []):
+            continue
+
+        other_path = os.path.join(SHARD_DIR, other_id + ".json")
+        if not os.path.exists(other_path):
+            continue
+
+        try:
+            with open(other_path, "r", encoding="utf-8") as f:
+                other_data = json.load(f)
+            other_embedding = other_data.get("context", {}).get("embedding")
+            if not other_embedding:
+                continue
+
+            sim = cosine_similarity(my_embedding, other_embedding)
+            if sim >= MERGE_SIMILARITY_THRESHOLD:
+                candidates.append({
+                    "shard_id": other_id,
+                    "similarity": round(sim, 4),
+                    "guiding_question": other_data.get("guiding_question", "")
+                })
+        except Exception:
+            continue
+
+    candidates.sort(key=lambda x: x["similarity"], reverse=True)
+    return candidates
+
+
+# ═══════════════════════════════════════════════════════════
+# KNOWLEDGE GRAPH
+# ═══════════════════════════════════════════════════════════
+
+def load_graph() -> dict:
+    if not os.path.exists(GRAPH_FILE):
+        return {"entities": {}, "relations": []}
+    try:
+        with open(GRAPH_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"entities": {}, "relations": []}
+
+
+def save_graph(graph: dict):
+    with FileLock(GRAPH_FILE + ".lock", timeout=5):
+        with open(GRAPH_FILE, "w", encoding="utf-8") as f:
+            json.dump(graph, f, indent=2)
+
+
+def add_shard_to_graph(shard_id: str, shard_data: dict):
+    """Register a shard as an entity in the knowledge graph on create."""
+    graph = load_graph()
+    graph["entities"][shard_id] = {
+        "type": "Shard",
+        "guiding_question": shard_data.get("guiding_question", ""),
+        "theme": shard_data.get("meta_tags", {}).get("theme", "general"),
+        "intent": shard_data.get("meta_tags", {}).get("intent", "reflection"),
+        "created_at": datetime.now().isoformat(),
+        "confidence": shard_data.get("meta_tags", {}).get("confidence", 1.0)
+    }
+    save_graph(graph)
+
+
+def add_relation(source_id: str, target_id: str, relation_type: str, notes: str = ""):
+    """Add a directed relation between two shards."""
+    graph = load_graph()
+    relation = {
+        "source": source_id,
+        "target": target_id,
+        "type": relation_type,
+        "notes": notes,
+        "created_at": datetime.now().isoformat()
+    }
+    # Avoid exact duplicates
+    existing = graph.get("relations", [])
+    for r in existing:
+        if r["source"] == source_id and r["target"] == target_id and r["type"] == relation_type:
+            return
+    existing.append(relation)
+    graph["relations"] = existing
+    save_graph(graph)
+
+
+def query_graph(pattern: dict) -> list[dict]:
+    """
+    Simple pattern query over the knowledge graph.
+    Pattern keys: source, target, type (all optional)
+    Returns matching relations.
+    """
+    graph = load_graph()
+    results = []
+    for relation in graph.get("relations", []):
+        match = True
+        if "source" in pattern and relation["source"] != pattern["source"]:
+            match = False
+        if "target" in pattern and relation["target"] != pattern["target"]:
+            match = False
+        if "type" in pattern and relation["type"] != pattern["type"]:
+            match = False
+        if match:
+            results.append(relation)
+    return results
+
+
+def query_graph_transitive(
+    root_id: str,
+    relation_type: str = None,
+    direction: str = "outbound",
+    max_depth: int = 3,
+) -> list[dict]:
+    """
+    BFS traversal of the knowledge graph from root_id.
+    direction: "outbound" (root is source), "inbound" (root is target), "both"
+    Returns list of dicts: {shard_id, depth, path, relation_type}
+    """
+    graph = load_graph()
+    relations = graph.get("relations", [])
+    visited = set()
+    queue = [(root_id, 0, [root_id])]
+    results = []
+
+    while queue:
+        current, depth, path = queue.pop(0)
+        if depth >= max_depth:
+            continue
+
+        for r in relations:
+            if relation_type and r["type"] != relation_type:
+                continue
+
+            next_id = None
+            if direction in ("outbound", "both") and r["source"] == current:
+                next_id = r["target"]
+            elif direction in ("inbound", "both") and r["target"] == current:
+                next_id = r["source"]
+
+            if next_id and next_id not in visited:
+                visited.add(next_id)
+                new_path = path + [next_id]
+                results.append({
+                    "shard_id": next_id,
+                    "depth": depth + 1,
+                    "path": new_path,
+                    "relation_type": r["type"],
+                })
+                queue.append((next_id, depth + 1, new_path))
+
+    return results
+
+
+# ═══════════════════════════════════════════════════════════
+# USAGE TRACKING
+# ═══════════════════════════════════════════════════════════
+
+def log_operation(tool_name: str, shard_ids: list[str], metadata: dict = None):
+    """Append operation log to JSONL file for cost/usage analysis."""
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "tool": tool_name,
+        "shards": shard_ids,
+        "metadata": metadata or {}
+    }
+    try:
+        with open(USAGE_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════
+# INDEX MANAGEMENT
+# ═══════════════════════════════════════════════════════════
+
+def load_index() -> dict:
+    if not os.path.exists(INDEX_FILE):
+        return {}
+    try:
+        with open(INDEX_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_index(index: dict):
+    with FileLock(INDEX_FILE + ".lock", timeout=5):
+        with open(INDEX_FILE, "w", encoding="utf-8") as f:
+            json.dump(index, f, indent=2)
+
+
+def classify_tags(shard: dict) -> list[str]:
+    tags = []
+    now = datetime.now()
+    meta = shard.get("meta_tags", {})
+    usage_count = meta.get("usage_count", 0)
+    last_used_str = meta.get("last_used")
+    confidence = meta.get("confidence", 1.0)
+
+    if last_used_str:
+        try:
+            last_used = datetime.fromisoformat(last_used_str)
+            if now - last_used < timedelta(days=3):
+                tags.append("recent")
+            if now - last_used > timedelta(days=14):
+                tags.append("stale")
+        except (ValueError, TypeError):
+            pass
+
+    if usage_count > 10:
+        tags.append("frequently_used")
+    if meta.get("intent") == "archived":
+        tags.append("archived")
+    if meta.get("intent") == "forgotten":
+        tags.append("forgotten")
+    if shard.get("context", {}).get("embedding"):
+        tags.append("enriched")
+    if confidence < 0.4:
+        tags.append("low_confidence")
+    if meta.get("last_compacted"):
+        tags.append("compacted")
+
+    return tags
+
+
+def update_index() -> dict:
+    index = {}
+    if not os.path.exists(SHARD_DIR):
+        return index
+
+    for fname in sorted(os.listdir(SHARD_DIR)):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(SHARD_DIR, fname)
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                shard = json.load(f)
+        except Exception:
+            continue
+
+        shard_id = shard.get("shard_id", fname.replace(".json", ""))
+        index[shard_id] = {
+            "shard_id": shard_id,
+            "filename": fname,
+            "guiding_question": shard.get("guiding_question", ""),
+            "tags": classify_tags(shard),
+            "meta": shard.get("meta_tags", {}),
+            "context_summary": shard.get("context", {}).get("summary", ""),
+            "context_topics": shard.get("context", {}).get("topics", []),
+            "confidence": shard.get("meta_tags", {}).get("confidence", 1.0),
+        }
+
+    save_index(index)
+    return index
+
+
+def patch_index_entry(shard_id: str, shard_data: dict) -> dict:
+    """Update a single shard entry in the index without full rescan."""
+    index = load_index()
+    index[shard_id] = {
+        "shard_id": shard_id,
+        "filename": shard_id + ".json",
+        "guiding_question": shard_data.get("guiding_question", ""),
+        "tags": classify_tags(shard_data),
+        "meta": shard_data.get("meta_tags", {}),
+        "context_summary": shard_data.get("context", {}).get("summary", ""),
+        "context_topics": shard_data.get("context", {}).get("topics", []),
+        "confidence": shard_data.get("meta_tags", {}).get("confidence", 1.0),
+    }
+    save_index(index)
+    return index
+
+
+def guess_relevant_shards(message: str, index: dict, top_n: int = 3) -> list[str]:
+    """Fuzzy match with confidence weighting."""
+    scored = []
+    msg_lower = message.lower()
+    msg_tokens = set(msg_lower.split())
+
+    for shard_id, entry in index.items():
+        tags = entry.get("tags", [])
+        if "archived" in tags or "forgotten" in tags:
+            continue
+
+        confidence = entry.get("confidence", 1.0)
+
+        searchable = " ".join([
+            entry.get("guiding_question", ""),
+            entry.get("context_summary", ""),
+            " ".join(entry.get("context_topics", [])),
+            entry.get("meta", {}).get("theme", ""),
+            entry.get("meta", {}).get("intent", ""),
+        ]).lower()
+
+        search_tokens = set(searchable.split())
+        overlap = msg_tokens & search_tokens
+        base_score = len(overlap) / max(len(msg_tokens), 1)
+        weighted_score = confidence_weighted_score(base_score, confidence)
+
+        if weighted_score > 0.05:
+            scored.append((shard_id, weighted_score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [s[0] for s in scored[:top_n]]
+
+
+# ═══════════════════════════════════════════════════════════
+# INPUT MODELS
+# ═══════════════════════════════════════════════════════════
+
+class ShardInteractInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_ids: str = Field(default="")
+    message: str = Field(..., min_length=1)
+    auto_select: bool = Field(default=True)
+    session_id: Optional[str] = Field(default=None)
+
+
+class ShardCreateInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    guiding_question: str = Field(..., min_length=1)
+    intent: str = Field(default="reflection")
+    theme: str = Field(default="general")
+    initial_message: str = Field(default="")
+    related_shards: str = Field(default="")
+    relation_type: str = Field(default="references")
+
+
+class ShardUpdateInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_id: str = Field(..., min_length=1)
+    user_message: str = Field(default="")
+    ai_response: str = Field(default="")
+
+
+class ShardSearchInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    query: str = Field(..., min_length=1)
+    top_n: int = Field(default=5, ge=1, le=20)
+    include_low_confidence: bool = Field(default=False)
+
+
+class ShardMergeInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_ids: str = Field(..., min_length=1)
+    new_guiding_question: str = Field(..., min_length=1)
+    new_theme: str = Field(..., min_length=1)
+    archive_originals: bool = Field(default=False)
+
+
+class ShardArchiveInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_id: str = Field(..., min_length=1)
+
+
+class ShardForgetInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_id: str = Field(..., min_length=1)
+    reason: str = Field(default="")
+
+
+class GraphQueryInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    source: str = Field(default="")
+    target: str = Field(default="")
+    relation_type: str = Field(default="")
+    transitive: bool = Field(default=False)
+    max_depth: int = Field(default=3, ge=1, le=10)
+
+
+class GraphRelationInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    source_id: str = Field(..., min_length=1)
+    target_id: str = Field(..., min_length=1)
+    relation_type: str = Field(..., min_length=1)
+    notes: str = Field(default="")
+
+
+class ShardConsolidateInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    dry_run: bool = Field(default=False)
+
+
+class ShardGetInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_id: str = Field(..., min_length=1)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -226,23 +706,11 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
 
     shard_ids = [s.strip() for s in params.shard_ids.split(",") if s.strip()] if params.shard_ids else []
     inferred = False
-    huginn_confidence: float = 0.0
-    muninn_used: bool = False
 
     if not shard_ids and params.auto_select:
         inferred = True
         index = load_index() or update_index()
-        # ━━ HUGINN — fast first pass ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        huginn_result = await _huginn.retrieve(params.message, index)
-        huginn_confidence = huginn_result.max_confidence
-        retrieval = huginn_result
-        # ━━ MUNINN — deep pass if HUGINN not confident ━━━━━━━━━━━━━━━━━━━━━━
-        if not huginn_result.is_confident(_huginn.confidence_threshold):
-            retrieval = await _muninn.rerank(params.message, huginn_result, index)
-            muninn_used = True
-        shard_ids = retrieval.shard_ids or []
-        # ━━ NÓTT — lightweight session-start decay (fire-and-forget) ━━━━━━━━
-        _hooks.emit(NovaHookEvent.SESSION_START)
+        shard_ids = guess_relevant_shards(params.message, index) or []
 
     if not shard_ids:
         return json.dumps({
@@ -281,8 +749,6 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
     response_payload = {
         "status": "loaded",
         "inferred": inferred,
-        "huginn_confidence": round(huginn_confidence, 4),
-        "muninn_used": muninn_used,
         "shards": loaded,
         "errors": errors
     }
@@ -346,8 +812,9 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
             "ai": ""
         })
 
-    # Post-write enrichment hook — runs in thread pool to avoid blocking the event loop
-    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, shard_id, shard_data)
+    # Post-write enrichment hook
+    # Blocking — refactor to async post-write hook in future iteration
+    enrich_shard(shard_id, shard_data)
 
     save_shard(filepath, shard_data)
     patch_index_entry(shard_id, shard_data)
@@ -362,10 +829,6 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     # Check for merge candidates
     index = load_index()
     merge_candidates = find_merge_candidates(shard_id, shard_data, index)
-
-    # NÓTT — count-threshold check: fire-and-forget if store is getting large
-    if len(index) >= NOTT_COUNT_THRESHOLD:
-        _hooks.emit(NovaHookEvent.COUNT_THRESHOLD)
 
     log_operation("nova_shard_create", [shard_id])
 
@@ -400,12 +863,12 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     })
     update_shard_usage(data)
 
-    # NÓTT owns compaction — fire-and-forget post-sprint cycle
-    # (replaces inline maybe_compact_shard call)
-    _hooks.emit(NovaHookEvent.POST_SPRINT)
+    # Auto-compaction check
+    compacted = maybe_compact_shard(data, params.shard_id)
 
-    # Post-write enrichment hook — runs in thread pool to avoid blocking the event loop
-    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, params.shard_id, data)
+    # Post-write enrichment hook
+    # Blocking — refactor to async post-write hook in future iteration
+    enrich_shard(params.shard_id, data)
 
     save_shard(filepath, data)
     patch_index_entry(params.shard_id, data)
@@ -422,7 +885,7 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
         "status": "updated",
         "shard_id": params.shard_id,
         "total_entries": len(data["conversation_history"]),
-        "nott_scheduled": True,
+        "compacted": compacted,
         "enrichment_status": data.get("meta_tags", {}).get("enrichment_status", "unknown"),
     }, indent=2)
 
@@ -471,25 +934,12 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
             })
 
     results.sort(key=lambda x: x["weighted_score"], reverse=True)
-
-    # Run HUGINN → MUNINN pipeline to get semantic retrieval metadata
-    huginn_result = await _huginn.retrieve(params.query, index, params.top_n)
-    if not huginn_result.is_confident(_huginn.confidence_threshold):
-        final_retrieval = await _muninn.rerank(params.query, huginn_result, index, params.top_n)
-        muninn_fired = True
-    else:
-        final_retrieval = huginn_result
-        muninn_fired = False
-
     log_operation("nova_shard_search", [], {"query": params.query})
 
     return json.dumps({
         "query": params.query,
         "results": results[:params.top_n],
-        "total_searched": len(index),
-        "huginn_confidence": round(huginn_result.max_confidence, 4),
-        "muninn_used": muninn_fired,
-        "huginn_ranking": final_retrieval.shard_ids,
+        "total_searched": len(index)
     }, indent=2)
 
 
@@ -587,8 +1037,8 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
         }
     }
 
-    # Runs in thread pool to avoid blocking the event loop
-    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, new_id, meta_shard)
+    # Blocking — refactor to async post-write hook in future iteration
+    enrich_shard(new_id, meta_shard)
     save_shard(filepath, meta_shard)
 
     if params.archive_originals:
@@ -677,32 +1127,92 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
 @mcp.tool(name="nova_shard_consolidate")
 async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
     """
-    Run the full maintenance cycle via NÓTT (Goddess of Night):
+    Run the full maintenance cycle:
     1. Apply confidence decay to all shards not accessed in DECAY_INTERVAL_DAYS
     2. Auto-compact any shards exceeding COMPACT_THRESHOLD turns
     3. Surface merge suggestions for high-similarity pairs
-    4. Sync knowledge graph entity confidence values
-    5. Return a summary of what changed.
-
-    This tool is for explicit manual invocation. Automated NÓTT cycles
-    also run non-blocking on nova_shard_update (POST_SPRINT) and
-    nova_shard_interact (SESSION_START).
+    4. Return a summary of what changed.
+    
+    Run this periodically (on startup, daily, or when things feel cluttered).
     """
     if _permission_context.blocks("nova_shard_consolidate"):
         return _permission_error("nova_shard_consolidate")
+    index = load_index() or update_index()
+    decayed = []
+    compacted = []
+    merge_suggestions = []
 
-    # Awaited — user explicitly requested this, blocking is acceptable
-    report = await _nott.run(NottTrigger.SCHEDULED, dry_run=params.dry_run)
+    for shard_id in list(index.keys()):
+        tags = index[shard_id].get("tags", [])
+        if "forgotten" in tags:
+            continue
+
+        try:
+            data, filepath = load_shard(shard_id)
+        except FileNotFoundError:
+            continue
+
+        # 1. Confidence decay
+        old_confidence = data.get("meta_tags", {}).get("confidence", 1.0)
+        new_confidence = apply_confidence_decay(data)
+        if new_confidence < old_confidence:
+            decayed.append({
+                "shard_id": shard_id,
+                "old_confidence": round(old_confidence, 4),
+                "new_confidence": round(new_confidence, 4)
+            })
+
+        # 2. Auto-compaction
+        was_compacted = maybe_compact_shard(data, shard_id)
+        if was_compacted:
+            compacted.append(shard_id)
+
+        save_shard(filepath, data)
+
+    # Rebuild index after mutations
+    index = update_index()
+
+    # 3. Merge suggestions — only for enriched shards
+    checked = set()
+    for shard_id, entry in index.items():
+        if "enriched" not in entry.get("tags", []):
+            continue
+        if shard_id in checked:
+            continue
+
+        try:
+            data, _ = load_shard(shard_id)
+            candidates = find_merge_candidates(shard_id, data, index)
+            for c in candidates:
+                pair = tuple(sorted([shard_id, c["shard_id"]]))
+                if pair not in checked:
+                    merge_suggestions.append({
+                        "shard_a": shard_id,
+                        "shard_b": c["shard_id"],
+                        "similarity": c["similarity"],
+                        "question_a": data.get("guiding_question", ""),
+                        "question_b": c["guiding_question"]
+                    })
+                    checked.add(pair)
+        except FileNotFoundError:
+            continue
+
+        checked.add(shard_id)
 
     log_operation("nova_shard_consolidate", [], {
-        "trigger": "manual",
-        "decayed": len(report.decayed_shards),
-        "compacted": len(report.compacted_shards),
-        "merge_suggestions": len(report.merge_suggestions),
-        "dry_run": params.dry_run,
+        "decayed": len(decayed),
+        "compacted": len(compacted),
+        "merge_suggestions": len(merge_suggestions)
     })
 
-    return json.dumps(report.to_dict(), indent=2)
+    return json.dumps({
+        "status": "consolidation_complete",
+        "decayed_shards": decayed,
+        "compacted_shards": compacted,
+        "merge_suggestions": merge_suggestions[:10],  # Cap at 10
+        "total_shards": len(index),
+        "summary": f"Decayed {len(decayed)} shards, compacted {len(compacted)}, found {len(merge_suggestions)} merge candidates."
+    }, indent=2)
 
 
 @mcp.tool(name="nova_graph_query")
@@ -801,6 +1311,20 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
 # SESSION TOOLS
 # ═══════════════════════════════════════════════════════════
 
+class SessionFlushInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    session_id: str = Field(..., min_length=1)
+
+
+class SessionLoadInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    session_id: str = Field(..., min_length=1)
+
+
+class SessionListInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+
+
 @mcp.tool(name="nova_session_flush")
 async def nova_session_flush(params: SessionFlushInput) -> str:
     """Persist an active session to disk and remove it from memory. Returns JSON confirmation with token totals."""
@@ -878,6 +1402,13 @@ async def nova_session_list(params: SessionListInput) -> str:
 # ═══════════════════════════════════════════════════════════
 # FORGEMASTER TOOLS
 # ═══════════════════════════════════════════════════════════
+
+class ForgemasterSprintInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    sprint_id: str = Field(..., min_length=1)
+    design_doc: str = Field(..., min_length=1)
+    shard_ids: Optional[str] = Field(default=None)
+
 
 @mcp.tool(name="nova_forgemaster_sprint")
 async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:

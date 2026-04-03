@@ -58,31 +58,64 @@ def generate_local_embedding(text: str) -> list[float] | None:
 
 def generate_local_summary(turns: list[dict], shard_id: str) -> str:
     """
-    Generate a compaction summary without any API.
-    Extracts key phrases from the conversation using simple heuristics.
-    Not as good as GPT but zero cost and zero latency.
+    Structured compaction summary.
+    Goal/Progress/Decisions/Next-Steps template borrowed from
+    hermes-agent ContextCompressor. No LLM required — heuristic extraction.
     """
     if not turns:
         return "Empty conversation."
 
-    # Collect user messages (they carry the intent)
-    user_messages = [t.get("user", "") for t in turns if t.get("user")]
+    user_messages = [t.get("user", "").strip() for t in turns if t.get("user", "").strip()]
+    ai_messages = [t.get("ai", "").strip() for t in turns if t.get("ai", "").strip()]
 
     if not user_messages:
         return "Conversation with no user messages."
 
-    # Take first, middle, and last user message as summary anchors
-    anchors = []
-    if len(user_messages) >= 1:
-        anchors.append(user_messages[0][:120])
-    if len(user_messages) >= 3:
-        mid = len(user_messages) // 2
-        anchors.append(user_messages[mid][:120])
-    if len(user_messages) >= 2:
-        anchors.append(user_messages[-1][:120])
+    # [GOAL] — opening intent captured from first user message
+    goal = user_messages[0][:200]
 
-    anchor_text = " → ".join(anchors)
-    return f"Conversation covering: {anchor_text} ({len(turns)} turns compacted)"
+    # [PROGRESS] — turn count + last user request
+    final_user = user_messages[-1][:120] if len(user_messages) > 1 else ""
+    progress = (
+        f"{len(turns)} turns. Last request: {final_user}"
+        if final_user else f"{len(turns)} turns."
+    )
+
+    # [DECISIONS] — scan AI responses for decision-bearing sentences
+    decision_keywords = (
+        "decided", "will use", "using", "chosen", "approach",
+        "implement", "solution", "going with", "selected",
+    )
+    decisions: list[str] = []
+    for msg in ai_messages:
+        lower = msg.lower()
+        for kw in decision_keywords:
+            if kw in lower:
+                for sentence in msg.split(". "):
+                    if kw in sentence.lower():
+                        decisions.append(sentence.strip()[:120])
+                        break
+                break
+        if len(decisions) >= 3:
+            break
+
+    # [NEXT] — first sentence of the last AI message
+    next_step = ""
+    if ai_messages:
+        first_sentence = ai_messages[-1].split(". ")[0].strip()[:120]
+        if len(first_sentence) > 10:
+            next_step = first_sentence
+
+    parts = [
+        f"[GOAL] {goal}",
+        f"[PROGRESS] {progress}",
+    ]
+    if decisions:
+        parts.append("[DECISIONS] " + " | ".join(decisions))
+    if next_step:
+        parts.append(f"[NEXT] {next_step}")
+
+    return "\n".join(parts)
 
 
 # ═══════════════════════════════════════════════════════════

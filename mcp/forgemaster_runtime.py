@@ -62,6 +62,16 @@ _WRITE_TOOLS: frozenset[str] = frozenset({
     "nova_shard_forget",
 })
 
+# Complexity override: task types containing these words are routed to claude-sonnet
+# regardless of what the routing table says.
+# Inspired by hermes-agent smart_model_routing.py choose_cheap_model_route().
+_COMPLEX_KEYWORDS: frozenset[str] = frozenset({
+    "debug", "debugging", "investigation", "analysis", "architecture",
+    "migration", "refactor", "security", "performance", "integration",
+    "system-design", "database", "authentication", "authorization",
+    "tracing", "profiling", "concurrency",
+})
+
 
 class ForgemasterRuntime:
     """
@@ -114,10 +124,19 @@ class ForgemasterRuntime:
     def route_ticket(self, task_type: str) -> str:
         """
         Map a task type to a model name using the routing table from
-        ``forgemaster/AGENTS.md``.  Defaults to ``claude-sonnet`` for
-        unknown task types.
+        ``forgemaster/AGENTS.md``.
+
+        Complexity override: tasks whose type string contains any of the
+        ``_COMPLEX_KEYWORDS`` are promoted to ``claude-sonnet`` regardless
+        of the routing table (borrows the keyword-routing heuristic from
+        hermes-agent smart_model_routing.py).
+
+        Defaults to ``claude-sonnet`` for unknown task types.
         """
-        return _ROUTING_TABLE.get(task_type.lower().strip(), "claude-sonnet")
+        normalized = task_type.lower().strip()
+        if any(kw in normalized for kw in _COMPLEX_KEYWORDS):
+            return "claude-sonnet"
+        return _ROUTING_TABLE.get(normalized, "claude-sonnet")
 
     def run_turn(
         self,

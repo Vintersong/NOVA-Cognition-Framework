@@ -7,6 +7,9 @@ shard_graph.json
 nova_usage.jsonl
 nova_autoresearch.jsonl
 shards/
+built/
+game/
+workflows/
 *.pdf
 *.pptx
 .env
