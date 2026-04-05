@@ -14,6 +14,8 @@ _REPO_ROOT = Path(__file__).parent.parent
 SHARD_DIR      = os.environ.get("NOVA_SHARD_DIR",     str(_REPO_ROOT / "shards"))
 INDEX_FILE     = os.environ.get("NOVA_INDEX_FILE",    str(_REPO_ROOT / "shard_index.json"))
 GRAPH_FILE     = os.environ.get("NOVA_GRAPH_FILE",    str(_REPO_ROOT / "shard_graph.json"))
+SUMMARY_INDEX_FILE = os.environ.get("NOVA_SUMMARY_INDEX_FILE", str(_REPO_ROOT / "summary_index.json"))
+SUMMARY_MARKDOWN_FILE = os.environ.get("NOVA_SUMMARY_MARKDOWN_FILE", str(_REPO_ROOT / "summary_index.md"))
 USAGE_LOG_FILE = os.environ.get("NOVA_USAGE_LOG",     str(_REPO_ROOT / "nova_usage.jsonl"))
 SESSION_STORE_DIR = os.environ.get(
     "NOVA_SESSION_STORE_DIR", str(_REPO_ROOT / "nova_sessions")
@@ -29,6 +31,19 @@ DECAY_RATE          = float(os.environ.get("NOVA_DECAY_RATE",      "0.05"))
 DECAY_INTERVAL_DAYS = int(os.environ.get("NOVA_DECAY_DAYS",        "7"))
 MERGE_SIMILARITY_THRESHOLD = float(os.environ.get("NOVA_MERGE_THRESHOLD", "0.85"))
 
+# ── Confidence bands ─────────────────────────────────────────────────────────
+CONFIDENCE_LOW_THRESHOLD = float(os.environ.get("NOVA_CONFIDENCE_LOW", "0.4"))
+
+# ── Shard age classification ──────────────────────────────────────────────────
+RECENT_ACCESS_DAYS = int(os.environ.get("NOVA_RECENT_DAYS", "3"))
+STALE_ACCESS_DAYS  = int(os.environ.get("NOVA_STALE_DAYS",  "14"))
+
 # ── Norse Pantheon ─────────────────────────────────────────────────────────────
 HUGINN_CONFIDENCE_THRESHOLD = float(os.environ.get("HUGINN_CONFIDENCE_THRESHOLD", "0.7"))
 NOTT_COUNT_THRESHOLD        = int(os.environ.get("NOTT_COUNT_THRESHOLD",         "100"))
+
+# ── Ravens LLM config ────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
+HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-3-5")
+MUNINN_MODEL      = os.environ.get("MUNINN_MODEL",      "claude-sonnet-4-5")
+GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-flash")

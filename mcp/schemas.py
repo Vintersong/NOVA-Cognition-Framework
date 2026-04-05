@@ -4,11 +4,30 @@ schemas.py — Pydantic input models for all 16 NOVA MCP tools.
 Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 
 # ── Shard tools ───────────────────────────────────────────────────────────────
+
+class ShardListInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    mode: Literal['full'] = Field(default='full')
+    limit: int = Field(default=50, ge=1, le=445)
+    offset: int = Field(default=0, ge=0)
+    tag_filter: str = Field(default="")
+
+
+class ShardIndexInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    filter_tag: str = Field(default="")
+    min_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    sort: Literal['confidence', 'created', 'turn_count', 'id'] = Field(default='confidence')
+    sort_order: Literal['asc', 'desc'] = Field(default='desc')
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=100, ge=1, le=200)
+    group_by_theme: bool = Field(default=False)
+
 
 class ShardInteractInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')

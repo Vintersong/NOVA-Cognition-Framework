@@ -1,17 +1,32 @@
-.mcp.json
+# Python
 __pycache__/
 *.pyc
 *.pyo
+
+# NOVA runtime files — auto-generated, never commit
 shard_index.json
 shard_graph.json
+summary_index.json
+summary_index.md
 nova_usage.jsonl
 nova_autoresearch.jsonl
+
+# Shard data — personal, never commit
 shards/
-built/
-game/
-workflows/
+nova_sessions/
+
+# Output / experiments
+output/
+
+# Secrets
+.env
+.env.local
+# Keep .env.example — it's the template
+!.env.example
+
+# Binary assets (tracked in docs/ but not committed)
 *.pdf
 *.pptx
-.env
-.env.*
-REFACTOR_ROADMAP.md
+
+# MCP local config
+.mcp.json

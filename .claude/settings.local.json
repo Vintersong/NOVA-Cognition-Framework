@@ -1,9 +1,27 @@
 {
   "permissions": {
     "allow": [
+      "mcp__nova__nova_shard_interact",
+      "mcp__nova__nova_shard_search",
+      "mcp__nova__nova_shard_get",
+      "mcp__nova__nova_shard_index",
+      "mcp__nova__nova_shard_summary",
+      "mcp__nova__nova_shard_list",
+      "mcp__nova__nova_shard_create",
+      "mcp__nova__nova_shard_update",
       "mcp__nova__nova_shard_consolidate",
+      "mcp__nova__nova_graph_query",
+      "mcp__nova__nova_graph_relate",
+      "mcp__nova__nova_session_flush",
+      "mcp__nova__nova_session_load",
+      "mcp__nova__nova_session_list",
+      "mcp__nova__nova_forgemaster_sprint",
       "Read(//c/Users/Moldo/.claude/**)",
       "Read(//c/Users/Moldo/**)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "nova",
+    "gemini-worker"
+  ]
 }

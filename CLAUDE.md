@@ -17,23 +17,54 @@ NOVA is the memory layer. Forgemaster is the orchestration layer. They are one s
 ```
 NOVA-Cognition-Framework/
   mcp/
-    nova_server.py        ← ACTIVE MCP server — always use this one
-    SKILL_v2.md           ← ACTIVE skill instructions
-    _deprecated/          ← v1 reference only, do not modify
+    nova_server.py           ← ACTIVE MCP server — always use this one
+    config.py                ← env vars: paths, thresholds, model names
+    schemas.py               ← Pydantic input models for all tool handlers
+    store.py                 ← shard I/O and index management
+    graph.py                 ← knowledge graph load/save/query/relate
+    maintenance.py           ← confidence decay, compaction, cosine, merge
+    usage.py                 ← operation logging to nova_usage.jsonl
+    models.py                ← UsageSummary, ShardRecord, PermissionDenial
+    permissions.py           ← ToolPermissionContext (env-driven tool gating)
+    session_store.py         ← session persistence
+    forgemaster_runtime.py   ← sprint orchestration
+    ravens.py                ← HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank)
+    nott.py                  ← NÓTT daemon: decay · compact · merge · graph sync
+    hooks.py                 ← NovaHookRegistry / NovaHookEvent
+    nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings + compaction
+    gemini_worker.py         ← standalone Gemini Flash MCP server
+    build_summary_index.py   ← batch-build summary_index.json
+    test_nova.py             ← memory explorer / health check
+    SKILL.md                 ← ACTIVE skill instructions
     requirements.txt
-  python/
-    shard_index.py        ← index manager, imported by nova_server
-    context_extractor.py  ← batch enrichment utility
-  shards/                 ← live shard data, never modify directly
+    Gemini/
+      gemini_mcp.py          ← Gemini tools registered into nova_server
+  utilities/
+    shard_index.py           ← index manager (standalone rebuild)
+    dedup_json.py            ← duplicate shard detection
+    chatgpt_to_nova.py       ← ChatGPT export migration
+    autoresearch.py          ← automated research utility
+    shard_compact.py         ← manual compaction helper
+    theme_analyzer.py        ← theme distribution analysis
+    test_shards.py           ← shard I/O tests
+  shards/                    ← live shard data, never modify directly
+  nova_sessions/             ← flushed MCP session state
+  output/                    ← built artifacts (games, experiments)
   forgemaster/
-    AGENTS.md             ← global agent configuration
-    skills/               ← skill library markdown files
-  tools/
-    chatgpt_to_nova.py    ← migration utility
-  .env                    ← OpenAI key (never commit)
-  shard_index.json        ← auto-generated (never commit)
-  shard_graph.json        ← auto-generated (never commit)
-  nova_usage.jsonl        ← auto-generated (never commit)
+    AGENTS.md                ← global agent configuration
+    SKILL_LIBRARY.md         ← index of all skills across 15 domains
+    skills/                  ← core orchestration skills
+    library/                 ← domain skill library
+    agents/                  ← agent persona definitions
+  docs/
+    ROADMAP.md               ← project roadmap
+    REFACTOR_ROADMAP.md      ← refactor plan
+    nova-support-papers/     ← PDFs and pitch deck (not committed)
+  Donors/                    ← reference implementations (hermes-agent, OpenHarness)
+  .env                       ← API keys (never commit)
+  shard_index.json           ← auto-generated (never commit)
+  shard_graph.json           ← auto-generated (never commit)
+  nova_usage.jsonl           ← auto-generated (never commit)
 ```
 
 ---
@@ -44,14 +75,20 @@ NOVA-Cognition-Framework/
 cd mcp
 pip install -r requirements.txt
 
-# Copy env template (no API key required)
-cp ../.env.example ../.env
-
+# Edit root .env — set CLAUDE_API_KEY and GEMINI_API_KEY
 # Optionally override the shard directory (defaults to repo root /shards)
 # export NOVA_SHARD_DIR="C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards"
 
 # Run the server
 python nova_server.py
+```
+
+**Root `.env`** (repo root — loaded by nova_server via config.py):
+```
+CLAUDE_API_KEY=sk-ant-...          # Powers HUGINN (Haiku) + MUNINN (Sonnet)
+GEMINI_API_KEY=...                 # Powers gemini_worker / gemini_mcp
+GEMINI_MODEL=gemini-2.5-flash
+CONFIDENCE_THRESHOLD=0.65
 ```
 
 **Claude Desktop config** (`claude_desktop_config.json`):
@@ -62,7 +99,9 @@ python nova_server.py
       "command": "python",
       "args": ["C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/mcp/nova_server.py"],
       "env": {
-        "NOVA_SHARD_DIR": "C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards"
+        "NOVA_SHARD_DIR": "C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards",
+        "CLAUDE_API_KEY": "sk-ant-...",
+        "GEMINI_API_KEY": "..."
       }
     }
   }
@@ -187,10 +226,19 @@ This is not optional. Without this, every session starts from zero.
 | Variable | Default | Description |
 |---|---|---|
 | `NOVA_SHARD_DIR` | `shards` | Path to shard JSON files |
-| `OPENAI_API_KEY` | none | Not required — local embeddings used instead (legacy field) |
+| `CLAUDE_API_KEY` | none | Anthropic key — powers HUGINN (Haiku) + MUNINN (Sonnet) retrieval |
+| `HUGINN_MODEL` | `claude-haiku-3-5` | Model used by HUGINN fast-retrieval pass |
+| `MUNINN_MODEL` | `claude-sonnet-4-5` | Model used by MUNINN deep-rerank pass |
+| `HUGINN_CONFIDENCE_THRESHOLD` | `0.7` | If HUGINN max score ≥ this, MUNINN is skipped |
+| `GEMINI_API_KEY` | none | Required by gemini_worker.py and gemini_mcp.py |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model for implementation tickets |
+| `CONFIDENCE_THRESHOLD` | `0.65` | Below this, Gemini tickets escalate to Sonnet |
 | `NOVA_COMPACT_THRESHOLD` | `30` | Turns before auto-compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |
 | `NOVA_MERGE_THRESHOLD` | `0.85` | Cosine similarity for merge suggestions |
+| `NOVA_CONFIDENCE_LOW` | `0.4` | Below this, shard tagged `low_confidence` |
+| `NOVA_RECENT_DAYS` | `3` | Accessed within N days → tagged `recent` |
+| `NOVA_STALE_DAYS` | `14` | Not accessed for N days → tagged `stale` |
 
 ---
 
@@ -198,16 +246,27 @@ This is not optional. Without this, every session starts from zero.
 
 ```bash
 # Run dry-run migration from ChatGPT export
-python tools/chatgpt_to_nova.py --dry-run
+python utilities/chatgpt_to_nova.py --dry-run
 
 # Run actual migration
-python tools/chatgpt_to_nova.py
+python utilities/chatgpt_to_nova.py
 
-# Batch enrich shards with embeddings (run after migration)
-cd python && python context_extractor.py
+# Batch enrich pending shards with local embeddings (run after migration)
+cd mcp && python -c "
+import os, json, sys
+from pathlib import Path
+sys.path.insert(0, '.')
+SHARD_DIR = os.environ.get('NOVA_SHARD_DIR', '../shards')
+from nova_embeddings_local import enrich_shard
+for fpath in Path(SHARD_DIR).glob('*.json'):
+    data = json.load(open(fpath, encoding='utf-8'))
+    if data.get('meta_tags', {}).get('enrichment_status') != 'enriched_local':
+        enrich_shard(data['shard_id'], data)
+        json.dump(data, open(fpath, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+"
 
 # Rebuild index manually
-cd python && python shard_index.py
+cd utilities && python shard_index.py
 ```
 
 ---
@@ -215,9 +274,11 @@ cd python && python shard_index.py
 ## What Not To Do
 
 - Do not edit shard JSON files by hand
-- Do not use the v1 server in `mcp/_deprecated/` — it is reference only
+- Do not use deprecated scripts — the v1 server and OpenAI-based enrichment have been removed
 - Do not skip `nova_shard_consolidate` indefinitely — run it every 3 sprints
 - Do not start implementation without loading NOVA context first
 - Do not end a session without writing the handoff to NOVA
 - Do not commit the shards directory — it is personal data
-- Do not route any task to gpt-4o or any OpenAI model — use claude-haiku for research/docs instead
+- Do not use OpenAI models — use claude-haiku for research/docs, gemini-flash for implementation
+- HUGINN and MUNINN are live — ensure `CLAUDE_API_KEY` is set in `.env` for LLM-powered retrieval
+- If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN silently fall back to local embeddings/token-overlap
