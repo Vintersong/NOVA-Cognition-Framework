@@ -1,5 +1,10 @@
 # NOVA-Cognition-Framework
 
+> **Author:** Andrei Moldovean · conceived April 2025 · first public commit March 2026
+> Original concepts: shard memory architecture, HUGINN/MUNINN retrieval pipeline, NÓTT daemon, confidence decay, shard consolidation, Forgemaster orchestration.
+
+---
+
 A unified repository containing **NOVA** (persistent AI memory) and **Forgemaster** (multi-agent orchestration). NOVA is the memory layer. Forgemaster is the execution layer. They share one repo and one data store.
 
 ---
@@ -202,6 +207,22 @@ Gemini tools (via `mcp/Gemini/gemini_mcp.py`): `gemini_execute_ticket`, `gemini_
 | `session_store.py` | Session CRUD and flush-to-disk |
 | `forgemaster_runtime.py` | Sprint orchestration — routes tickets to model lanes |
 | `nova_embeddings_local.py` | Local embedding generation and compaction summaries |
+
+---
+
+## Prior Art & Attribution
+
+Original architecture documented before any public commit. These documents establish authorship of the core concepts:
+
+| Document | Date |
+|---|---|
+| NOVA Framework (concept doc) | April 2025 |
+| Executive Summary | April 2025 |
+| NOVA Shard Memory Architecture | April 2025 |
+| Unified Consciousness Model | April 2025 |
+| First public commit | March 2026 |
+
+Original named concepts in this repository: **shard** (memory unit), **HUGINN/MUNINN** (retrieval pipeline), **NÓTT** (maintenance daemon), **confidence decay**, **shard consolidation**, **Forgemaster** (orchestration layer).
 
 ---
 
