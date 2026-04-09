@@ -3,7 +3,8 @@
 ![MCP](https://img.shields.io/badge/MCP-server-6B47ED?style=flat-square&logo=anthropic&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Gemini](https://img.shields.io/badge/Gemini-Flash-4285F4?style=flat-square&logo=google&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-22C55E?style=flat-square)
+![License](https://img.shields.io/docker/image-size/:user/:repo
+)
 ![Shard Health](https://github.com/Vintersong/NOVA-Cognition-Framework/actions/workflows/shard-health.yml/badge.svg)
 
 > **Author:** Andrei Moldovean · conceived April 2025 · first public commit March 2026  
