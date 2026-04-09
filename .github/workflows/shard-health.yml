@@ -19,4 +19,4 @@ jobs:
       - name: Install dependencies
         run: pip install -r mcp/requirements.txt
       - name: Check shard bloat
-        run: python tools/shard_compact.py --fail-on-bloat --dry-run
+        run: python utilities/shard_compact.py --fail-on-bloat --dry-run
