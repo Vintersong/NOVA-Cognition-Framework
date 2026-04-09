@@ -33,8 +33,7 @@ Skills for the memory layer itself — loading, writing, and maintaining shards.
 
 | Skill | Path | When to load |
 |---|---|---|
-| NOVA v2 Architecture | `NOVA-Cognition-Framework/mcp/SKILL_v2.md` | Memory-heavy operations, shard strategy |
-| NOVA v1 Reference | `NOVA-Cognition-Framework/mcp/SKILL.md` | Legacy shard structure reference |
+| NOVA Architecture | `NOVA-Cognition-Framework/mcp/SKILL.md` | Memory-heavy operations, shard strategy |
 
 ---
 

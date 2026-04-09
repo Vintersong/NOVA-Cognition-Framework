@@ -60,7 +60,7 @@ NEXT ACTION (first thing to do next session):
   [Single, specific, unambiguous instruction for the next agent or session]
   Example: "Run TICKET-4 implementation of nova_graph_relate tool.
             Spec is in the sprint plan. Branch is feat/ticket-4-graph-relate.
-            Start by reading mcp/nova_server_v2.py lines 180–220."
+            Start by reading mcp/nova_server.py lines 180–220."
 """
 )
 ```

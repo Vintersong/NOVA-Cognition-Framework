@@ -33,12 +33,14 @@ Architecture:
   Knowledge Graph (inter-shard navigation)
     --> relationships, entities, pattern queries
 
-Tools (16 total):
+Tools (18 total):
   nova_shard_interact   — load shards into context
   nova_shard_create     — create new shard (+ post-write hook)
   nova_shard_update     — append to shard (+ post-write hook + auto-compact)
   nova_shard_search     — search with confidence weighting
-  nova_shard_list       — list all shards with confidence scores
+    nova_shard_index      — compact browse index, metadata only
+    nova_shard_summary    — compact browse index with short synopsis
+    nova_shard_list       — full raw dump fallback for legacy/admin use
   nova_shard_get        — read full raw shard content, no side effects
   nova_shard_merge      — merge shards into meta-shard
   nova_shard_archive    — soft-delete (sets intent=archived)
@@ -70,16 +72,18 @@ from config import (
 )
 from schemas import (
     ShardInteractInput, ShardCreateInput, ShardUpdateInput, ShardSearchInput,
-    ShardMergeInput, ShardArchiveInput, ShardForgetInput, ShardGetInput,
+    ShardListInput, ShardIndexInput, ShardMergeInput, ShardArchiveInput, ShardForgetInput, ShardGetInput,
     ShardConsolidateInput, GraphQueryInput, GraphRelationInput,
     SessionFlushInput, SessionLoadInput, SessionListInput,
     ForgemasterSprintInput,
 )
 from store import (
     sanitize_filename, get_unique_filename,
-    load_shard, save_shard, update_shard_usage, extract_fragments,
+    load_shard, save_shard, update_shard_usage,
     load_index, save_index, classify_tags, update_index, patch_index_entry,
-    guess_relevant_shards,
+    guess_relevant_shards, collect_browse_rows, filter_sort_paginate_rows,
+    group_rows_by_theme, refresh_summary_index_entry, rebuild_summary_indexes,
+    extract_fragments,
 )
 from graph import (
     load_graph, save_graph,
@@ -91,7 +95,7 @@ from maintenance import (
     maybe_compact_shard, cosine_similarity, find_merge_candidates,
 )
 from usage import log_operation
-from nova_embeddings_local import enrich_shard
+from nova_embeddings_local import enrich_shard, prewarm_embedding_model
 from permissions import ToolPermissionContext
 from models import UsageSummary
 from session_store import SessionStore, NovaSession
@@ -105,6 +109,7 @@ from gemini_mcp import register_gemini_tools
 
 # Bootstrap
 os.makedirs(SHARD_DIR, exist_ok=True)
+prewarm_embedding_model()  # start loading embedding weights in background immediately
 
 # === Permission context ===
 # Populated from env vars at startup.  Default: all tools permitted.
@@ -141,6 +146,8 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_shard_create",
     "nova_shard_update",
     "nova_shard_search",
+    "nova_shard_index",
+    "nova_shard_summary",
     "nova_shard_list",
     "nova_shard_get",
     "nova_shard_merge",
@@ -351,6 +358,7 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
 
     save_shard(filepath, shard_data)
     patch_index_entry(shard_id, shard_data)
+    refresh_summary_index_entry(shard_id, shard_data, generate_missing=True)
 
     # Register in knowledge graph
     add_shard_to_graph(shard_id, shard_data)
@@ -409,6 +417,7 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
 
     save_shard(filepath, data)
     patch_index_entry(params.shard_id, data)
+    refresh_summary_index_entry(params.shard_id, data, generate_missing=True)
 
     # Update graph entity confidence
     graph = load_graph()
@@ -493,37 +502,116 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
     }, indent=2)
 
 
+@mcp.tool(name="nova_shard_index")
+async def nova_shard_index(params: ShardIndexInput) -> str:
+    """Browse shards using compact metadata rows without loading conversation bodies."""
+    if _permission_context.blocks("nova_shard_index"):
+        return _permission_error("nova_shard_index")
+
+    rebuild_summary_indexes(generate_missing=False)
+    rows = collect_browse_rows(include_synopsis=False)
+    page_rows, total = filter_sort_paginate_rows(
+        rows,
+        filter_tag=params.filter_tag,
+        min_confidence=params.min_confidence,
+        sort=params.sort,
+        sort_order=params.sort_order,
+        page=params.page,
+        per_page=params.per_page,
+    )
+
+    payload = {
+        "_v": 3,
+        "tool": "nova_shard_index",
+        "total": total,
+        "page": params.page,
+        "per_page": params.per_page,
+        "returned": len(page_rows),
+        "sort": params.sort,
+        "sort_order": params.sort_order,
+    }
+    if params.group_by_theme:
+        payload["themes"] = group_rows_by_theme(page_rows)
+    else:
+        payload["shards"] = page_rows
+    return json.dumps(payload, indent=2)
+
+
+@mcp.tool(name="nova_shard_summary")
+async def nova_shard_summary(params: ShardIndexInput) -> str:
+    """Browse shards with compact metadata rows plus a short synopsis per shard."""
+    if _permission_context.blocks("nova_shard_summary"):
+        return _permission_error("nova_shard_summary")
+
+    rebuild_summary_indexes(generate_missing=False)
+    rows = collect_browse_rows(include_synopsis=True)
+    page_rows, total = filter_sort_paginate_rows(
+        rows,
+        filter_tag=params.filter_tag,
+        min_confidence=params.min_confidence,
+        sort=params.sort,
+        sort_order=params.sort_order,
+        page=params.page,
+        per_page=params.per_page,
+    )
+
+    payload = {
+        "_v": 3,
+        "tool": "nova_shard_summary",
+        "total": total,
+        "page": params.page,
+        "per_page": params.per_page,
+        "returned": len(page_rows),
+        "sort": params.sort,
+        "sort_order": params.sort_order,
+    }
+    if params.group_by_theme:
+        payload["themes"] = group_rows_by_theme(page_rows)
+    else:
+        payload["shards"] = page_rows
+    return json.dumps(payload, indent=2)
+
+
 @mcp.tool(name="nova_shard_list")
-async def nova_shard_list() -> str:
-    """List all shards with confidence scores and status tags."""
+async def nova_shard_list(params: ShardListInput) -> str:
+    """Return a legacy full shard dump. Prefer nova_shard_index or nova_shard_summary for browsing."""
     if _permission_context.blocks("nova_shard_list"):
         return _permission_error("nova_shard_list")
-    index = update_index()
+
+    rebuild_summary_indexes(generate_missing=False)
+    rows = collect_browse_rows(include_synopsis=False)
+    page_number = (params.offset // params.limit) + 1
+    page_rows, total = filter_sort_paginate_rows(
+        rows,
+        filter_tag=params.tag_filter,
+        min_confidence=None,
+        sort="confidence",
+        sort_order="desc",
+        page=page_number,
+        per_page=params.limit,
+    )
 
     shards = []
-    for shard_id, entry in index.items():
-        shards.append({
-            "shard_id": shard_id,
-            "guiding_question": entry.get("guiding_question", ""),
-            "tags": entry.get("tags", []),
-            "theme": entry.get("meta", {}).get("theme", ""),
-            "intent": entry.get("meta", {}).get("intent", ""),
-            "confidence": entry.get("confidence", 1.0),
-            "usage_count": entry.get("meta", {}).get("usage_count", 0),
-        })
-
-    # Sort by confidence descending
-    shards.sort(key=lambda x: x["confidence"], reverse=True)
+    for row in page_rows:
+        data, _ = load_shard(row["id"])
+        shards.append(data)
 
     return json.dumps({
-        "total": len(shards),
-        "shards": shards
+        "_v": 3,
+        "deprecated": True,
+        "mode": params.mode,
+        "message": "Use nova_shard_index for browse and nova_shard_summary for pre-commit context.",
+        "total": total,
+        "offset": params.offset,
+        "limit": params.limit,
+        "returned": len(shards),
+        "shards": shards,
     }, indent=2)
 
 
 @mcp.tool(name="nova_shard_get")
 async def nova_shard_get(params: ShardGetInput) -> str:
-    """Read the full raw content of a shard from disk. Read-only, no side effects. For inspection and correction workflows."""
+    """Read the full raw content of a shard from disk. Read-only, no side effects."""
     if _permission_context.blocks("nova_shard_get"):
         return _permission_error("nova_shard_get")
     try:
@@ -535,17 +623,7 @@ async def nova_shard_get(params: ShardGetInput) -> str:
             "message": f"Shard '{params.shard_id}' not found."
         }, indent=2)
 
-    fragments = extract_fragments(data, params.shard_id)
-
-    return json.dumps({
-        "shard_id": params.shard_id,
-        "guiding_question": data.get("guiding_question", ""),
-        "meta_tags": data.get("meta_tags", {}),
-        "tags": classify_tags(data),
-        "fragment_count": len(fragments),
-        "fragments": fragments,
-        "context_summary": data.get("context", {}).get("summary", ""),
-    }, indent=2)
+    return json.dumps(data, indent=2)
 
 
 @mcp.tool(name="nova_shard_merge")
@@ -912,10 +990,6 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
 
 @mcp.resource("nova://skill")
 async def nova_skill() -> str:
-    skill_path = Path(__file__).parent / "SKILL_v2.md"
-    if skill_path.exists():
-        return skill_path.read_text(encoding="utf-8")
-    # Fallback to v1 skill
     skill_path = Path(__file__).parent / "SKILL.md"
     if skill_path.exists():
         return skill_path.read_text(encoding="utf-8")

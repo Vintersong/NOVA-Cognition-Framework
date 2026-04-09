@@ -1,6 +1,11 @@
-# NOVA v2 MCP Server dependencies — local embeddings, no API key required
+# NOVA v2 MCP Server dependencies
 mcp[cli]>=1.0.0
 pydantic>=2.0.0
-sentence-transformers>=2.2.0
+sentence-transformers>=2.2.0  # local embeddings, no API key required
 python-dotenv>=1.0.0
 filelock>=3.12.0
+ijson>=3.3.0
+
+# Model clients — required by ravens.py, gemini_worker.py, utilities/autoresearch.py
+anthropic>=0.30.0       # HUGINN + MUNINN retrieval lanes
+google-genai>=0.3.0     # Gemini Flash implementation lane + autoresearch

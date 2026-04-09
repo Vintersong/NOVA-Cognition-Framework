@@ -19,12 +19,11 @@ from collections import defaultdict, Counter
 
 import nova_server
 from nova_server import (
-    nova_shard_list,
+    nova_shard_index,
     nova_shard_search,
     nova_shard_get,
-    ShardSearchInput,
-    ShardGetInput,
 )
+from schemas import ShardIndexInput, ShardSearchInput, ShardGetInput
 
 W  = 72  # output width
 
@@ -35,11 +34,14 @@ def bar(value: float, width: int = 20) -> str:
 
 
 def excerpt(shard_get_result: dict, max_chars: int = 200) -> str:
-    """Pull the first meaningful fragment from nova_shard_get output."""
-    for frag in shard_get_result.get("fragments", []):
-        # fragments look like '[SHARD: id] User: text' or '[SHARD: id] NOVA: text'
-        if "] User: " in frag:
-            text = frag.split("] User: ", 1)[-1].strip()
+    """Pull the first meaningful user-authored fragment from a raw shard."""
+    for turn in shard_get_result.get("conversation_history", []):
+        text = str(turn.get("user", "")).strip()
+        if len(text) > 20:
+            return (text[:max_chars] + "…") if len(text) > max_chars else text
+    for turn in shard_get_result.get("turns", []):
+        if turn.get("role") == "user":
+            text = str(turn.get("content", "")).strip()
             if len(text) > 20:
                 return (text[:max_chars] + "…") if len(text) > max_chars else text
     return "(no fragments)"
@@ -59,7 +61,7 @@ async def explore():
     print("═" * W)
 
     # ── 1. Load full shard index ──────────────────────────────────────────
-    raw = await nova_shard_list()
+    raw = await nova_shard_index(ShardIndexInput(per_page=200))
     data = json.loads(raw)
     shards = data.get("shards", [])
     total = len(shards)
@@ -76,11 +78,10 @@ async def explore():
     confidence_by_theme: dict[str, list[float]] = defaultdict(list)
 
     for s in shards:
-        # nova_shard_list flattens theme/intent to top-level strings,
-        # but last_used lives inside meta (the full meta_tags dict)
-        theme  = s.get("theme") or s.get("meta", {}).get("theme") or "unknown"
-        intent = s.get("intent") or s.get("meta", {}).get("intent") or "unknown"
-        conf   = s.get("confidence", 1.0)
+        tags = s.get("t", [])
+        theme = tags[0] if tags else "unknown"
+        intent = tags[-1] if tags else "unknown"
+        conf = s.get("c", 1.0)
         theme_counts[theme] += 1
         intent_counts[intent] += 1
         confidence_by_theme[theme].append(conf)
@@ -93,9 +94,9 @@ async def explore():
         print(f"  {theme:<28} {bar(pct, 18)}  {count:>4}  conf {avg_conf:.2f}")
 
     # ── 3. Confidence health summary ─────────────────────────────────────
-    high    = sum(1 for s in shards if s.get("confidence", 1.0) >= 0.75)
-    at_risk = sum(1 for s in shards if 0.40 <= s.get("confidence", 1.0) < 0.75)
-    low     = sum(1 for s in shards if s.get("confidence", 1.0) < 0.40)
+    high = sum(1 for s in shards if s.get("c", 1.0) >= 0.75)
+    at_risk = sum(1 for s in shards if 0.40 <= s.get("c", 1.0) < 0.75)
+    low = sum(1 for s in shards if s.get("c", 1.0) < 0.40)
 
     print(f"\n  CONFIDENCE HEALTH")
     print("  " + "─" * (W - 2))
@@ -111,21 +112,21 @@ async def explore():
 
     for theme in top_themes:
         theme_shards = sorted(
-            [s for s in shards if (s.get("theme") or s.get("meta", {}).get("theme") or "unknown") == theme],
-            key=lambda s: s.get("confidence", 0),
+            [s for s in shards if ((s.get("t") or ["unknown"])[0] == theme)],
+            key=lambda s: s.get("c", 0),
             reverse=True,
         )
         if not theme_shards:
             continue
         best = theme_shards[0]
-        shard_id = best["shard_id"]
-        conf = best.get("confidence", 1.0)
+        shard_id = best["id"]
+        conf = best.get("c", 1.0)
 
         # Fetch full shard to get conversation content
         full_raw = await nova_shard_get(ShardGetInput(shard_id=shard_id))
         full = json.loads(full_raw)
 
-        turns = full.get("fragment_count", 0) // 2  # each turn = 1 user + 1 ai fragment
+        turns = len(full.get("conversation_history", [])) or len(full.get("turns", []))
         snip = excerpt(full)
 
         print(f"\n  [{theme.upper()}]  {confidence_band(conf)} conf={conf:.2f}  {turns} turns")
@@ -152,19 +153,17 @@ async def explore():
     # ── 6. Decay watch — oldest untouched shards ──────────────────────────
     dated = [
         s for s in shards
-        if (s.get("last_used") or s.get("meta", {}).get("last_used")) and not any(
-            t in s.get("tags", []) for t in ("archived", "forgotten")
-        )
+        if s.get("created") and not any(t in s.get("t", []) for t in ("archived", "forgotten"))
     ]
-    dated.sort(key=lambda s: (s.get("last_used") or s.get("meta", {}).get("last_used", "9")))
+    dated.sort(key=lambda s: s.get("created", "9999-99-99"))
     decay_watch = dated[:5]
 
     print(f"\n\n  DECAY WATCH — oldest untouched shards (run nova_shard_consolidate)")
     print("  " + "─" * (W - 2))
     for s in decay_watch:
-        conf = s.get("confidence", 1.0)
-        last = s.get("last_used") or s.get("meta", {}).get("last_used", "?")
-        print(f"  {confidence_band(conf)} {s['shard_id']:<45} last={str(last)[:10]}")
+        conf = s.get("c", 1.0)
+        last = s.get("created", "?")
+        print(f"  {confidence_band(conf)} {s['id']:<45} last={str(last)[:10]}")
 
     print()
     print("═" * W)

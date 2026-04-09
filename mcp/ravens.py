@@ -14,14 +14,12 @@ MUNINN (Sonnet) — Deep memory retrieval.
 MIMIR (your laptop) hosts the well. Both ravens drink from it.
 
 Two-pass design:
-  HUGINN.retrieve()  →  fast token-overlap + confidence weighting
-  MUNINN.rerank()    →  query-embedding cosine re-rank over HUGINN candidates
+  HUGINN.retrieve()  →  token-overlap pre-filter, then Haiku LLM re-score
+  MUNINN.rerank()    →  cosine re-rank over HUGINN candidates, then Sonnet deep rerank
 
-LLM dispatch is stub-ready — stubs are marked PHASE 5.
-Until then, local-only fallbacks provide genuine improvement:
-  - HUGINN local: token-overlap + confidence weighting (same as before)
-  - MUNINN local: query-embedding cosine similarity (NEW — first time the
-    system does query-to-shard semantic comparison rather than shard-to-shard)
+Both passes fall back to local-only (no API call) when ANTHROPIC_API_KEY is absent:
+  - HUGINN local: token-overlap + Jaccard blend × confidence × trust
+  - MUNINN local: query-embedding cosine similarity
 
 Usage tracking:
   All operations log to nova_usage.jsonl with operator="HUGINN" or "MUNINN".
@@ -36,6 +34,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+import anthropic
 
 
 # ═══════════════════════════════════════════════════════════
@@ -72,8 +72,8 @@ class Huginn:
     """
     Odin's raven of Thought. Flies fast, returns quickly.
 
-    Uses token-overlap + confidence weighting as the local pass.
-    LLM stub (Haiku) is marked PHASE 5 and not invoked.
+    Local pre-filter (token-overlap + Jaccard) then Haiku LLM re-score.
+    Falls back to local-only when ANTHROPIC_API_KEY is absent.
     """
 
     def __init__(
@@ -98,23 +98,68 @@ class Huginn:
         Returns RetrievalResult. If result.is_confident(threshold) is True,
         the caller should skip MUNINN entirely.
         """
-        # ── PHASE 5: wire Haiku LLM call here ────────────────────────────
-        # When enabled: send query + index summaries to claude-haiku-3-5,
-        # parse JSON response: {shard_id: score, reasoning: {shard_id: note}}.
-        # Set used_llm=True and populate reasoning from LLM response.
-        # ──────────────────────────────────────────────────────────────────
+        from config import ANTHROPIC_API_KEY, HUGINN_MODEL
 
-        scored = self._local_retrieve(query, index, top_n)
-        shard_ids = [s[0] for s in scored]
-        scores = {s[0]: round(s[1], 4) for s in scored}
+        # ── Local pre-filter ──────────────────────────────────────────────
+        scored = self._local_retrieve(query, index, top_n * 3)
+        if not scored:
+            result = RetrievalResult(
+                shard_ids=[], scores={}, reasoning={},
+                used_llm=False, max_confidence=0.0, operator="HUGINN",
+            )
+            self._log(query, result)
+            return result
+
+        used_llm = False
+        shard_ids = [s[0] for s in scored[:top_n]]
+        scores = {s[0]: round(s[1], 4) for s in scored[:top_n]}
         reasoning = {sid: "local: token-overlap + Jaccard blend × confidence × trust" for sid in shard_ids}
-        max_conf = max(scores.values()) if scores else 0.0
 
+        # ── Haiku LLM re-score ────────────────────────────────────────────
+        if ANTHROPIC_API_KEY:
+            try:
+                summaries = [
+                    {
+                        "id": sid,
+                        "question": index.get(sid, {}).get("guiding_question", ""),
+                        "summary": index.get(sid, {}).get("context_summary", ""),
+                        "confidence": index.get(sid, {}).get("confidence", 1.0),
+                        "local_score": round(s[1], 4),
+                    }
+                    for sid, s in [(x[0], x) for x in scored]
+                ]
+                prompt = (
+                    f"Query: {query}\n\n"
+                    "Below are candidate memory shards. Score each from 0.0 to 1.0 for relevance "
+                    "to the query. Return ONLY valid JSON: "
+                    '{"scores": {"<shard_id>": <float>}, "reasoning": {"<shard_id>": "<note>"}}\n\n'
+                    f"Shards:\n{json.dumps(summaries, indent=2)}"
+                )
+                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+                response = client.messages.create(
+                    model=HUGINN_MODEL,
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = response.content[0].text.strip()
+                parsed = json.loads(raw)
+                llm_scores: dict = parsed.get("scores", {})
+                llm_reasoning: dict = parsed.get("reasoning", {})
+                if llm_scores:
+                    sorted_ids = sorted(llm_scores, key=lambda k: llm_scores[k], reverse=True)[:top_n]
+                    shard_ids = sorted_ids
+                    scores = {sid: round(float(llm_scores[sid]), 4) for sid in sorted_ids}
+                    reasoning = {sid: llm_reasoning.get(sid, "haiku-scored") for sid in sorted_ids}
+                    used_llm = True
+            except Exception:
+                pass  # fall through to local scores already computed
+
+        max_conf = max(scores.values()) if scores else 0.0
         result = RetrievalResult(
             shard_ids=shard_ids,
             scores=scores,
             reasoning=reasoning,
-            used_llm=False,
+            used_llm=used_llm,
             max_confidence=max_conf,
             operator="HUGINN",
         )
@@ -195,11 +240,8 @@ class Muninn:
     """
     Odin's raven of Memory. Slower, harder to call back, more important.
 
-    Re-ranks HUGINN candidates using query-embedding cosine similarity.
-    This is the first time the NOVA system does query-to-shard semantic
-    comparison (previously only shard-to-shard for merge detection).
-
-    LLM stub (Sonnet) is marked PHASE 5 and not invoked.
+    Re-ranks HUGINN candidates using Sonnet for semantic judgment; falls back
+    to query-embedding cosine similarity when ANTHROPIC_API_KEY is absent.
     """
 
     def __init__(
@@ -223,20 +265,75 @@ class Muninn:
         Returns a new RetrievalResult with re-ranked shard_ids.
         Falls back to passing HUGINN result through if no embeddings available.
         """
-        # ── PHASE 5: wire Sonnet LLM call here ───────────────────────────
-        # When enabled: send query + full shard summaries (from index + shard
-        # data) to claude-sonnet-4-5, parse JSON ranking response.
-        # Consider: shard content, confidence scores, decay state, graph rels.
-        # Set used_llm=True and populate reasoning from LLM response.
-        # ──────────────────────────────────────────────────────────────────
+        from config import ANTHROPIC_API_KEY, MUNINN_MODEL
 
         reranked = self._local_rerank(query, candidates, index, top_n)
+        used_llm = False
+        shard_ids = reranked["shard_ids"]
+        scores = reranked["scores"]
+        reasoning = reranked["reasoning"]
+
+        # ── Sonnet LLM deep rerank ────────────────────────────────────────
+        if ANTHROPIC_API_KEY and candidates.shard_ids:
+            try:
+                shard_blobs = []
+                for sid in candidates.shard_ids:
+                    shard_path = Path(self.shard_dir) / (sid + ".json")
+                    entry = index.get(sid, {})
+                    turns_preview = ""
+                    try:
+                        with open(shard_path, "r", encoding="utf-8") as f:
+                            shard_data = json.load(f)
+                        turns = shard_data.get("turns", [])
+                        turns_preview = " | ".join(
+                            t.get("content", "")[:120] for t in turns[-3:]
+                        )
+                    except Exception:
+                        pass
+                    shard_blobs.append({
+                        "id": sid,
+                        "question": entry.get("guiding_question", ""),
+                        "summary": entry.get("context_summary", ""),
+                        "topics": entry.get("context_topics", []),
+                        "confidence": entry.get("confidence", 1.0),
+                        "huginn_score": round(candidates.scores.get(sid, 0.0), 4),
+                        "local_rerank_score": round(scores.get(sid, 0.0), 4),
+                        "recent_turns": turns_preview,
+                    })
+
+                prompt = (
+                    f"Query: {query}\n\n"
+                    "Re-rank these memory shards by relevance to the query. "
+                    "Consider the shard summary, topics, confidence, and recent content. "
+                    "Return ONLY valid JSON: "
+                    '{"scores": {"<shard_id>": <float 0-1>}, "reasoning": {"<shard_id>": "<note>"}}\n\n'
+                    f"Shards:\n{json.dumps(shard_blobs, indent=2)}"
+                )
+                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+                response = client.messages.create(
+                    model=MUNINN_MODEL,
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = response.content[0].text.strip()
+                parsed = json.loads(raw)
+                llm_scores: dict = parsed.get("scores", {})
+                llm_reasoning: dict = parsed.get("reasoning", {})
+                if llm_scores:
+                    sorted_ids = sorted(llm_scores, key=lambda k: llm_scores[k], reverse=True)[:top_n]
+                    shard_ids = sorted_ids
+                    scores = {sid: round(float(llm_scores[sid]), 4) for sid in sorted_ids}
+                    reasoning = {sid: llm_reasoning.get(sid, "sonnet-reranked") for sid in sorted_ids}
+                    used_llm = True
+            except Exception:
+                pass  # fall through to local rerank already computed
+
         result = RetrievalResult(
-            shard_ids=reranked["shard_ids"],
-            scores=reranked["scores"],
-            reasoning=reranked["reasoning"],
-            used_llm=False,
-            max_confidence=max(reranked["scores"].values()) if reranked["scores"] else 0.0,
+            shard_ids=shard_ids,
+            scores=scores,
+            reasoning=reasoning,
+            used_llm=used_llm,
+            max_confidence=max(scores.values()) if scores else 0.0,
             operator="MUNINN",
         )
         self._log(query, candidates, result)

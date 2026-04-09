@@ -19,6 +19,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from config import HUGINN_MODEL, MUNINN_MODEL, GEMINI_MODEL
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
 
@@ -32,18 +33,18 @@ _REPO_ROOT = Path(__file__).parent.parent
 # ─────────────────────────────────────────────────────────────────────────────
 _ROUTING_TABLE: dict[str, str] = {
     # claude-sonnet lane
-    "architecture": "claude-sonnet",
-    "review": "claude-sonnet",
-    "ambiguity": "claude-sonnet",
+    "architecture": MUNINN_MODEL,
+    "review": MUNINN_MODEL,
+    "ambiguity": MUNINN_MODEL,
     # gemini-flash lane
-    "implementation": "gemini-flash",
-    "boilerplate": "gemini-flash",
-    "structured-output": "gemini-flash",
+    "implementation": GEMINI_MODEL,
+    "boilerplate": GEMINI_MODEL,
+    "structured-output": GEMINI_MODEL,
     # claude-haiku lane
-    "research": "claude-haiku",
-    "documentation": "claude-haiku",
-    "fast-tasks": "claude-haiku",
-    # stitch lane
+    "research": HUGINN_MODEL,
+    "documentation": HUGINN_MODEL,
+    "fast-tasks": HUGINN_MODEL,
+    # stitch lane (no config constant — UI model not yet defined)
     "ui": "stitch",
     "frontend": "stitch",
     "mockup": "stitch",
@@ -135,8 +136,8 @@ class ForgemasterRuntime:
         """
         normalized = task_type.lower().strip()
         if any(kw in normalized for kw in _COMPLEX_KEYWORDS):
-            return "claude-sonnet"
-        return _ROUTING_TABLE.get(normalized, "claude-sonnet")
+            return MUNINN_MODEL
+        return _ROUTING_TABLE.get(normalized, MUNINN_MODEL)
 
     def run_turn(
         self,
