@@ -11,14 +11,14 @@ This document is the single source of truth for how every content type in this s
 
 | Directory       | Files | Purpose                                      |
 |-----------------|-------|----------------------------------------------|
-| `agents/`       | 357   | Agent persona definitions (18 domain folders)|
+| `agents/`       | 320   | Agent persona definitions (19 domain folders)|
 | `library/`      | 208   | Reusable SKILL.md files (13 domain categories)|
 | `slash-commands/`| 84   | Claude slash-command prompts                 |
+| `templates/`    | 62    | Project scaffolding and planning templates   |
 | `workflows/`    | 56    | Step-by-step workflow processes              |
-| `templates/`    | 60    | Project scaffolding and planning templates   |
 | `rules/`        | 20    | Coding standards and hooks config            |
 | `docs/`         | 18    | Reference indexes and architecture notes     |
-| **TOTAL**       | **814**| All content files                           |
+| **TOTAL**       | **768**| All content files                           |
 
 ---
 

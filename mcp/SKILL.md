@@ -29,23 +29,28 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (13 total)
+## Tools (18 total)
 
 | Tool | Purpose |
 |---|---|
-| `nova_shard_interact` | Load shards into context. Auto-selects by confidence-weighted relevance. |
+| `nova_shard_interact` | Load shards into context. Auto-selects by confidence-weighted relevance. Start here. |
 | `nova_shard_create` | Create shard. Triggers enrichment hook. Registers in graph. |
 | `nova_shard_update` | Append to shard. Triggers enrichment hook. Auto-compacts at 30 turns. |
 | `nova_shard_search` | Search with confidence weighting. High-confidence shards rank higher. |
 | `nova_shard_index` | Browse shards using compact metadata rows only. Default orienting tool. |
 | `nova_shard_summary` | Browse shards with compact metadata plus short synopsis. |
-| `nova_shard_list` | Legacy/admin full raw dump. Use only when a complete export is required. |
+| `nova_shard_list` | Full raw dump. Use only when a complete export is required. |
+| `nova_shard_get` | Read full shard content. No side effects. |
 | `nova_shard_merge` | Merge shards into meta-shard. Auto-wires graph relations. |
 | `nova_shard_archive` | Soft-archive. Excluded from search. Content preserved. |
-| `nova_shard_forget` | Hard soft-delete with provenance log. Intentional exclusion. |
+| `nova_shard_forget` | Hard exclude with provenance log. Intentional exclusion. |
 | `nova_shard_consolidate` | Run full maintenance cycle: decay + compact + merge suggestions. |
 | `nova_graph_query` | Query inter-shard knowledge graph by source, target, or relation type. |
 | `nova_graph_relate` | Manually add a directed relation between two shards. |
+| `nova_session_flush` | Persist active sprint session to disk. |
+| `nova_session_load` | Restore a stored session to memory. |
+| `nova_session_list` | List all stored session IDs. |
+| `nova_forgemaster_sprint` | Full 4-turn sprint pipeline. |
 
 ---
 
@@ -62,7 +67,7 @@ Principle Library (reasoning methodology)
     "usage_count": 0,
     "last_used": "ISO 8601",
     "confidence": 1.0,
-    "enrichment_status": "enriched | pending | pending_no_key | failed",
+    "enrichment_status": "enriched_local | pending | failed",
     "last_compacted": "ISO 8601 (optional)",
     "compacted_turn_count": 0
   },
@@ -101,9 +106,9 @@ Stale shards sink in results without being deleted. They remain available at `in
 
 ### Post-write enrichment
 Every `nova_shard_create` and `nova_shard_update` triggers automatic context enrichment:
-- GPT-4o-mini generates summary + topic tags
-- ada-002 generates embedding vector
-- If no OpenAI key: shard marked `enrichment_status: pending_no_key` for later batch
+- Local `all-MiniLM-L6-v2` (sentence-transformers) generates embedding vector
+- Compaction summary generated locally — no external API required
+- If model not yet loaded: shard marked `enrichment_status: pending` for later batch enrichment
 
 ### Auto-compaction
 When `conversation_history` exceeds 30 turns on write:

@@ -5,11 +5,11 @@ Reads ChatGPT export JSON files (conversations-000.json etc.) and converts
 each conversation into a NOVA shard JSON file.
 
 Usage:
-    python chatgpt_to_nova.py --input "E:/ChatGPT Chats" --output "E:/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards"
+    python chatgpt_to_nova.py --input ./chatgpt_export
 
 Options:
-    --input     Directory containing ChatGPT export JSON files (default: current dir)
-    --output    Directory to write NOVA shards (default: ./shards)
+    --input     Directory containing ChatGPT export JSON files (default: ./chatgpt_export)
+    --output    Directory to write NOVA shards (default: repo shards/ dir, override with NOVA_SHARD_DIR)
     --min-turns Minimum conversation turns to include (default: 2, skips tiny convos)
     --dry-run   Preview what would be created without writing files
 """
@@ -21,6 +21,13 @@ import re
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Default shard output directory — mirrors utilities/autoresearch.py convention.
+# Resolves to <repo>/shards regardless of where the script is run from.
+DEFAULT_SHARD_DIR = Path(os.getenv(
+    "NOVA_SHARD_DIR",
+    Path(__file__).parent.parent / "shards"
+))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -392,8 +399,8 @@ def migrate(input_dir: str, output_dir: str, min_turns: int = 2, dry_run: bool =
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Migrate ChatGPT export to NOVA shards")
-    parser.add_argument("--input", default="E:/ChatGPT Chats", help="Input directory with ChatGPT JSON exports")
-    parser.add_argument("--output", default="E:/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards", help="Output directory for NOVA shards")
+    parser.add_argument("--input", default="./chatgpt_export", help="Input directory with ChatGPT JSON exports")
+    parser.add_argument("--output", default=str(DEFAULT_SHARD_DIR), help="Output directory for NOVA shards (default: repo shards/ dir)")
     parser.add_argument("--min-turns", type=int, default=2, help="Minimum conversation turns to include")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing files")
 

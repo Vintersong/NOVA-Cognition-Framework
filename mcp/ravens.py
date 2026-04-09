@@ -17,7 +17,7 @@ Two-pass design:
   HUGINN.retrieve()  →  token-overlap pre-filter, then Haiku LLM re-score
   MUNINN.rerank()    →  cosine re-rank over HUGINN candidates, then Sonnet deep rerank
 
-Both passes fall back to local-only (no API call) when CLAUDE_API_KEY is absent:
+Both passes fall back to local-only (no API call) when ANTHROPIC_API_KEY is absent:
   - HUGINN local: token-overlap + Jaccard blend × confidence × trust
   - MUNINN local: query-embedding cosine similarity
 
@@ -73,7 +73,7 @@ class Huginn:
     Odin's raven of Thought. Flies fast, returns quickly.
 
     Local pre-filter (token-overlap + Jaccard) then Haiku LLM re-score.
-    Falls back to local-only when CLAUDE_API_KEY is absent.
+    Falls back to local-only when ANTHROPIC_API_KEY is absent.
     """
 
     def __init__(

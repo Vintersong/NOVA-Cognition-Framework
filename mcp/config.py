@@ -43,7 +43,7 @@ HUGINN_CONFIDENCE_THRESHOLD = float(os.environ.get("HUGINN_CONFIDENCE_THRESHOLD"
 NOTT_COUNT_THRESHOLD        = int(os.environ.get("NOTT_COUNT_THRESHOLD",         "100"))
 
 # ── Ravens LLM config ────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-3-5")
 MUNINN_MODEL      = os.environ.get("MUNINN_MODEL",      "claude-sonnet-4-5")
 GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-flash")

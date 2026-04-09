@@ -15,7 +15,12 @@
       "mcp__nova__nova_session_flush",
       "mcp__nova__nova_session_load",
       "mcp__nova__nova_session_list",
+      "mcp__nova__nova_shard_merge",
+      "mcp__nova__nova_shard_archive",
+      "mcp__nova__nova_shard_forget",
       "mcp__nova__nova_forgemaster_sprint",
+      "mcp__gemini-worker__gemini_execute_ticket",
+      "mcp__gemini-worker__gemini_load_file",
       "Read(//c/Users/Moldo/.claude/**)",
       "Read(//c/Users/Moldo/**)"
     ]

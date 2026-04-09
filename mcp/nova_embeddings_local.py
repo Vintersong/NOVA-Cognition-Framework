@@ -17,6 +17,7 @@ Model: all-MiniLM-L6-v2
   - Apache 2.0 license
 """
 
+import threading
 from datetime import datetime
 
 # ═══════════════════════════════════════════════════════════
@@ -24,23 +25,40 @@ from datetime import datetime
 # ═══════════════════════════════════════════════════════════
 
 _embedding_model = None
+_model_lock = threading.Lock()
 
 def get_embedding_model():
     """
-    Lazy-load the sentence-transformers model.
-    Only loads once per server session.
+    Load the sentence-transformers model.
+    Thread-safe. Only loads once per server session.
     """
     global _embedding_model
-    if _embedding_model is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            print("[OK] Local embedding model loaded (all-MiniLM-L6-v2)")
-        except ImportError:
-            print("[WARN] sentence-transformers not installed. Run: pip install sentence-transformers")
-            print("  Falling back to keyword-only search.")
-            _embedding_model = None
+    with _model_lock:
+        if _embedding_model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                print("[OK] Local embedding model loaded (all-MiniLM-L6-v2)")
+            except ImportError:
+                print("[WARN] sentence-transformers not installed. Run: pip install sentence-transformers")
+                print("  Falling back to keyword-only search.")
+                _embedding_model = None
     return _embedding_model
+
+
+def prewarm_embedding_model() -> None:
+    """
+    Start loading the embedding model in a background daemon thread at server startup.
+    Returns immediately — model loads in the background so the first shard
+    operation never blocks waiting for weights to load.
+    """
+    def _load():
+        print("[NOVA] Pre-warming embedding model in background...")
+        get_embedding_model()
+        print("[NOVA] Embedding model ready.")
+
+    t = threading.Thread(target=_load, daemon=True, name="nova-embed-prewarm")
+    t.start()
 
 
 def generate_local_embedding(text: str) -> list[float] | None:
@@ -141,7 +159,7 @@ def enrich_shard(shard_id: str, shard_data: dict):
     embed_text = guiding_question + " " + recent_text
 
     if model is None:
-        shard_data.setdefault("meta_tags", {})["enrichment_status"] = "pending_no_model"
+        shard_data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
         return
 
     try:

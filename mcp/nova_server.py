@@ -95,7 +95,7 @@ from maintenance import (
     maybe_compact_shard, cosine_similarity, find_merge_candidates,
 )
 from usage import log_operation
-from nova_embeddings_local import enrich_shard
+from nova_embeddings_local import enrich_shard, prewarm_embedding_model
 from permissions import ToolPermissionContext
 from models import UsageSummary
 from session_store import SessionStore, NovaSession
@@ -109,6 +109,7 @@ from gemini_mcp import register_gemini_tools
 
 # Bootstrap
 os.makedirs(SHARD_DIR, exist_ok=True)
+prewarm_embedding_model()  # start loading embedding weights in background immediately
 
 # === Permission context ===
 # Populated from env vars at startup.  Default: all tools permitted.
@@ -989,10 +990,6 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
 
 @mcp.resource("nova://skill")
 async def nova_skill() -> str:
-    skill_path = Path(__file__).parent / "SKILL_v2.md"
-    if skill_path.exists():
-        return skill_path.read_text(encoding="utf-8")
-    # Fallback to v1 skill
     skill_path = Path(__file__).parent / "SKILL.md"
     if skill_path.exists():
         return skill_path.read_text(encoding="utf-8")
