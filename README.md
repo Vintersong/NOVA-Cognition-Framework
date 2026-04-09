@@ -1,29 +1,40 @@
-# NOVA-Cognition-Framework
+# NOVA Cognition Framework
 
-A unified repository containing **NOVA** (persistent AI memory) and **Forgemaster** (multi-agent orchestration). NOVA is the memory layer. Forgemaster is the execution layer. They share one repo and one data store.
+> **Persistent AI memory and multi-agent orchestration.**
+> Conceived and authored by [Andrei Moldovean](https://github.com/Vintersong) — initial architecture documented April 2025; first public commit March 2026.
 
-> **Architecture note:** `nova_server.py` is a thin MCP adapter (~970 lines). All business logic lives in dedicated modules: `config`, `schemas`, `store`, `graph`, `maintenance`, `usage`, `ravens`, `nott`, `hooks`. See [Module Architecture](#module-architecture) below.
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-2.0-teal)](ROADMAP.md)
+[![Author](https://img.shields.io/badge/author-Andrei_Moldovean-darkgreen)](https://github.com/Vintersong)
 
 ---
 
 ## What is NOVA?
 
-NOVA is a persistent memory system for AI agents. It stores conversations and decisions as modular JSON "shards" — each with metadata, confidence scores, and decay rates. A knowledge graph tracks relationships between shards so agents can retrieve contextually relevant memory, not just recent history.
+NOVA is a **persistent memory system for AI agents**. It stores conversations and decisions as modular JSON **shards** — each with metadata, confidence scores, and time-based decay rates. A knowledge graph tracks relationships between shards so agents retrieve contextually relevant memory, not just recent history.
 
 NOVA runs as an MCP server, meaning any MCP-compatible client (Claude Desktop, Claude Code, Cursor) can connect to it and query/write memory using structured tool calls.
+
+**Core concepts coined in this project:**
+- **Shard** — the atomic memory unit: structured JSON with confidence, decay, and graph edges
+- **NÓTT** — the background daemon handling decay → compaction → merge → graph sync
+- **HUGINN / MUNINN** — fast retrieval pass (Ravens module) and deep rerank pass
+- **Forgemaster** — multi-agent orchestration layer built on top of NOVA
+
+> 📄 See [`NOVA Framework.pdf`](NOVA%20Framework.pdf) and [`Executive Summary.pdf`](Executive%20Summary.pdf) for the original architecture documents (April 2025).
 
 **Key capabilities:**
 - Store and retrieve memory shards with semantic search
 - Confidence-weighted recall with time-based decay
 - Automatic deduplication and shard consolidation
-- Knowledge graph of shard relationships
+- Knowledge graph of inter-shard relationships
 - Usage logging for memory health monitoring
 
 ---
 
 ## What is Forgemaster?
 
-Forgemaster is a multi-agent orchestration layer built on top of NOVA. It decomposes tasks into typed tickets and routes each to the optimal model in a defined hierarchy.
+Forgemaster is a **multi-agent orchestration layer** built on top of NOVA. It decomposes tasks into typed tickets and routes each to the optimal model in a defined hierarchy.
 
 Agents run in parallel sandboxed lanes. NOVA is Forgemaster's memory backplane: every sprint reads project context from shards and writes decisions back.
 
@@ -40,15 +51,15 @@ Agents run in parallel sandboxed lanes. NOVA is Forgemaster's memory backplane: 
 
 ```
 Architect (you)
-    └── Senior (Opus)          — cross-sprint decisions, major architecture
-        └── Lead (Sonnet)      — per-sprint orchestration, review, ambiguous tickets
+    └── Senior (Opus)           — cross-sprint decisions, major architecture
+        └── Lead (Sonnet)       — per-sprint orchestration, review, ambiguous tickets
             └── Mid (Gemini Flash) — bounded implementation, boilerplate, structured output
                 └── Low (local model) — trivial edits, formatting, deterministic tasks
 ```
 
 Supporting roles routed by task type:
-- **Research / documentation** → Claude Haiku
-- **UI / screen design** → Stitch MCP
+- Research / documentation → Claude Haiku
+- UI / screen design → Stitch MCP
 
 ---
 
@@ -70,6 +81,22 @@ You (design doc / feature request)
   ├── Lead review + bug fixes
   └── nova_shard_update()    → write decisions back to NOVA
 ```
+
+---
+
+## Prior Art & Attribution
+
+This framework was designed and documented by **Andrei Moldovean** starting in early 2025. Key prior art:
+
+| Document | Date | Description |
+|---|---|---|
+| [`NOVA Framework.pdf`](NOVA%20Framework.pdf) | April 2025 | Full architecture specification: shards, decay, graph, NÓTT daemon |
+| [`Executive Summary.pdf`](Executive%20Summary.pdf) | April 2025 | Condensed system overview |
+| [`NOVA Shard Memory Architectur.pdf`](NOVA%20Shard%20Memory%20Architectur.pdf) | April 2025 | Deep dive into shard memory model |
+| [`Unified Conciousness Model.pdf`](Unified%20Conciousness%20Model.pdf) | April 2025 | Theoretical framework underlying the architecture |
+| [First public commit](https://github.com/Vintersong/NOVA-Cognition-Framework/commit/94b483e2c419255b0bf5a0ec28ca23ed4e01441a) | March 2026 | Initial code release |
+
+The specific naming conventions used in this project — **shard**, **NÓTT**, **HUGINN/MUNINN (Ravens)**, **Forgemaster**, **confidence decay**, **shard consolidation** — are original to this work.
 
 ---
 
@@ -118,7 +145,7 @@ GEMINI_API_KEY=your_key_here
 ```
 
 > VS Code auto-discovers Claude Desktop MCP servers via `chat.mcp.discovery.enabled`.
-> Ensure `GEMINI_MODEL` is `gemini-2.5-flash` — `gemini-2.5-pro` exhausts the free tier immediately.
+> Use `gemini-2.5-flash` — `gemini-2.5-pro` exhausts the free tier immediately.
 
 ### 4. Run the NOVA MCP server
 
@@ -133,55 +160,47 @@ python mcp/nova_server.py
 ```
 NOVA-Cognition-Framework/
   mcp/
-    nova_server.py          ← thin MCP adapter — 16 NOVA tools + Gemini tools
-    config.py               ← env vars: paths, thresholds, Norse Pantheon config
-    schemas.py              ← 15 Pydantic input models for all tool handlers
-    store.py                ← shard I/O and index management
-    graph.py                ← knowledge graph load/save/query/relate
-    maintenance.py          ← confidence decay, compaction, cosine, merge
-    usage.py                ← operation logging to nova_usage.jsonl
-    models.py               ← UsageSummary, ShardRecord, PermissionDenial
-    permissions.py          ← ToolPermissionContext (env-driven tool gating)
-    session_store.py        ← session persistence
-    forgemaster_runtime.py  ← sprint orchestration
-    ravens.py               ← HUGINN (fast retrieval) + MUNINN (deep rerank)
-    nott.py                 ← NÓTT daemon: decay · compact · merge · graph sync
-    hooks.py                ← NovaHookRegistry / NovaHookEvent
-    nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings + compaction
-    gemini_worker.py        ← standalone Gemini Flash MCP server
-    SKILL_v2.md             ← agent cognitive instructions
+    nova_server.py              ← thin MCP adapter — 16 NOVA tools + Gemini tools
+    config.py                   ← env vars: paths, thresholds, Norse Pantheon config
+    schemas.py                  ← 15 Pydantic input models for all tool handlers
+    store.py                    ← shard I/O and index management
+    graph.py                    ← knowledge graph load/save/query/relate
+    maintenance.py              ← confidence decay, compaction, cosine, merge
+    usage.py                    ← operation logging to nova_usage.jsonl
+    models.py                   ← UsageSummary, ShardRecord, PermissionDenial
+    permissions.py              ← ToolPermissionContext (env-driven tool gating)
+    session_store.py            ← session persistence
+    forgemaster_runtime.py      ← sprint orchestration
+    ravens.py                   ← HUGINN (fast retrieval) + MUNINN (deep rerank)
+    nott.py                     ← NÓTT daemon: decay · compact · merge · graph sync
+    hooks.py                    ← NovaHookRegistry / NovaHookEvent
+    nova_embeddings_local.py    ← local all-MiniLM-L6-v2 embeddings + compaction
+    gemini_worker.py            ← standalone Gemini Flash MCP server
+    SKILL_v2.md                 ← agent cognitive instructions
     requirements.txt
-    .env                    ← Gemini key for gemini_worker.py
     Gemini/
-      gemini_mcp.py         ← Gemini tools registered into nova_server
-      .env                  ← Gemini key for gemini_mcp.py
-    _deprecated/            ← v1 server, dev scripts, phase-change logs
+      gemini_mcp.py             ← Gemini tools registered into nova_server
+    _deprecated/                ← v1 server, dev scripts, phase-change logs
   python/
-    shard_index.py          ← index manager
-    context_extractor.py    ← batch shard enrichment
-    dedup_json.py           ← deduplicate shard content
-    rename_shards.py        ← bulk rename shard files
-  shards/                   ← live shard data (never edit directly)
-  nova_sessions/            ← flushed MCP session state
+    shard_index.py              ← index manager
+    context_extractor.py        ← batch shard enrichment
+    dedup_json.py               ← deduplicate shard content
+    rename_shards.py            ← bulk rename shard files
+  shards/                       ← live shard data (never edit directly)
+  nova_sessions/                ← flushed MCP session state
   forgemaster/
-    AGENTS.md               ← agent roles, routing rules, model assignments
-    SKILL_LIBRARY.md        ← index of all skills across 15 domains
-    skills/                 ← core orchestration skills
-    library/                ← domain skill library (game-dev, engineering, etc.)
-  built/                    ← compiled game project output
-  docs/                     ← reference docs (agent frameworks, architecture)
+    AGENTS.md                   ← agent roles, routing rules, model assignments
+    SKILL_LIBRARY.md            ← index of all skills across 15 domains
+    skills/                     ← core orchestration skills
+    library/                    ← domain skill library (game-dev, engineering, etc.)
+  built/                        ← compiled game project output
+  docs/                         ← reference docs
   tools/
-    chatgpt_to_nova.py      ← ChatGPT export → NOVA shard migration
-  _deprecated/              ← completed roadmap docs
-  shard_index.json          ← auto-generated (do not commit)
-  shard_graph.json          ← auto-generated (do not commit)
-  nova_usage.jsonl          ← auto-generated (do not commit)
-  .env                      ← secrets (do not commit)
-  .gitignore
-  KNOWN_ISSUES.md
-  ROADMAP.md
-  README.md
+    chatgpt_to_nova.py          ← ChatGPT export → NOVA shard migration
+  _deprecated/                  ← completed roadmap docs
 ```
+
+Auto-generated (do not commit): `shard_index.json`, `shard_graph.json`, `nova_usage.jsonl`
 
 ---
 
@@ -212,7 +231,7 @@ NOVA-Cognition-Framework/
 
 ## Module Architecture
 
-`nova_server.py` is a thin MCP adapter. All business logic lives in dedicated modules:
+`nova_server.py` is a thin MCP adapter (~970 lines). All business logic lives in dedicated modules:
 
 | Module | Responsibility |
 |---|---|
@@ -234,8 +253,6 @@ NOVA-Cognition-Framework/
 ---
 
 ## Forgemaster File Placement Convention
-
-When Forgemaster agents produce output files, they must follow this structure:
 
 ```
 built/
@@ -261,136 +278,3 @@ Agents must not place source files at the repo root or in flat unstructured dire
 - `shard_index.json`, `shard_graph.json`, and `nova_usage.jsonl` are auto-generated — do not commit
 - `.env` files contain API keys — never commit them
 - `_deprecated/` folders contain v1 code and dev artifacts — reference only
-
----
-
-## How They Connect
-
-```
-You (design doc / feature request)
-        │
-        ▼
-  Forgemaster Orchestrator
-  ├── loads NOVA shards (project context)
-  ├── decomposes into typed tickets
-  ├── routes tickets to optimal models
-  |│       ├── claude-sonnet  → architecture, review
-  |│       ├── gemini-flash   → implementation, boilerplate
-  |│       └── claude-haiku   → research, documentation
-  ├── agents execute in parallel lanes
-  ├── results returned as PRs
-  └── decisions written back to NOVA shards
-```
-
----
-
-## Quick Start
-
-### 1. Install dependencies
-
-```bash
-cd mcp/
-pip install -r requirements.txt
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env and set your OPENAI_API_KEY
-```
-
-### 3. Run the NOVA MCP server
-
-```bash
-python mcp/nova_server.py
-```
-
-### 4. Connect a client
-
-Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "nova": {
-      "command": "python",
-      "args": ["path/to/mcp/nova_server.py"]
-    }
-  }
-}
-```
-
----
-
-## Directory Structure
-
-```
-NOVA-Cognition-Framework/
-  mcp/
-    nova_server.py          ← active MCP server (16 tools)
-    SKILL_v2.md             ← active cognitive instructions
-    requirements.txt
-    nova_server.py          ← v1 reference (do not delete)
-    SKILL.md                ← v1 reference (do not delete)
-  python/
-    shard_index.py          ← index management (used by v2)
-    context_extractor.py    ← batch semantic enrichment
-    dedup_json.py
-    rename_shards.py
-    main.py
-  shards/                   ← live shard data (do not modify manually)
-  forgemaster/
-    AGENTS.md               ← global agent config and routing rules
-    skills/
-      forgemaster-orchestrator.md
-      forgemaster-parallel-lanes.md
-      forgemaster-writing-plans.md
-      forgemaster-implementation.md
-      forgemaster-systematic-debugging.md
-      forgemaster-verification.md
-      forgemaster-git-workflow.md
-      forgemaster-code-review.md
-      forgemaster-nova-session-handoff.md
-  tools/
-    chatgpt_to_nova.py      ← ChatGPT export migration script
-  shard_index.json          ← auto-generated (do not commit)
-  shard_graph.json          ← auto-generated (do not commit)
-  nova_usage.jsonl          ← auto-generated (do not commit)
-  .env                      ← your secrets (do not commit)
-  .env.example              ← template (committed)
-  .gitignore
-  README.md
-```
-
----
-
-## NOVA MCP Tools (v2)
-
-| Tool | Description |
-|---|---|
-| `nova_shard_interact` | Load shards into context by semantic relevance |
-| `nova_shard_create` | Create new shard with post-write enrichment |
-| `nova_shard_update` | Append to shard with auto-compaction |
-| `nova_shard_search` | Search with confidence weighting |
-| `nova_shard_list` | List all shards with confidence scores |
-| `nova_shard_get` | Read full shard content, no side effects |
-| `nova_shard_merge` | Merge shards into meta-shard |
-| `nova_shard_archive` | Soft-archive (excludes from search) |
-| `nova_shard_forget` | Hard delete with provenance log |
-| `nova_shard_consolidate` | Run decay + compact + merge suggestion cycle |
-| `nova_graph_query` | Query inter-shard knowledge graph |
-| `nova_graph_relate` | Add directed relation between shards |
-| `nova_session_flush` | Persist active sprint session to disk |
-| `nova_session_load` | Restore stored session to memory |
-| `nova_session_list` | List all stored session IDs |
-| `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
-
----
-
-## Notes
-
-- Never manually edit files in `shards/` — always go through the MCP tools
-- `shard_index.json`, `shard_graph.json`, and `nova_usage.jsonl` are auto-generated and should not be committed
-- `.env` contains API keys — never commit it
-- `nova_server.py` and `SKILL.md` in `_deprecated/` are kept as v1 reference — do not delete
