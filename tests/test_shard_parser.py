@@ -10,7 +10,7 @@ VALID_SHARD = """@@id: shard-1
 @@topic: Team Decisions
 @@tier: department
 @@confidence: 1
-@@decay_rate: 0.1
+@@decay_rate: 0.25
 @@links: shard-2, shard-3
 @@timestamp: 2026-04-01T00:00:00+00:00
 ---
@@ -30,7 +30,7 @@ def test_parser_reads_valid_shard(tmp_path: Path) -> None:
     assert parsed["topic"] == "Team Decisions"
     assert parsed["tier"] == "department"
     assert parsed["confidence"] == 1
-    assert parsed["decay_rate"] == 0.1
+    assert parsed["decay_rate"] == 0.25
     assert parsed["links"] == ["shard-2", "shard-3"]
     assert "markdown content" in parsed["content"]
 
@@ -96,7 +96,13 @@ def test_shard_db_insert_query_and_decay(tmp_path: Path) -> None:
         assert updated == 1
 
         decayed = db.query(tier="department")[0]
-        assert decayed["confidence"] == 0.5
+        assert decayed["confidence"] == 0
+
+        updated = db.decay(now=datetime.fromisoformat("2026-04-10T00:00:00+00:00"))
+        assert updated == 1
+
+        decayed = db.query(tier="department")[0]
+        assert decayed["confidence"] == -1
 
 
 def test_shard_db_stores_malformed_files_gracefully(tmp_path: Path) -> None:
@@ -111,3 +117,49 @@ def test_shard_db_stores_malformed_files_gracefully(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["valid"] is False
     assert rows[0]["errors"]
+
+
+def test_parser_rejects_fractional_confidence(tmp_path: Path) -> None:
+    shard_path = tmp_path / "fractional.shard"
+    shard_path.write_text(
+        """@@id: frac
+@@topic: Fractional
+@@tier: personal
+@@confidence: 0.5
+@@decay_rate: 0.25
+@@links:
+@@timestamp: 2026-04-01T00:00:00+00:00
+---
+Body
+""",
+        encoding="utf-8",
+    )
+
+    parsed = ShardParser.parse(shard_path)
+    assert parsed["valid"] is False
+    assert any("Invalid confidence" in err for err in parsed["errors"])
+
+
+def test_shard_db_reinforce_moves_confidence_up_one_step(tmp_path: Path) -> None:
+    db_path = tmp_path / "reinforce.db"
+    with ShardDB(db_path) as db:
+        assert db.upsert(
+            {
+                "id": "s1",
+                "topic": "t",
+                "tier": "personal",
+                "confidence": -1,
+                "decay_rate": 0.2,
+                "links": [],
+                "timestamp": "2026-04-01T00:00:00+00:00",
+                "content": "c",
+                "valid": True,
+                "errors": [],
+            }
+        )
+
+        assert db.reinforce("s1") is True
+        assert db.query(topic_keyword="")[0]["confidence"] == 0
+
+        assert db.reinforce("s1") is True
+        assert db.query(topic_keyword="")[0]["confidence"] == 1
