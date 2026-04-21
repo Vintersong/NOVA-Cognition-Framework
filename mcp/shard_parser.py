@@ -99,7 +99,10 @@ class ShardParser:
             data["confidence"] = confidence
         except (TypeError, ValueError):
             data["valid"] = False
-            data["errors"].append(f"Invalid confidence: {data.get('confidence')}")
+            data["errors"].append(
+                f"Invalid confidence: {data.get('confidence')} "
+                f"(must be one of {sorted(cls.VALID_CONFIDENCE)})"
+            )
             data["confidence"] = 0
 
         try:
@@ -309,7 +312,10 @@ class ShardDB:
             raw_content = row["content"]
             if isinstance(raw_content, memoryview):
                 raw_content = raw_content.tobytes()
-            content = raw_content.decode("utf-8", errors="replace") if isinstance(raw_content, (bytes, bytearray)) else str(raw_content)
+            if isinstance(raw_content, (bytes, bytearray)):
+                content = raw_content.decode("utf-8", errors="replace")
+            else:
+                content = str(raw_content)
             try:
                 errors = json.loads(row["errors"])
                 if not isinstance(errors, list):
