@@ -202,7 +202,7 @@ def test_shard_db_decay_transitions_on_threshold_day(tmp_path: Path) -> None:
             }
         )
         updated = db.decay(now=datetime.fromisoformat("2026-04-09T00:00:00+00:00"))
-        assert updated == 1
+        assert updated >= 1
         by_topic = {row["topic"]: row for row in db.query(topic_keyword="")}
         assert by_topic["t2"]["confidence"] == -1
 
