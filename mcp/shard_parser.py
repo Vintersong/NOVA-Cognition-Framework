@@ -108,8 +108,7 @@ class ShardParser:
             data["valid"] = False
             data["errors"].append(
                 f"Invalid confidence: {data.get('confidence')} "
-                f"(expected one of [-1, 0, 1]; accepted range is "
-                f"[{cls.MIN_CONFIDENCE}, {cls.MAX_CONFIDENCE}] for decayed values)"
+                f"(expected range [{cls.MIN_CONFIDENCE}, {cls.MAX_CONFIDENCE}])"
             )
             data["confidence"] = 0
 
@@ -274,8 +273,8 @@ class ShardDB:
                 if shard_time.tzinfo is None:
                     shard_time = shard_time.replace(tzinfo=timezone.utc)
                 days_since = max(0, (now - shard_time).days)
-                # Spec requires decay as a function of decay_rate and elapsed days,
-                # so this uses a linear daily factor toward zero while preserving sign.
+                # Linear daily decay: confidence *= max(0, 1 - decay_rate * days_since).
+                # Example: decay_rate=0.1 reduces magnitude by 10% per day, reaching 0 by day 10.
                 factor = max(0.0, 1.0 - (float(row["decay_rate"]) * days_since))
                 new_confidence = float(row["confidence"]) * factor
                 if abs(new_confidence - float(row["confidence"])) > 1e-9:
