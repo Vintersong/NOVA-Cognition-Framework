@@ -241,10 +241,8 @@ def _write_implementation_file(rel_path: str, code: str) -> str:
             within_repo = False
     if not within_repo:
         logger.error(
-            "ForgemasterRuntime._write_implementation_file: rejected path escape rel_path=%s resolved=%s repo=%s",
+            "ForgemasterRuntime._write_implementation_file: rejected path escape rel_path=%s",
             rel_path,
-            target,
-            repo,
         )
         raise ValueError(f"Refusing to write outside repo root: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)

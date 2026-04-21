@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 
@@ -44,7 +45,10 @@ def _extract_tools_from_nova_server(path: Path) -> list[str]:
 
 def _assert_count_phrase(path: Path, expected_count: int) -> list[str]:
     text = path.read_text(encoding="utf-8")
-    if str(expected_count) not in text:
+    pattern = re.compile(
+        rf"(?i)(\btools?\b[^\n]{{0,40}}\b{expected_count}\b|\b{expected_count}\b[^\n]{{0,40}}\btools?\b)"
+    )
+    if pattern.search(text) is None:
         return [f"{path}: missing expected tool count '{expected_count}'"]
     return []
 

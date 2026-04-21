@@ -129,7 +129,7 @@ def classify_tags(shard: dict) -> list[str]:
                 tags.append("stale")
         except (ValueError, TypeError):
             _error_counts["classify_tags"] += 1
-            logger.debug("store.classify_tags ignored invalid last_used value: %r", last_used_str)
+            logger.warning("store.classify_tags ignored invalid last_used value: %r", last_used_str)
 
     if usage_count > 10:
         tags.append("frequently_used")
