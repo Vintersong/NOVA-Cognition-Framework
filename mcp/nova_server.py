@@ -33,7 +33,7 @@ Architecture:
   Knowledge Graph (inter-shard navigation)
     --> relationships, entities, pattern queries
 
-Tools (18 total):
+Core tools in this module (18 total):
   nova_shard_interact   — load shards into context
   nova_shard_create     — create new shard (+ post-write hook)
   nova_shard_update     — append to shard (+ post-write hook + auto-compact)
@@ -52,6 +52,13 @@ Tools (18 total):
   nova_session_load     — restore stored session to memory
   nova_session_list     — list all stored session IDs
   nova_forgemaster_sprint — full 4-turn sprint pipeline
+
+Additional registered tools from other modules:
+  - Wiki tools (6): nova_wiki_schema, nova_wiki_ingest, nova_wiki_query, nova_wiki_get, nova_wiki_list, nova_wiki_lint
+  - Nidhogg tools (3): nidhogg_ingest, nidhogg_scan, nidhogg_status
+  - Evolution tool (1): nova_evolve
+  - Gemini tools (2): gemini_execute_ticket, gemini_load_file
+Total exported MCP tools: 30
 """
 
 import asyncio

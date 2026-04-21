@@ -232,7 +232,17 @@ def _write_implementation_file(rel_path: str, code: str) -> str:
     """
     target = (_REPO_ROOT / rel_path).resolve()
     repo = _REPO_ROOT.resolve()
-    if not str(target).startswith(str(repo)):
+    try:
+        within_repo = target.is_relative_to(repo)
+    except AttributeError:  # pragma: no cover - Python < 3.9 fallback
+        within_repo = repo == target or repo in target.parents
+    if not within_repo:
+        logger.error(
+            "ForgemasterRuntime._write_implementation_file: rejected path escape rel_path=%s resolved=%s repo=%s",
+            rel_path,
+            target,
+            repo,
+        )
         raise ValueError(f"Refusing to write outside repo root: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code, encoding="utf-8")

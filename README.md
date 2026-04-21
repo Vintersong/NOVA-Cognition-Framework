@@ -283,6 +283,22 @@ Read-only resources exposed alongside the tools:
 
 ---
 
+## Stability: Production vs Experimental
+
+### Production-critical (stable, supported)
+- `mcp/nova_server.py` and exported MCP tools
+- Core runtime modules: `mcp/store.py`, `mcp/graph.py`, `mcp/maintenance.py`, `mcp/forgemaster_runtime.py`, `mcp/permissions.py`, `mcp/session_store.py`, `mcp/hooks.py`
+- Retrieval and indexing pipeline: `mcp/ravens.py`, `mcp/nova_embeddings_local.py`, `mcp/build_summary_index.py`
+- Wiki and ingestion modules: `mcp/wiki.py`, `mcp/wiki_ingest.py`, `mcp/wiki_tools.py`, `mcp/nidhogg.py`
+
+### Experimental / internal tooling (may change without compatibility guarantees)
+- `utilities/` scripts (migration helpers, diagnostics, ad-hoc maintenance tools)
+- `mcp/test_nova.py` memory explorer CLI
+- Planning/reference docs under `docs/` and donor/reference materials under `Donors/`
+- `forgemaster/library/` and `forgemaster/agents/` skill/persona content
+
+---
+
 ## Key Environment Variables
 
 | Variable | Default | Notes |

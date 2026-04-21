@@ -19,4 +19,28 @@ jobs:
       - name: Install dependencies
         run: pip install -r mcp/requirements.txt
       - name: Check shard bloat
-        run: python tools/shard_compact.py --fail-on-bloat --dry-run
+        run: python utilities/shard_compact.py --fail-on-bloat --dry-run
+
+  quality-gates:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r mcp/requirements.txt
+          pip install pytest ruff mypy
+      - name: Smoke test
+        run: python utilities/test_shards.py
+      - name: Unit tests
+        run: pytest -q tests
+      - name: Lint (ruff)
+        run: ruff check mcp tests utilities/test_shards.py utilities/check_tool_docs.py
+      - name: Type check (mypy)
+        run: mypy
+      - name: Docs consistency
+        run: python utilities/check_tool_docs.py

@@ -36,6 +36,10 @@ graph_file = "shard_graph.json"
 if os.path.exists(graph_file):
     with open(graph_file) as f:
         graph = json.load(f)
-    print(f"✓ Knowledge graph exists: {len(graph.get('shards', {}))} nodes")
+    entities = graph.get("entities", {})
+    relations = graph.get("relations", [])
+    print(f"✓ Knowledge graph exists: {len(entities)} entities, {len(relations)} relations")
+    if not isinstance(entities, dict) or not isinstance(relations, list):
+        print("✗ Graph structure invalid: expected {'entities': dict, 'relations': list}")
 else:
     print(f"✗ Knowledge graph not found")
