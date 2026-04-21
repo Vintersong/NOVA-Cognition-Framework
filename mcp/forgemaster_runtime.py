@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 forgemaster_runtime.py — Forgemaster execution harness.
 
@@ -17,6 +15,8 @@ Real model dispatch:
 Per-call events are appended to the path in FORGEMASTER_EVENT_LOG
 (environment variable) when set — one JSON object per line.
 """
+
+from __future__ import annotations
 
 import json
 import logging

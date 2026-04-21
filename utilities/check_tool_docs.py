@@ -14,17 +14,30 @@ SKILL = REPO_ROOT / "mcp" / "SKILL.md"
 CLAUDE = REPO_ROOT / "CLAUDE.md"
 
 
+def _string_literals(expr: ast.AST | None) -> list[str]:
+    if not isinstance(expr, (ast.Tuple, ast.List)):
+        return []
+    out: list[str] = []
+    for elt in expr.elts:
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            out.append(elt.value)
+    return out
+
+
 def _extract_tools_from_nova_server(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in tree.body:
+        if isinstance(node, ast.AnnAssign):
+            ann_target = node.target
+            if isinstance(ann_target, ast.Name) and ann_target.id == "_ALL_TOOL_NAMES":
+                values = _string_literals(node.value)
+                if values:
+                    return values
         if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_ALL_TOOL_NAMES":
-                    if isinstance(node.value, (ast.Tuple, ast.List)):
-                        values: list[str] = []
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                values.append(elt.value)
+            for assign_target in node.targets:
+                if isinstance(assign_target, ast.Name) and assign_target.id == "_ALL_TOOL_NAMES":
+                    values = _string_literals(node.value)
+                    if values:
                         return values
     raise RuntimeError("Could not locate _ALL_TOOL_NAMES in mcp/nova_server.py")
 

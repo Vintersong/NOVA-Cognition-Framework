@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - optional dependency fallback
     ijson = None
 
 from config import (
-    SHARD_DIR, INDEX_FILE, MAX_FRAGMENTS, SUMMARY_INDEX_FILE, SUMMARY_MARKDOWN_FILE,
+    SHARD_DIR, INDEX_FILE, SUMMARY_INDEX_FILE, SUMMARY_MARKDOWN_FILE,
     CONFIDENCE_LOW_THRESHOLD, RECENT_ACCESS_DAYS, STALE_ACCESS_DAYS,
 )
 
