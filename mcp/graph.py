@@ -101,7 +101,7 @@ def query_graph(pattern: dict) -> list[dict]:
 
 def query_graph_transitive(
     root_id: str,
-    relation_type: str = None,
+    relation_type: str | None = None,
     direction: str = "outbound",
     max_depth: int = 3,
 ) -> list[dict]:

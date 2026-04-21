@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 forgemaster_runtime.py — Forgemaster execution harness.
 
@@ -17,6 +15,8 @@ Real model dispatch:
 Per-call events are appended to the path in FORGEMASTER_EVENT_LOG
 (environment variable) when set — one JSON object per line.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -232,7 +232,18 @@ def _write_implementation_file(rel_path: str, code: str) -> str:
     """
     target = (_REPO_ROOT / rel_path).resolve()
     repo = _REPO_ROOT.resolve()
-    if not str(target).startswith(str(repo)):
+    try:
+        within_repo = target.is_relative_to(repo)
+    except AttributeError:  # pragma: no cover - Python < 3.9 fallback
+        try:
+            within_repo = os.path.commonpath((str(repo), str(target))) == str(repo)
+        except ValueError:
+            within_repo = False
+    if not within_repo:
+        logger.error(
+            "ForgemasterRuntime._write_implementation_file: rejected path escape rel_path=%s",
+            rel_path,
+        )
         raise ValueError(f"Refusing to write outside repo root: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code, encoding="utf-8")
