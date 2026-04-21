@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sqlite3
@@ -21,6 +21,8 @@ class ShardParser:
     }
     VALID_TIERS = {"personal", "department", "studio"}
     VALID_CONFIDENCE = {-1, 0, 1}
+    MIN_CONFIDENCE = -1.0
+    MAX_CONFIDENCE = 1.0
 
     @classmethod
     def parse(cls, file_path: str | Path) -> dict[str, Any]:
@@ -83,7 +85,13 @@ class ShardParser:
     @classmethod
     def _validate_and_normalize(cls, data: dict[str, Any]) -> None:
         for field in cls.REQUIRED_FIELDS:
-            if field not in data or (isinstance(data[field], str) and not data[field].strip() and field != "links"):
+            if field not in data:
+                data["valid"] = False
+                data["errors"].append(f"Missing required field: {field}")
+                continue
+            if field == "links":
+                continue
+            if isinstance(data[field], str) and not data[field].strip():
                 data["valid"] = False
                 data["errors"].append(f"Missing required field: {field}")
 
@@ -93,15 +101,16 @@ class ShardParser:
             data["tier"] = "personal"
 
         try:
-            confidence = int(data.get("confidence", 0))
-            if confidence not in cls.VALID_CONFIDENCE:
+            confidence = float(data.get("confidence", 0))
+            if not cls.MIN_CONFIDENCE <= confidence <= cls.MAX_CONFIDENCE:
                 raise ValueError
             data["confidence"] = confidence
         except (TypeError, ValueError):
             data["valid"] = False
             data["errors"].append(
                 f"Invalid confidence: {data.get('confidence')} "
-                f"(must be one of {sorted(cls.VALID_CONFIDENCE)})"
+                f"(expected one of [-1, 0, 1]; accepted range is "
+                f"[{cls.MIN_CONFIDENCE}, {cls.MAX_CONFIDENCE}] for decayed values)"
             )
             data["confidence"] = 0
 
@@ -248,7 +257,9 @@ class ShardDB:
         return self.upsert(shard)
 
     def decay(self, now: datetime | None = None) -> int:
-        now = now or datetime.now()
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
         updated = 0
         try:
             rows = self.conn.execute(
@@ -261,7 +272,10 @@ class ShardDB:
             try:
                 ts = str(row["timestamp"] or "").replace("Z", "+00:00")
                 shard_time = datetime.fromisoformat(ts)
+                if shard_time.tzinfo is None:
+                    shard_time = shard_time.replace(tzinfo=timezone.utc)
                 days_since = max(0, (now - shard_time).days)
+                # Linear daily decay toward zero while preserving sign.
                 factor = max(0.0, 1.0 - (float(row["decay_rate"]) * days_since))
                 new_confidence = float(row["confidence"]) * factor
                 if abs(new_confidence - float(row["confidence"])) > 1e-9:
