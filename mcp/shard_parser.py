@@ -287,13 +287,13 @@ class ShardDB:
                 if decay_rate <= 0:
                     continue
 
-                first_threshold_days = 1.0 / decay_rate
-                second_threshold_days = 2.0 / decay_rate
+                confirmed_to_neutral_threshold_days = 1.0 / decay_rate
+                neutral_to_contradicted_threshold_days = 2.0 / decay_rate
 
                 new_confidence = current_confidence
-                if current_confidence == 1 and days_since > first_threshold_days:
+                if current_confidence == 1 and days_since > confirmed_to_neutral_threshold_days:
                     new_confidence = 0
-                elif current_confidence == 0 and days_since > second_threshold_days:
+                elif current_confidence == 0 and days_since > neutral_to_contradicted_threshold_days:
                     new_confidence = -1
 
                 if new_confidence != current_confidence:
