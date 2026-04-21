@@ -62,6 +62,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Load .env from repo root before importing config (config reads env at import time).
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
+
 from mcp.server.fastmcp import FastMCP
 from config import (
     SHARD_DIR, INDEX_FILE, GRAPH_FILE, USAGE_LOG_FILE,
@@ -96,7 +100,7 @@ from maintenance import (
 )
 from usage import log_operation
 from nova_embeddings_local import enrich_shard, prewarm_embedding_model
-from permissions import ToolPermissionContext
+from permissions import ToolPermissionContext, set_active as _set_active_permissions
 from models import UsageSummary
 from session_store import SessionStore, NovaSession
 from forgemaster_runtime import ForgemasterRuntime
@@ -106,6 +110,9 @@ from hooks import NovaHookRegistry, NovaHookEvent
 
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Gemini"))
 from gemini_mcp import register_gemini_tools
+from nidhogg import register_nidhogg_tools
+from evolve import register_evolve_tools
+from wiki_tools import register_wiki_tools
 
 # Bootstrap
 os.makedirs(SHARD_DIR, exist_ok=True)
@@ -119,6 +126,9 @@ _permission_context: ToolPermissionContext = ToolPermissionContext.from_iterable
     deny_tools=[t for t in _denied_tools_env.split(",") if t.strip()],
     deny_prefixes=[p for p in _denied_prefixes_env.split(",") if p.strip()],
 )
+# Publish to permissions.py so externally-registered tool handlers
+# (nidhogg, evolve, gemini) see the same policy.
+_set_active_permissions(_permission_context)
 
 # === Session usage tracking ===
 _session_usage: UsageSummary = UsageSummary()
@@ -136,12 +146,16 @@ _hooks: NovaHookRegistry # bound after nott is initialized
 
 mcp = FastMCP("nova_mcp_v2")
 register_gemini_tools(mcp)
+register_nidhogg_tools(mcp)
+register_evolve_tools(mcp)
+register_wiki_tools(mcp)
 
 # ═══════════════════════════════════════════════════════════
 # PERMISSION HELPERS
 # ═══════════════════════════════════════════════════════════
 
 _ALL_TOOL_NAMES: tuple[str, ...] = (
+    # Core shard + graph + session tools (handled in this file)
     "nova_shard_interact",
     "nova_shard_create",
     "nova_shard_update",
@@ -160,6 +174,22 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_session_load",
     "nova_session_list",
     "nova_forgemaster_sprint",
+    # Wiki tools (registered via wiki_tools.register_wiki_tools)
+    "nova_wiki_schema",
+    "nova_wiki_ingest",
+    "nova_wiki_query",
+    "nova_wiki_get",
+    "nova_wiki_list",
+    "nova_wiki_lint",
+    # Nidhogg tools (registered via nidhogg.register_nidhogg_tools)
+    "nidhogg_ingest",
+    "nidhogg_scan",
+    "nidhogg_status",
+    # Evolution tools (registered via evolve.register_evolve_tools)
+    "nova_evolve",
+    # Gemini tools (registered via Gemini/gemini_mcp.register_gemini_tools)
+    "gemini_execute_ticket",
+    "gemini_load_file",
 )
 
 
@@ -353,12 +383,9 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
             "ai": ""
         })
 
-    # Post-write enrichment hook — runs in thread pool to avoid blocking the event loop
-    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, shard_id, shard_data)
-
+    # Persist immediately so the shard exists on disk even if enrichment stalls.
     save_shard(filepath, shard_data)
     patch_index_entry(shard_id, shard_data)
-    refresh_summary_index_entry(shard_id, shard_data, generate_missing=True)
 
     # Register in knowledge graph
     add_shard_to_graph(shard_id, shard_data)
@@ -367,28 +394,33 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     for related_id in ([s.strip() for s in params.related_shards.split(",") if s.strip()] if params.related_shards else []):
         add_relation(shard_id, related_id, params.relation_type)
 
-    # Check for merge candidates
-    index = load_index()
-    merge_candidates = find_merge_candidates(shard_id, shard_data, index)
+    # Enrichment runs in background — MiniLM embed + save, never blocks reply.
+    loop = asyncio.get_running_loop()
 
-    # NÓTT — count-threshold check: fire-and-forget if store is getting large
+    async def _background_enrich_and_persist() -> None:
+        await loop.run_in_executor(None, enrich_shard, shard_id, shard_data)
+        await loop.run_in_executor(None, save_shard, filepath, shard_data)
+        await loop.run_in_executor(None, patch_index_entry, shard_id, shard_data)
+
+    asyncio.create_task(_background_enrich_and_persist())
+
+    # Summary generation may call Haiku API — fire-and-forget to avoid blocking response.
+    # run_in_executor already schedules in the background; not awaiting makes it fire-and-forget.
+    loop.run_in_executor(None, refresh_summary_index_entry, shard_id, shard_data, True)  # noqa: RUF006
+
+    # NÓTT — count-threshold check includes merge candidate scan (fire-and-forget)
+    index = load_index()
     if len(index) >= NOTT_COUNT_THRESHOLD:
         _hooks.emit(NovaHookEvent.COUNT_THRESHOLD)
 
     log_operation("nova_shard_create", [shard_id])
 
-    result = {
+    return json.dumps({
         "status": "created",
         "shard_id": shard_id,
         "guiding_question": params.guiding_question,
-        "enrichment_status": shard_data.get("meta_tags", {}).get("enrichment_status", "unknown"),
-    }
-
-    if merge_candidates:
-        result["merge_suggestions"] = merge_candidates
-        result["merge_note"] = f"{len(merge_candidates)} similar shard(s) found. Consider merging."
-
-    return json.dumps(result, indent=2)
+        "enrichment_status": "pending",
+    }, indent=2)
 
 
 @mcp.tool(name="nova_shard_update")
@@ -412,18 +444,32 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     # (replaces inline maybe_compact_shard call)
     _hooks.emit(NovaHookEvent.POST_SPRINT)
 
-    # Post-write enrichment hook — runs in thread pool to avoid blocking the event loop
-    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, params.shard_id, data)
-
+    # Persist the new turn immediately so no data is lost if enrichment stalls.
+    data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
     save_shard(filepath, data)
     patch_index_entry(params.shard_id, data)
-    refresh_summary_index_entry(params.shard_id, data, generate_missing=True)
 
     # Update graph entity confidence
     graph = load_graph()
     if params.shard_id in graph.get("entities", {}):
         graph["entities"][params.shard_id]["confidence"] = data["meta_tags"].get("confidence", 1.0)
         save_graph(graph)
+
+    # Enrichment runs in background — MiniLM embed + save, never blocks reply.
+    # Previously awaited here; competed with NÓTT for the default thread pool
+    # and caused MCP-level timeouts when cycles exceeded the client deadline.
+    loop = asyncio.get_running_loop()
+
+    async def _background_enrich_and_persist() -> None:
+        await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
+        await loop.run_in_executor(None, save_shard, filepath, data)
+        await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
+
+    asyncio.create_task(_background_enrich_and_persist())
+
+    # Summary generation may call Haiku API — fire-and-forget to avoid blocking response.
+    # run_in_executor already schedules in the background; not awaiting makes it fire-and-forget.
+    loop.run_in_executor(None, refresh_summary_index_entry, params.shard_id, data, True)
 
     log_operation("nova_shard_update", [params.shard_id])
 
@@ -432,7 +478,7 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
         "shard_id": params.shard_id,
         "total_entries": len(data["conversation_history"]),
         "nott_scheduled": True,
-        "enrichment_status": data.get("meta_tags", {}).get("enrichment_status", "unknown"),
+        "enrichment_status": "pending",
     }, indent=2)
 
 
@@ -481,14 +527,29 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
 
     results.sort(key=lambda x: x["weighted_score"], reverse=True)
 
-    # Run HUGINN → MUNINN pipeline to get semantic retrieval metadata
-    huginn_result = await _huginn.retrieve(params.query, index, params.top_n)
-    if not huginn_result.is_confident(_huginn.confidence_threshold):
-        final_retrieval = await _muninn.rerank(params.query, huginn_result, index, params.top_n)
-        muninn_fired = True
-    else:
-        final_retrieval = huginn_result
-        muninn_fired = False
+    # Ravens metadata — best-effort with a tight timeout so search never blocks.
+    huginn_confidence = 0.0
+    muninn_fired = False
+    huginn_ranking: list[str] = []
+    try:
+        huginn_result = await asyncio.wait_for(
+            _huginn.retrieve(params.query, index, params.top_n),
+            timeout=20.0,
+        )
+        huginn_confidence = huginn_result.max_confidence
+        huginn_ranking = huginn_result.shard_ids
+        if not huginn_result.is_confident(_huginn.confidence_threshold):
+            try:
+                final_retrieval = await asyncio.wait_for(
+                    _muninn.rerank(params.query, huginn_result, index, params.top_n),
+                    timeout=20.0,
+                )
+                huginn_ranking = final_retrieval.shard_ids
+                muninn_fired = True
+            except asyncio.TimeoutError:
+                pass
+    except asyncio.TimeoutError:
+        pass
 
     log_operation("nova_shard_search", [], {"query": params.query})
 
@@ -496,9 +557,9 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
         "query": params.query,
         "results": results[:params.top_n],
         "total_searched": len(index),
-        "huginn_confidence": round(huginn_result.max_confidence, 4),
+        "huginn_confidence": round(huginn_confidence, 4),
         "muninn_used": muninn_fired,
-        "huginn_ranking": final_retrieval.shard_ids,
+        "huginn_ranking": huginn_ranking,
     }, indent=2)
 
 
@@ -665,9 +726,11 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
         }
     }
 
-    # Runs in thread pool to avoid blocking the event loop
-    await asyncio.get_running_loop().run_in_executor(None, enrich_shard, new_id, meta_shard)
+    # Persist the meta-shard immediately; enrichment happens in background.
+    meta_shard.setdefault("meta_tags", {})["enrichment_status"] = "pending"
     save_shard(filepath, meta_shard)
+    patch_index_entry(new_id, meta_shard)
+    add_shard_to_graph(new_id, meta_shard)
 
     if params.archive_originals:
         for sid in shard_ids_list:
@@ -679,8 +742,15 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
             except FileNotFoundError:
                 pass
 
-    patch_index_entry(new_id, meta_shard)
-    add_shard_to_graph(new_id, meta_shard)
+    # Enrichment runs in background — never blocks reply.
+    loop = asyncio.get_running_loop()
+
+    async def _background_enrich_and_persist() -> None:
+        await loop.run_in_executor(None, enrich_shard, new_id, meta_shard)
+        await loop.run_in_executor(None, save_shard, filepath, meta_shard)
+        await loop.run_in_executor(None, patch_index_entry, new_id, meta_shard)
+
+    asyncio.create_task(_background_enrich_and_persist())
 
     # Wire graph: each source extends the new meta-shard
     for sid in shard_ids_list:

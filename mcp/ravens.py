@@ -17,7 +17,7 @@ Two-pass design:
   HUGINN.retrieve()  →  token-overlap pre-filter, then Haiku LLM re-score
   MUNINN.rerank()    →  cosine re-rank over HUGINN candidates, then Sonnet deep rerank
 
-Both passes fall back to local-only (no API call) when ANTHROPIC_API_KEY is absent:
+Both passes fall back to local-only (no API call) when CLAUDE_API_KEY is absent:
   - HUGINN local: token-overlap + Jaccard blend × confidence × trust
   - MUNINN local: query-embedding cosine similarity
 
@@ -27,15 +27,57 @@ Usage tracking:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import anthropic
+
+logger = logging.getLogger(__name__)
+
+# Timeout (seconds) for each LLM API call.  Falls back to local scores on expiry.
+_RAVEN_API_TIMEOUT = float(os.environ.get("RAVEN_API_TIMEOUT", "10"))
+
+
+# ═══════════════════════════════════════════════════════════
+# XML SCORE PARSER
+# ═══════════════════════════════════════════════════════════
+
+_SCORE_RE = re.compile(
+    r'<score\s+id="([^"]+)"\s+value="([^"]+)">(.*?)</score>',
+    re.DOTALL,
+)
+
+
+def _parse_score_xml(raw: str) -> tuple[dict, dict]:
+    """
+    Parse XML-tagged LLM score output into (scores, reasoning) dicts.
+
+    Expected format per shard:
+        <score id="<shard_id>" value="<float 0-1>">reason text</score>
+
+    Tolerates extra whitespace, multi-line reasoning, and partial output.
+    Defaults to value=0.5 on any parse failure for a given tag.
+    """
+    scores: dict[str, float] = {}
+    reasoning: dict[str, str] = {}
+    for m in _SCORE_RE.finditer(raw):
+        shard_id = m.group(1).strip()
+        value_str = m.group(2).strip()
+        note = m.group(3).strip()
+        try:
+            scores[shard_id] = float(value_str)
+        except ValueError:
+            scores[shard_id] = 0.5
+        reasoning[shard_id] = note or "xml-scored"
+    return scores, reasoning
 
 
 # ═══════════════════════════════════════════════════════════
@@ -73,7 +115,7 @@ class Huginn:
     Odin's raven of Thought. Flies fast, returns quickly.
 
     Local pre-filter (token-overlap + Jaccard) then Haiku LLM re-score.
-    Falls back to local-only when ANTHROPIC_API_KEY is absent.
+    Falls back to local-only when CLAUDE_API_KEY is absent.
     """
 
     def __init__(
@@ -98,7 +140,7 @@ class Huginn:
         Returns RetrievalResult. If result.is_confident(threshold) is True,
         the caller should skip MUNINN entirely.
         """
-        from config import ANTHROPIC_API_KEY, HUGINN_MODEL
+        from config import CLAUDE_API_KEY, HUGINN_MODEL
 
         # ── Local pre-filter ──────────────────────────────────────────────
         scored = self._local_retrieve(query, index, top_n * 3)
@@ -115,8 +157,8 @@ class Huginn:
         scores = {s[0]: round(s[1], 4) for s in scored[:top_n]}
         reasoning = {sid: "local: token-overlap + Jaccard blend × confidence × trust" for sid in shard_ids}
 
-        # ── Haiku LLM re-score ────────────────────────────────────────────
-        if ANTHROPIC_API_KEY:
+        # ── Haiku LLM re-score (with timeout guard) ─────────────────────
+        if CLAUDE_API_KEY:
             try:
                 summaries = [
                     {
@@ -131,26 +173,33 @@ class Huginn:
                 prompt = (
                     f"Query: {query}\n\n"
                     "Below are candidate memory shards. Score each from 0.0 to 1.0 for relevance "
-                    "to the query. Return ONLY valid JSON: "
-                    '{"scores": {"<shard_id>": <float>}, "reasoning": {"<shard_id>": "<note>"}}\n\n'
+                    "to the query. Return ONLY XML score tags, one per shard:\n"
+                    '<score id="<shard_id>" value="<float 0-1>">brief reason</score>\n\n'
                     f"Shards:\n{json.dumps(summaries, indent=2)}"
                 )
-                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-                response = client.messages.create(
-                    model=HUGINN_MODEL,
-                    max_tokens=512,
-                    messages=[{"role": "user", "content": prompt}],
+
+                def _huginn_api_call() -> str:
+                    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+                    response = client.messages.create(
+                        model=HUGINN_MODEL,
+                        max_tokens=512,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    return response.content[0].text.strip()
+
+                raw = await asyncio.wait_for(
+                    asyncio.to_thread(_huginn_api_call),
+                    timeout=_RAVEN_API_TIMEOUT,
                 )
-                raw = response.content[0].text.strip()
-                parsed = json.loads(raw)
-                llm_scores: dict = parsed.get("scores", {})
-                llm_reasoning: dict = parsed.get("reasoning", {})
+                llm_scores, llm_reasoning = _parse_score_xml(raw)
                 if llm_scores:
                     sorted_ids = sorted(llm_scores, key=lambda k: llm_scores[k], reverse=True)[:top_n]
                     shard_ids = sorted_ids
                     scores = {sid: round(float(llm_scores[sid]), 4) for sid in sorted_ids}
                     reasoning = {sid: llm_reasoning.get(sid, "haiku-scored") for sid in sorted_ids}
                     used_llm = True
+            except asyncio.TimeoutError:
+                logger.warning("HUGINN: Haiku API call timed out after %.0fs — using local scores", _RAVEN_API_TIMEOUT)
             except Exception:
                 pass  # fall through to local scores already computed
 
@@ -241,7 +290,7 @@ class Muninn:
     Odin's raven of Memory. Slower, harder to call back, more important.
 
     Re-ranks HUGINN candidates using Sonnet for semantic judgment; falls back
-    to query-embedding cosine similarity when ANTHROPIC_API_KEY is absent.
+    to query-embedding cosine similarity when CLAUDE_API_KEY is absent.
     """
 
     def __init__(
@@ -265,16 +314,16 @@ class Muninn:
         Returns a new RetrievalResult with re-ranked shard_ids.
         Falls back to passing HUGINN result through if no embeddings available.
         """
-        from config import ANTHROPIC_API_KEY, MUNINN_MODEL
+        from config import CLAUDE_API_KEY, MUNINN_MODEL
 
-        reranked = self._local_rerank(query, candidates, index, top_n)
+        reranked = await asyncio.to_thread(self._local_rerank, query, candidates, index, top_n)
         used_llm = False
         shard_ids = reranked["shard_ids"]
         scores = reranked["scores"]
         reasoning = reranked["reasoning"]
 
-        # ── Sonnet LLM deep rerank ────────────────────────────────────────
-        if ANTHROPIC_API_KEY and candidates.shard_ids:
+        # ── Sonnet LLM deep rerank (with timeout guard) ───────────────────
+        if CLAUDE_API_KEY and candidates.shard_ids:
             try:
                 shard_blobs = []
                 for sid in candidates.shard_ids:
@@ -284,9 +333,10 @@ class Muninn:
                     try:
                         with open(shard_path, "r", encoding="utf-8") as f:
                             shard_data = json.load(f)
-                        turns = shard_data.get("turns", [])
+                        turns = shard_data.get("conversation_history", [])
                         turns_preview = " | ".join(
-                            t.get("content", "")[:120] for t in turns[-3:]
+                            f"{t.get('user', '')} → {t.get('ai', '')}"[:120]
+                            for t in turns[-3:]
                         )
                     except Exception:
                         pass
@@ -305,26 +355,33 @@ class Muninn:
                     f"Query: {query}\n\n"
                     "Re-rank these memory shards by relevance to the query. "
                     "Consider the shard summary, topics, confidence, and recent content. "
-                    "Return ONLY valid JSON: "
-                    '{"scores": {"<shard_id>": <float 0-1>}, "reasoning": {"<shard_id>": "<note>"}}\n\n'
+                    "Return ONLY XML score tags, one per shard:\n"
+                    '<score id="<shard_id>" value="<float 0-1>">brief reason</score>\n\n'
                     f"Shards:\n{json.dumps(shard_blobs, indent=2)}"
                 )
-                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-                response = client.messages.create(
-                    model=MUNINN_MODEL,
-                    max_tokens=1024,
-                    messages=[{"role": "user", "content": prompt}],
+
+                def _muninn_api_call() -> str:
+                    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+                    response = client.messages.create(
+                        model=MUNINN_MODEL,
+                        max_tokens=1024,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    return response.content[0].text.strip()
+
+                raw = await asyncio.wait_for(
+                    asyncio.to_thread(_muninn_api_call),
+                    timeout=_RAVEN_API_TIMEOUT,
                 )
-                raw = response.content[0].text.strip()
-                parsed = json.loads(raw)
-                llm_scores: dict = parsed.get("scores", {})
-                llm_reasoning: dict = parsed.get("reasoning", {})
+                llm_scores, llm_reasoning = _parse_score_xml(raw)
                 if llm_scores:
                     sorted_ids = sorted(llm_scores, key=lambda k: llm_scores[k], reverse=True)[:top_n]
                     shard_ids = sorted_ids
                     scores = {sid: round(float(llm_scores[sid]), 4) for sid in sorted_ids}
                     reasoning = {sid: llm_reasoning.get(sid, "sonnet-reranked") for sid in sorted_ids}
                     used_llm = True
+            except asyncio.TimeoutError:
+                logger.warning("MUNINN: Sonnet API call timed out after %.0fs — using local rerank scores", _RAVEN_API_TIMEOUT)
             except Exception:
                 pass  # fall through to local rerank already computed
 

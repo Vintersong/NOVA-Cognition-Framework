@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-forgemaster_runtime.py — Phase 3 Forgemaster execution harness.
+forgemaster_runtime.py — Forgemaster execution harness.
 
 ForgemasterRuntime orchestrates the 4-turn sprint lifecycle:
   orchestrator → planner → implementer → reviewer
@@ -9,13 +9,21 @@ ForgemasterRuntime orchestrates the 4-turn sprint lifecycle:
 Uses NOVA as the shared memory backplane (via SessionStore) and respects
 tool access boundaries via ToolPermissionContext.
 
-LLM calls are intentionally stubbed in this phase — the scaffolding,
-session tracking, skill loading, permission gating, and sprint flush are
-fully functional.  Actual model dispatch is wired in Phase 4+.
+Real model dispatch:
+  - orchestrator / planner / reviewer → Anthropic (Sonnet by default)
+  - implementer → Google GenAI (Gemini Flash by default)
+  - provider is picked from the model name prefix (claude-* / gemini-*)
+
+Per-call events are appended to the path in FORGEMASTER_EVENT_LOG
+(environment variable) when set — one JSON object per line.
 """
 
 import json
 import logging
+import os
+import re
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -72,6 +80,163 @@ _COMPLEX_KEYWORDS: frozenset[str] = frozenset({
     "system-design", "database", "authentication", "authorization",
     "tracing", "profiling", "concurrency",
 })
+
+# Role-to-model mapping for the 4-turn sprint pipeline.
+_ROLE_TO_MODEL: dict[str, str] = {
+    "orchestrator": MUNINN_MODEL,
+    "planner":      MUNINN_MODEL,
+    "implementer":  GEMINI_MODEL,
+    "reviewer":     MUNINN_MODEL,
+}
+
+# Optional event log — one JSONL line per LLM call.
+_EVENT_LOG_PATH = os.environ.get("FORGEMASTER_EVENT_LOG", "")
+
+
+def _log_event(entry: dict) -> None:
+    """
+    Append a single LLM-call event to a JSONL log.
+
+    Path selection:
+      1. FORGEMASTER_EVENT_LOG env var, if set, is used verbatim.
+      2. Otherwise, defaults to <repo>/output/forgemaster_runs/<sprint_id>.jsonl.
+    """
+    override = os.environ.get("FORGEMASTER_EVENT_LOG", "")
+    if override:
+        path = Path(override)
+    else:
+        sprint_id = entry.get("sprint_id") or "unknown"
+        path = _REPO_ROOT / "output" / "forgemaster_runs" / f"{sprint_id}.jsonl"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        logger.warning("event log write failed: %s", exc)
+
+
+def _provider_for(model: str) -> str:
+    if model.startswith("claude-"):
+        return "anthropic"
+    if model.startswith("gemini-"):
+        return "google"
+    return "unknown"
+
+
+def _call_anthropic(model: str, prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, int]:
+    """
+    Call an Anthropic model with a single user message.
+
+    Returns (text, input_tokens, output_tokens, latency_ms).
+    Reads CLAUDE_API_KEY at call time so .env changes are picked up without restart.
+    """
+    import anthropic
+    from dotenv import load_dotenv
+
+    load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
+    key = os.environ.get("CLAUDE_API_KEY", "")
+    if not key:
+        raise RuntimeError("CLAUDE_API_KEY is not set; cannot dispatch to Anthropic.")
+
+    t0 = time.time()
+    client = anthropic.Anthropic(api_key=key)
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = response.content[0].text if response.content else ""
+    in_tok = getattr(response.usage, "input_tokens", 0)
+    out_tok = getattr(response.usage, "output_tokens", 0)
+    latency_ms = int((time.time() - t0) * 1000)
+    return text, in_tok, out_tok, latency_ms
+
+
+def _call_gemini(prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, int]:
+    """
+    Call Gemini with a single prompt.
+
+    Returns (text, input_tokens, output_tokens, latency_ms).
+    Reads GEMINI_API_KEY at call time so .env changes are picked up without restart.
+    """
+    from google import genai
+    from dotenv import load_dotenv
+
+    load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set; cannot dispatch to Gemini.")
+
+    t0 = time.time()
+    client = genai.Client(api_key=key)
+    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    text = response.text or ""
+    usage = getattr(response, "usage_metadata", None)
+    in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
+    out_tok = getattr(usage, "candidates_token_count", 0) if usage else 0
+    latency_ms = int((time.time() - t0) * 1000)
+    return text, in_tok, out_tok, latency_ms
+
+
+def _dispatch(role: str, prompt: str) -> tuple[str, str, int, int, int]:
+    """
+    Dispatch a prompt to the model assigned to *role*.
+
+    Returns (text, model_used, input_tokens, output_tokens, latency_ms).
+    Raises on unknown role or missing provider config.
+    """
+    model = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+    provider = _provider_for(model)
+    if provider == "anthropic":
+        text, in_tok, out_tok, lat = _call_anthropic(model, prompt)
+    elif provider == "google":
+        text, in_tok, out_tok, lat = _call_gemini(prompt)
+    else:
+        raise ValueError(f"Unknown model family for role={role!r}: {model!r}")
+    return text, model, in_tok, out_tok, lat
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove a single leading/trailing markdown code fence if present."""
+    stripped = text.strip()
+    stripped = re.sub(r"^```[a-zA-Z0-9_+\-]*\n", "", stripped)
+    stripped = re.sub(r"\n```\s*$", "", stripped)
+    return stripped
+
+
+def _extract_target_file(design_doc: str) -> Optional[str]:
+    """
+    Pull the target implementation path out of a design doc.
+
+    Looks for patterns like:  Target file: `utilities/foo.py`
+    or:                       New file: `utilities/foo.py`
+    Returns the path string or None if no match.
+    """
+    patterns = [
+        r"[Tt]arget file[^`]*`([^`]+)`",
+        r"[Nn]ew file[^`]*`([^`]+)`",
+    ]
+    for pat in patterns:
+        m = re.search(pat, design_doc)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _write_implementation_file(rel_path: str, code: str) -> str:
+    """
+    Write *code* to *rel_path* relative to the repo root.
+
+    Only allows writes inside the repo root tree (no escape via '..').
+    Returns the absolute path written.
+    """
+    target = (_REPO_ROOT / rel_path).resolve()
+    repo = _REPO_ROOT.resolve()
+    if not str(target).startswith(str(repo)):
+        raise ValueError(f"Refusing to write outside repo root: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(code, encoding="utf-8")
+    return str(target)
 
 
 class ForgemasterRuntime:
@@ -147,16 +312,16 @@ class ForgemasterRuntime:
         prompt: str,
     ) -> tuple[NovaSession, str]:
         """
-        Execute a single agent turn.
+        Execute a single agent turn with real LLM dispatch.
 
-        1. Reads the skill file at *skill_path* from disk (relative to the
-           repo root).  Logs a warning and continues if the file is absent.
-        2. Appends ``skill_content + prompt`` as a user message to *session*.
-        3. Returns the updated session and a clearly-marked placeholder
-           response string.
+        1. Read the skill file at *skill_path* relative to the repo root.
+        2. Build a prompt of (skill_content + '---' + prompt).
+        3. Append as a user message to *session*.
+        4. Dispatch to the model assigned to *role* (see _ROLE_TO_MODEL).
+        5. Append the response as an assistant message.
+        6. Emit a JSONL event to FORGEMASTER_EVENT_LOG if configured.
 
-        The LLM call is **stubbed** — actual model dispatch is out of scope
-        for Phase 3.
+        Returns the updated session and the raw response text.
         """
         resolved = _REPO_ROOT / skill_path
         skill_content: str
@@ -180,14 +345,41 @@ class ForgemasterRuntime:
         user_content = f"{skill_content}\n\n---\n\n{prompt}"
         session = session.add_message("user", user_content)
 
-        # LLM call is stubbed — Phase 4 wires actual dispatch.
-        placeholder_response = f"[{role} turn logged — skill: {skill_path}]"
-        session = session.add_message("assistant", placeholder_response)
+        # Real dispatch.
+        dispatch_error: Optional[str] = None
+        try:
+            response_text, model_used, in_tok, out_tok, latency_ms = _dispatch(role, user_content)
+        except Exception as exc:
+            logger.error("ForgemasterRuntime.run_turn: dispatch failed for %s — %s", role, exc)
+            dispatch_error = str(exc)
+            response_text = f"[DISPATCH FAILED: {exc}]"
+            model_used = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+            in_tok = out_tok = latency_ms = 0
 
+        session = session.add_message("assistant", response_text)
         self._session_store.update(session)
-        logger.info("ForgemasterRuntime.run_turn: %s turn completed for session %s", role, session.session_id)
 
-        return session, placeholder_response
+        _log_event({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sprint_id": session.session_id,
+            "role": role,
+            "skill": skill_path,
+            "model": model_used,
+            "provider": _provider_for(model_used),
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "latency_ms": latency_ms,
+            "prompt_chars": len(user_content),
+            "response_chars": len(response_text),
+            "error": dispatch_error,
+        })
+
+        logger.info(
+            "ForgemasterRuntime.run_turn: %s turn completed for session %s (model=%s, in=%d, out=%d, ms=%d)",
+            role, session.session_id, model_used, in_tok, out_tok, latency_ms,
+        )
+
+        return session, response_text
 
     def run_sprint(
         self,
@@ -196,61 +388,112 @@ class ForgemasterRuntime:
         shard_ids: list[str] | None = None,
     ) -> dict:
         """
-        Execute the full Forgemaster sprint lifecycle:
+        Execute the full Forgemaster sprint lifecycle with real LLM dispatch:
 
-        1. bootstrap  — create session, load shards
-        2. orchestrator turn
-        3. planner turn
-        4. implementer turn
-        5. reviewer turn
-        6. stub nova_shard_update intent (logged)
-        7. flush session to disk
-        8. return sprint summary
+        1. bootstrap — create session, load shards
+        2. orchestrator turn — decompose design doc (Sonnet)
+        3. planner turn — produce a concrete spec for the first ticket (Sonnet)
+        4. implementer turn — generate code for the target file (Gemini)
+                              code is written to disk if the design doc names a target file
+        5. reviewer turn — review the implementation against the design doc (Sonnet)
+        6. flush session to disk
+        7. return sprint summary including the path of any file written
 
-        Returns a dict suitable for JSON serialisation.
+        Each turn's output is passed forward as context to the next turn.
         """
         session = self.bootstrap(sprint_id, shard_ids or [])
 
         # ── Turn 1: Orchestrator ──────────────────────────────────────────
-        session, _ = self.run_turn(
+        session, orch_out = self.run_turn(
             session,
             role="orchestrator",
             skill_path="forgemaster/skills/forgemaster-orchestrator.md",
-            prompt=design_doc,
+            prompt=(
+                "DESIGN DOC:\n"
+                f"{design_doc}\n\n"
+                "Decompose this into typed tickets per the skill above. "
+                "List each ticket with its type, target file(s), and acceptance criteria."
+            ),
         )
 
         # ── Turn 2: Planner ───────────────────────────────────────────────
-        session, _ = self.run_turn(
+        session, plan_out = self.run_turn(
             session,
             role="planner",
             skill_path="forgemaster/skills/forgemaster-writing-plans.md",
-            prompt="Decompose the above into typed tickets.",
+            prompt=(
+                "DESIGN DOC:\n"
+                f"{design_doc}\n\n"
+                "ORCHESTRATOR OUTPUT:\n"
+                f"{orch_out}\n\n"
+                "Pick the first implementation ticket and produce a complete, "
+                "unambiguous spec for it. Include: exact file path, exact CLI surface, "
+                "all flag names, exact output format, and acceptance criteria."
+            ),
         )
 
         # ── Turn 3: Implementer ───────────────────────────────────────────
-        session, _ = self.run_turn(
+        session, impl_out = self.run_turn(
             session,
             role="implementer",
             skill_path="forgemaster/skills/forgemaster-implementation.md",
-            prompt="Execute the first ticket.",
+            prompt=(
+                "DESIGN DOC:\n"
+                f"{design_doc}\n\n"
+                "PLANNER SPEC:\n"
+                f"{plan_out}\n\n"
+                "Implement the file described above. "
+                "Return ONLY the full source code of the target file. "
+                "No markdown fences. No explanation. No prose. "
+                "Begin with the first line of the file and stop at the last."
+            ),
         )
 
+        # Write implementer output to disk if a target file is named in the design doc.
+        impl_file_path: Optional[str] = None
+        target_rel = _extract_target_file(design_doc)
+        if target_rel:
+            try:
+                code = _strip_code_fences(impl_out)
+                impl_file_path = _write_implementation_file(target_rel, code)
+                logger.info(
+                    "ForgemasterRuntime.run_sprint: wrote implementation to %s",
+                    impl_file_path,
+                )
+            except Exception as exc:
+                logger.error(
+                    "ForgemasterRuntime.run_sprint: failed to write implementation file %s — %s",
+                    target_rel, exc,
+                )
+
         # ── Turn 4: Reviewer ──────────────────────────────────────────────
-        session, _ = self.run_turn(
+        # Reviewer sees the on-disk file if written, else the raw implementer output.
+        reviewer_input = impl_out
+        if impl_file_path:
+            try:
+                reviewer_input = Path(impl_file_path).read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.warning(
+                    "ForgemasterRuntime.run_sprint: could not re-read impl file for review — %s",
+                    exc,
+                )
+
+        session, review_out = self.run_turn(
             session,
             role="reviewer",
             skill_path="forgemaster/skills/forgemaster-code-review.md",
-            prompt="Review the implementation above.",
+            prompt=(
+                "DESIGN DOC:\n"
+                f"{design_doc}\n\n"
+                "IMPLEMENTATION:\n"
+                f"{reviewer_input}\n\n"
+                "Review against the design doc's acceptance criteria. "
+                "State PASS or FAIL on the first line. "
+                "Then list specific issues, each with a file/line reference where applicable."
+            ),
         )
 
-        # ── Step 6: Write sprint decisions back to NOVA (stubbed) ─────────
-        logger.info(
-            "ForgemasterRuntime.run_sprint: [stub] nova_shard_update intent — "
-            "sprint '%s' decisions would be written back here in Phase 4+.",
-            sprint_id,
-        )
-
-        # ── Step 7: Flush session to disk ─────────────────────────────────
+        # ── Flush session to disk ─────────────────────────────────────────
         token_totals = {
             "input_tokens": session.usage.input_tokens,
             "output_tokens": session.usage.output_tokens,
@@ -263,6 +506,8 @@ class ForgemasterRuntime:
             "turns": 4,
             "session_id": sprint_id,
             "token_totals": token_totals,
+            "implementation_file": impl_file_path,
+            "review_head": review_out.strip().splitlines()[0] if review_out.strip() else "",
             "status": "complete",
         }
 

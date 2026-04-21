@@ -29,23 +29,3 @@ class UsageSummary:
             input_tokens=self.input_tokens + len(prompt.split()),
             output_tokens=self.output_tokens + len(output.split()),
         )
-
-
-@dataclass(frozen=True)
-class ShardRecord:
-    """Typed Python representation of a NOVA shard's key metadata fields."""
-
-    shard_id: str
-    guiding_question: str
-    intent: str
-    theme: str
-    usage_count: int
-    last_used: str
-
-
-@dataclass(frozen=True)
-class PermissionDenial:
-    """Record of a tool call that was blocked by the permission context."""
-
-    tool_name: str
-    reason: str

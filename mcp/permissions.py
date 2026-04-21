@@ -48,3 +48,34 @@ class ToolPermissionContext:
 
 # Sentinel: no restrictions — used when no env vars are set.
 ToolPermissionContext.DEFAULT = ToolPermissionContext()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module-level active context.
+#
+# nova_server.py installs its startup-built context via ``set_active`` so that
+# tool handlers registered from external modules (nidhogg, evolve, gemini)
+# can check permissions without importing nova_server directly.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_active: ToolPermissionContext = ToolPermissionContext.DEFAULT
+
+
+def set_active(ctx: ToolPermissionContext) -> None:
+    """Install *ctx* as the active permission context for the whole process."""
+    global _active
+    _active = ctx
+
+
+def is_blocked(tool_name: str) -> bool:
+    """Return True if *tool_name* is blocked by the active permission context."""
+    return _active.blocks(tool_name)
+
+
+def denial_payload(tool_name: str) -> str:
+    """Return the canonical JSON error string for a blocked tool call."""
+    import json
+    return json.dumps(
+        {"error": f"Tool '{tool_name}' is not permitted in the current permission context."},
+        indent=2,
+    )
