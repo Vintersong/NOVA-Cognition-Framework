@@ -235,7 +235,10 @@ def _write_implementation_file(rel_path: str, code: str) -> str:
     try:
         within_repo = target.is_relative_to(repo)
     except AttributeError:  # pragma: no cover - Python < 3.9 fallback
-        within_repo = repo == target or repo in target.parents
+        try:
+            within_repo = os.path.commonpath((str(repo), str(target))) == str(repo)
+        except ValueError:
+            within_repo = False
     if not within_repo:
         logger.error(
             "ForgemasterRuntime._write_implementation_file: rejected path escape rel_path=%s resolved=%s repo=%s",
