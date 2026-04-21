@@ -163,3 +163,67 @@ def test_shard_db_reinforce_moves_confidence_up_one_step(tmp_path: Path) -> None
 
         assert db.reinforce("s1") is True
         assert db.query(topic_keyword="")[0]["confidence"] == 1
+
+
+def test_shard_db_decay_transitions_on_threshold_day(tmp_path: Path) -> None:
+    db_path = tmp_path / "threshold.db"
+    with ShardDB(db_path) as db:
+        assert db.upsert(
+            {
+                "id": "threshold-confirmed",
+                "topic": "t",
+                "tier": "personal",
+                "confidence": 1,
+                "decay_rate": 0.25,
+                "links": [],
+                "timestamp": "2026-04-01T00:00:00+00:00",
+                "content": "c",
+                "valid": True,
+                "errors": [],
+            }
+        )
+        updated = db.decay(now=datetime.fromisoformat("2026-04-05T00:00:00+00:00"))
+        assert updated == 1
+        assert db.query(topic_keyword="")[0]["confidence"] == 0
+
+    with ShardDB(db_path) as db:
+        assert db.upsert(
+            {
+                "id": "threshold-neutral",
+                "topic": "t2",
+                "tier": "personal",
+                "confidence": 0,
+                "decay_rate": 0.25,
+                "links": [],
+                "timestamp": "2026-04-01T00:00:00+00:00",
+                "content": "c2",
+                "valid": True,
+                "errors": [],
+            }
+        )
+        updated = db.decay(now=datetime.fromisoformat("2026-04-09T00:00:00+00:00"))
+        assert updated >= 1
+        by_topic = {row["topic"]: row for row in db.query(topic_keyword="")}
+        assert by_topic["t2"]["confidence"] == -1
+
+
+def test_shard_db_decay_rate_zero_never_decays(tmp_path: Path) -> None:
+    db_path = tmp_path / "zero-decay.db"
+    with ShardDB(db_path) as db:
+        assert db.upsert(
+            {
+                "id": "permanent",
+                "topic": "permanent",
+                "tier": "personal",
+                "confidence": 1,
+                "decay_rate": 0.0,
+                "links": [],
+                "timestamp": "2020-01-01T00:00:00+00:00",
+                "content": "c",
+                "valid": True,
+                "errors": [],
+            }
+        )
+        updated = db.decay(now=datetime.fromisoformat("2030-01-01T00:00:00+00:00"))
+        assert updated == 0
+        assert db.query(topic_keyword="")[0]["confidence"] == 1
