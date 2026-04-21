@@ -122,6 +122,7 @@ class ShardParser:
 
         try:
             decay_rate = float(data.get("decay_rate", 0.0))
+            # decay_rate=0 means the shard never decays (permanent shard).
             if decay_rate < 0.0:
                 raise ValueError
             data["decay_rate"] = decay_rate
@@ -284,16 +285,17 @@ class ShardDB:
                 decay_rate = float(row["decay_rate"])
                 current_confidence = int(row["confidence"])
 
+                # decay_rate=0 means "never decay", so no state transitions are applied.
                 if decay_rate <= 0:
                     continue
 
-                confirmed_to_neutral_threshold_days = 1.0 / decay_rate
-                neutral_to_contradicted_threshold_days = 2.0 / decay_rate
+                days_to_neutral = 1.0 / decay_rate
+                days_to_contradicted = 2.0 / decay_rate
 
                 new_confidence = current_confidence
-                if current_confidence == 1 and days_since > confirmed_to_neutral_threshold_days:
+                if current_confidence == 1 and days_since >= days_to_neutral:
                     new_confidence = 0
-                elif current_confidence == 0 and days_since > neutral_to_contradicted_threshold_days:
+                elif current_confidence == 0 and days_since >= days_to_contradicted:
                     new_confidence = -1
 
                 if new_confidence != current_confidence:
