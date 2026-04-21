@@ -20,7 +20,6 @@ class ShardParser:
         "timestamp",
     }
     VALID_TIERS = {"personal", "department", "studio"}
-    VALID_CONFIDENCE = {-1, 0, 1}
     MIN_CONFIDENCE = -1.0
     MAX_CONFIDENCE = 1.0
 
@@ -275,7 +274,8 @@ class ShardDB:
                 if shard_time.tzinfo is None:
                     shard_time = shard_time.replace(tzinfo=timezone.utc)
                 days_since = max(0, (now - shard_time).days)
-                # Linear daily decay toward zero while preserving sign.
+                # Spec requires decay as a function of decay_rate and elapsed days,
+                # so this uses a linear daily factor toward zero while preserving sign.
                 factor = max(0.0, 1.0 - (float(row["decay_rate"]) * days_since))
                 new_confidence = float(row["confidence"]) * factor
                 if abs(new_confidence - float(row["confidence"])) > 1e-9:
@@ -322,7 +322,7 @@ class ShardDB:
 
         result: list[dict[str, Any]] = []
         for row in rows:
-            links = [link for link in str(row["links"]).split(",") if link]
+            links = [link.strip() for link in str(row["links"]).split(",") if link.strip()]
             raw_content = row["content"]
             if isinstance(raw_content, memoryview):
                 raw_content = raw_content.tobytes()
