@@ -136,10 +136,6 @@ def generate_local_summary(turns: list[dict], shard_id: str) -> str:
     return "\n".join(parts)
 
 
-# ═══════════════════════════════════════════════════════════
-# REPLACEMENT FUNCTIONS — paste these into nova_server.py
-# ═══════════════════════════════════════════════════════════
-
 def enrich_shard(shard_id: str, shard_data: dict):
     """
     Post-write hook: generate local embedding + basic context tags.
@@ -190,66 +186,5 @@ def enrich_shard(shard_id: str, shard_data: dict):
 
 
 def _generate_compaction_summary(turns: list[dict], shard_id: str) -> str:
-    """
-    Generate compaction summary without any API.
-    """
+    """Generate compaction summary without any API."""
     return generate_local_summary(turns, shard_id)
-
-
-# ═══════════════════════════════════════════════════════════
-# UPDATED REQUIREMENTS
-# ═══════════════════════════════════════════════════════════
-
-REQUIREMENTS = """
-# NOVA v2 MCP Server dependencies — local embeddings, no API key required
-mcp[cli]>=1.0.0
-pydantic>=2.0.0
-sentence-transformers>=2.2.0
-python-dotenv>=1.0.0
-# openai is no longer required
-"""
-
-
-# ═══════════════════════════════════════════════════════════
-# BATCH ENRICHMENT SCRIPT
-# ═══════════════════════════════════════════════════════════
-
-BATCH_ENRICHMENT_SCRIPT = """
-# Run this once to enrich all existing shards with local embeddings
-# After running, merge suggestions will work in nova_shard_consolidate
-
-import os
-import json
-from pathlib import Path
-
-SHARD_DIR = os.environ.get("NOVA_SHARD_DIR", "shards")
-
-# Import the local functions
-from nova_embeddings_local import enrich_shard
-
-shards = list(Path(SHARD_DIR).glob("*.json"))
-print(f"Enriching {len(shards)} shards...")
-
-enriched = 0
-for i, fpath in enumerate(shards, 1):
-    try:
-        with open(fpath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        # Skip already enriched with local model
-        if data.get("meta_tags", {}).get("enrichment_status") == "enriched_local":
-            continue
-            
-        enrich_shard(data["shard_id"], data)
-        
-        with open(fpath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        
-        enriched += 1
-        if enriched % 50 == 0:
-            print(f"  Progress: {enriched} shards enriched...")
-    except Exception as e:
-        print(f"  Error on {fpath.name}: {e}")
-
-print(f"Done. {enriched} shards enriched with local embeddings.")
-"""

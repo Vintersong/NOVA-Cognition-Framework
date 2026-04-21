@@ -12,22 +12,32 @@ NOVA is a persistent memory MCP server that stores conversations as JSON shards 
 ```
 NOVA-Cognition-Framework/
   mcp/
-    nova_server.py           ← ACTIVE MCP server
+    nova_server.py           ← ACTIVE MCP server (registers all tool modules)
     config.py                ← all env vars and constants (single source of truth)
     schemas.py               ← Pydantic input models
+    models.py                ← shared dataclasses (e.g. UsageSummary)
     store.py                 ← shard I/O and index management
     graph.py                 ← knowledge graph ops
     maintenance.py           ← confidence decay, compaction, merge
     permissions.py           ← env-driven tool gating
+    hooks.py                 ← event-driven hook registry (session/tool events)
+    usage.py                 ← JSONL operation logging
     session_store.py         ← session persistence
     forgemaster_runtime.py   ← sprint orchestration
     ravens.py                ← HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank)
     nott.py                  ← NOTT daemon: decay, compact, merge, graph sync
     nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings
-    gemini_worker.py         ← standalone Gemini Flash MCP server
+    evolve.py                ← nova_evolve tool (self-improvement loop)
+    nidhogg.py               ← nidhogg_ingest/scan/status tools
+    wiki.py                  ← wiki storage backend
+    wiki_ingest.py           ← wiki ingestion pipeline
+    wiki_tools.py            ← nova_wiki_* MCP tools
+    build_summary_index.py   ← summary index builder
+    test_nova.py             ← integration smoke tests
     SKILL.md                 ← NOVA skill instructions
+    ONBOARDING.md            ← fresh-install flow (triggered when no shards exist)
     Gemini/
-      gemini_mcp.py          ← Gemini tools registered into nova_server
+      gemini_mcp.py          ← Gemini Flash tools registered into nova_server
   utilities/
     chatgpt_to_nova.py       ← ChatGPT export migration
     shard_index.py           ← rebuild shard index manually
@@ -52,7 +62,9 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (18)
+## NOVA MCP Tools (30 total)
+
+### Core shard ops (`nova_server.py`, 18)
 
 | Tool | Purpose |
 |---|---|
@@ -75,7 +87,37 @@ NOVA-Cognition-Framework/
 | `nova_session_list` | List all stored session IDs |
 | `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
 
-Gemini tools (via `mcp/Gemini/gemini_mcp.py`): `gemini_execute_ticket`, `gemini_load_file`
+### Wiki (`wiki_tools.py`, 6)
+
+| Tool | Purpose |
+|---|---|
+| `nova_wiki_schema` | Inspect wiki page schema |
+| `nova_wiki_ingest` | Ingest markdown/source into the wiki |
+| `nova_wiki_query` | Search across wiki pages |
+| `nova_wiki_get` | Read a single wiki page in full |
+| `nova_wiki_list` | List wiki pages |
+| `nova_wiki_lint` | Lint wiki content for schema compliance |
+
+### Nidhogg — repo scanner (`nidhogg.py`, 3)
+
+| Tool | Purpose |
+|---|---|
+| `nidhogg_ingest` | Pull repo contents into the scanner index |
+| `nidhogg_scan` | Scan for issues/patterns |
+| `nidhogg_status` | Report scanner state |
+
+### Evolution (`evolve.py`, 1)
+
+| Tool | Purpose |
+|---|---|
+| `nova_evolve` | Self-improvement loop over shards/prompts |
+
+### Gemini (`Gemini/gemini_mcp.py`, 2)
+
+| Tool | Purpose |
+|---|---|
+| `gemini_execute_ticket` | Run an implementation ticket on Gemini Flash |
+| `gemini_load_file` | Load a file into the Gemini worker's context |
 
 ---
 
@@ -151,9 +193,9 @@ This is not optional. Without this, every session starts from zero.
 | Variable | Default | Notes |
 |---|---|---|
 | `NOVA_SHARD_DIR` | `shards` | Path to shard JSON files |
-| `ANTHROPIC_API_KEY` | — | Powers HUGINN + MUNINN retrieval |
-| `HUGINN_MODEL` | `claude-haiku-3-5` | Fast retrieval pass |
-| `MUNINN_MODEL` | `claude-sonnet-4-5` | Deep rerank pass |
+| `CLAUDE_API_KEY` | — | Powers HUGINN + MUNINN retrieval |
+| `HUGINN_MODEL` | `claude-haiku-4-5-20251001` | Fast retrieval pass |
+| `MUNINN_MODEL` | `claude-sonnet-4-6` | Deep rerank pass |
 | `HUGINN_CONFIDENCE_THRESHOLD` | `0.7` | Score >= this skips MUNINN |
 | `GEMINI_API_KEY` | — | Required for Gemini worker |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Implementation lane model |
@@ -175,4 +217,4 @@ This is not optional. Without this, every session starts from zero.
 - Do not end a session without the handoff write
 - Do not commit the shards directory — personal data
 - Do not use OpenAI models — Haiku for research/docs, Gemini Flash for implementation, Sonnet for architecture/review
-- If `ANTHROPIC_API_KEY` is absent, HUGINN and MUNINN fall back to local embeddings silently
+- If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN fall back to local embeddings silently

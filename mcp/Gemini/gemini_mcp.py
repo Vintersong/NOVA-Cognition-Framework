@@ -65,6 +65,9 @@ def register_gemini_tools(mcp) -> None:
         and NOVA shard memory assembled by the injection layer. Provide the ticket
         with clear requirements and acceptance criteria.
         """
+        from permissions import is_blocked, denial_payload
+        if is_blocked("gemini_execute_ticket"):
+            return denial_payload("gemini_execute_ticket")
         prompt = f"""You are a specialized code generation agent.
 
 {params.context if params.context else "No context provided — execute the ticket as specified, writing self-contained output."}
@@ -114,6 +117,9 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
         integrate with existing files in the project codebase. Supports any
         text-based file type.
         """
+        from permissions import is_blocked, denial_payload
+        if is_blocked("gemini_load_file"):
+            return denial_payload("gemini_load_file")
         try:
             resolved = Path(params.filepath).resolve()
             if not resolved.is_relative_to(_REPO_ROOT):

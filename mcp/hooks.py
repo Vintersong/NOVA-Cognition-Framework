@@ -15,7 +15,7 @@ Usage in nova_server.py:
     _hooks.emit(NovaHookEvent.SESSION_START)
     _hooks.emit(NovaHookEvent.POST_SPRINT)
     _hooks.emit(NovaHookEvent.COUNT_THRESHOLD)
-    await _hooks.emit_wait(NovaHookEvent.SCHEDULED)   # for explicit invocations
+    await _hooks.emit_wait(NovaHookEvent.POST_SPRINT)  # for explicit invocations
 
 Registration (at startup, after singletons are ready):
     _hooks.register(NovaHookEvent.SESSION_START,

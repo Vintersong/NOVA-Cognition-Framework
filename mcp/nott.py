@@ -26,8 +26,10 @@ Usage tracking:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -142,6 +144,13 @@ class Nott:
         self._save_graph = save_graph_fn
         self._pre_compact = pre_compact_fn  # optional: extract facts before compacting
 
+        # Dedicated thread pool so NÓTT's long passes never contend with
+        # request-path work (ravens retrieval, background enrichment, etc.
+        # all share the default asyncio executor).
+        self._executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="nott"
+        )
+
     async def run(
         self,
         trigger: NottTrigger,
@@ -186,7 +195,8 @@ class Nott:
 
     # ── Decay pass ───────────────────────────────────────────────────────
 
-    async def _decay_pass(self, index: dict, dry_run: bool) -> list[dict]:
+    def _decay_pass_sync(self, index: dict, dry_run: bool) -> list[dict]:
+        """Synchronous decay — runs in a thread to avoid blocking the event loop."""
         decayed = []
         for shard_id, entry in list(index.items()):
             tags = entry.get("tags", [])
@@ -211,9 +221,16 @@ class Nott:
 
         return decayed
 
+    async def _decay_pass(self, index: dict, dry_run: bool) -> list[dict]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._decay_pass_sync, index, dry_run
+        )
+
     # ── Compact pass ─────────────────────────────────────────────────────
 
-    async def _compact_pass(self, index: dict, dry_run: bool) -> list[str]:
+    def _compact_pass_sync(self, index: dict, dry_run: bool) -> list[str]:
+        """Synchronous compaction — runs in a thread to avoid blocking the event loop."""
         compacted = []
         for shard_id in list(index.keys()):
             tags = index[shard_id].get("tags", [])
@@ -239,9 +256,16 @@ class Nott:
 
         return compacted
 
+    async def _compact_pass(self, index: dict, dry_run: bool) -> list[str]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._compact_pass_sync, index, dry_run
+        )
+
     # ── Merge suggestions pass ───────────────────────────────────────────
 
-    async def _merge_pass(self, index: dict) -> list[dict]:
+    def _merge_pass_sync(self, index: dict) -> list[dict]:
+        """Synchronous merge scan — runs in a thread to avoid blocking the event loop."""
         suggestions = []
         checked: set[tuple[str, str]] = set()
 
@@ -268,6 +292,12 @@ class Nott:
                 continue
 
         return suggestions
+
+    async def _merge_pass(self, index: dict) -> list[dict]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._merge_pass_sync, index
+        )
 
     # ── Graph sync ───────────────────────────────────────────────────────
 

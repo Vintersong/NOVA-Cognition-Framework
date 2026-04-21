@@ -43,7 +43,14 @@ HUGINN_CONFIDENCE_THRESHOLD = float(os.environ.get("HUGINN_CONFIDENCE_THRESHOLD"
 NOTT_COUNT_THRESHOLD        = int(os.environ.get("NOTT_COUNT_THRESHOLD",         "100"))
 
 # ── Ravens LLM config ────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-3-5")
-MUNINN_MODEL      = os.environ.get("MUNINN_MODEL",      "claude-sonnet-4-5")
+CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
+HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-4-5-20251001")
+MUNINN_MODEL      = os.environ.get("MUNINN_MODEL",      "claude-sonnet-4-6")
 GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-flash")
+
+# ── Wiki layer ────────────────────────────────────────────────────────────────
+WIKI_DIR          = os.environ.get("NOVA_WIKI_DIR",     str(_REPO_ROOT / "wiki"))
+WIKI_SCHEMA_FILE  = os.environ.get("NOVA_WIKI_SCHEMA",  str(_REPO_ROOT / "wiki_schema.json"))
+WIKI_INDEX_FILE   = os.environ.get("NOVA_WIKI_INDEX",   str(_REPO_ROOT / "wiki_index.json"))
+WIKI_ROUTING_MODEL   = os.environ.get("NOVA_WIKI_ROUTING_MODEL",   "claude-haiku-3-5")
+WIKI_SYNTHESIS_MODEL = os.environ.get("NOVA_WIKI_SYNTHESIS_MODEL", "claude-sonnet-4-6")

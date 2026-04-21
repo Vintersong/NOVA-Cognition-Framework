@@ -433,9 +433,9 @@ def generate_haiku_summary_batch(shards: list[dict], batch_size: int = 5) -> dic
     if not shards:
         return {}
 
-    from config import ANTHROPIC_API_KEY, HUGINN_MODEL
+    from config import CLAUDE_API_KEY, HUGINN_MODEL
 
-    if not ANTHROPIC_API_KEY:
+    if not CLAUDE_API_KEY:
         return {}
 
     import anthropic
@@ -450,7 +450,7 @@ def generate_haiku_summary_batch(shards: list[dict], batch_size: int = 5) -> dic
         f"Shards:\n{json.dumps(batch, indent=2)}"
     )
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
     response = client.messages.create(
         model=HUGINN_MODEL,
         max_tokens=512,

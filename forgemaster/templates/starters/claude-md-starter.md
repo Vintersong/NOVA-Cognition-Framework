@@ -11,7 +11,7 @@ agent_roles:
 preferred_models:
   claude-sonnet: [architecture, review, complex-reasoning]
   gemini-flash: [implementation, boilerplate, structured-output]
-  gpt-4o: [research, documentation]
+  claude-haiku: [research, documentation]
 tools_allowed:
   - bash
   - git

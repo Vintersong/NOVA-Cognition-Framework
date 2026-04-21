@@ -132,3 +132,45 @@ class ForgemasterSprintInput(BaseModel):
     sprint_id: str = Field(..., min_length=1)
     design_doc: str = Field(..., min_length=1)
     shard_ids: Optional[str] = Field(default=None)
+
+
+# ── Wiki tools ────────────────────────────────────────────────────────────────
+
+class WikiSchemaInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    action: Literal["get", "add", "remove"] = Field(default="get")
+    # For action="add": provide slug, title, description, tags (comma-sep), category
+    slug: str = Field(default="")
+    title: str = Field(default="")
+    description: str = Field(default="")
+    tags: str = Field(default="")
+    category: str = Field(default="general")
+
+
+class WikiIngestInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    # Local file path or raw text content
+    source: str = Field(..., min_length=1, description="File path or raw text to ingest")
+    source_name: str = Field(default="", description="Display name (auto-derived from path if blank)")
+    dry_run: bool = Field(default=False)
+
+
+class WikiQueryInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    query: str = Field(..., min_length=1)
+    top_n: int = Field(default=5, ge=1, le=20)
+
+
+class WikiGetInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    slug: str = Field(..., min_length=1)
+
+
+class WikiListInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    category: str = Field(default="")
+
+
+class WikiLintInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    deep: bool = Field(default=False, description="Run LLM contradiction check across pages")
