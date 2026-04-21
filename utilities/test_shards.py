@@ -11,7 +11,7 @@ shards = list(Path(shards_dir).glob("*.json"))
 print(f"✓ Shard directory exists: {shards_dir}")
 print(f"✓ Found {len(shards)} existing shards")
 if shards:
-    print(f"\nSample shards:")
+    print("\nSample shards:")
     for shard in shards[:3]:
         try:
             with open(shard) as f:
@@ -29,13 +29,17 @@ if os.path.exists(index_file):
         index = json.load(f)
     print(f"\n✓ Shard index exists: {len(index)} entries")
 else:
-    print(f"\n✗ Shard index not found")
+    print("\n✗ Shard index not found")
 
 # Check graph
 graph_file = "shard_graph.json"
 if os.path.exists(graph_file):
     with open(graph_file) as f:
         graph = json.load(f)
-    print(f"✓ Knowledge graph exists: {len(graph.get('shards', {}))} nodes")
+    entities = graph.get("entities", {})
+    relations = graph.get("relations", [])
+    print(f"✓ Knowledge graph exists: {len(entities)} entities, {len(relations)} relations")
+    if not isinstance(entities, dict) or not isinstance(relations, list):
+        print("✗ Graph structure invalid: expected {'entities': dict, 'relations': list}")
 else:
-    print(f"✗ Knowledge graph not found")
+    print("✗ Knowledge graph not found")

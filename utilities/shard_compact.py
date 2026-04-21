@@ -2,7 +2,7 @@
 shard_compact.py — Compact bloated NOVA shards (stdlib only, no external dependencies)
 
 Usage:
-    python tools/shard_compact.py [options]
+    python utilities/shard_compact.py [options]
 
 Options:
     --shard-dir   Path to shard directory (default: nova_memory/ relative to repo root)
@@ -13,16 +13,16 @@ Options:
 
 Examples:
     # Check for bloat without writing (CI):
-    python tools/shard_compact.py --fail-on-bloat --dry-run
+    python utilities/shard_compact.py --fail-on-bloat --dry-run
 
     # Preview what would be compacted:
-    python tools/shard_compact.py --dry-run
+    python utilities/shard_compact.py --dry-run
 
     # Compact all bloated shards in a custom directory:
-    python tools/shard_compact.py --shard-dir ./shards --threshold 20
+    python utilities/shard_compact.py --shard-dir ./shards --threshold 20
 
     # Force-process all shards regardless of turn count:
-    python tools/shard_compact.py --all
+    python utilities/shard_compact.py --all
 """
 
 import argparse

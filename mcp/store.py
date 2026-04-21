@@ -8,9 +8,11 @@ All path inputs are validated against SHARD_DIR to prevent path traversal.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import re
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -23,9 +25,17 @@ except ImportError:  # pragma: no cover - optional dependency fallback
     ijson = None
 
 from config import (
-    SHARD_DIR, INDEX_FILE, MAX_FRAGMENTS, SUMMARY_INDEX_FILE, SUMMARY_MARKDOWN_FILE,
+    SHARD_DIR, INDEX_FILE, SUMMARY_INDEX_FILE, SUMMARY_MARKDOWN_FILE,
     CONFIDENCE_LOW_THRESHOLD, RECENT_ACCESS_DAYS, STALE_ACCESS_DAYS,
 )
+
+logger = logging.getLogger(__name__)
+_error_counts: Counter[str] = Counter()
+
+
+def _record_error(operation: str, exc: Exception) -> None:
+    _error_counts[operation] += 1
+    logger.warning("store.%s failed (%s): %s", operation, type(exc).__name__, exc)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -91,7 +101,8 @@ def load_index() -> dict:
     try:
         with open(INDEX_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as exc:
+        _record_error("load_index", exc)
         return {}
 
 
@@ -117,7 +128,8 @@ def classify_tags(shard: dict) -> list[str]:
             if now - last_used > timedelta(days=STALE_ACCESS_DAYS):
                 tags.append("stale")
         except (ValueError, TypeError):
-            pass
+            _error_counts["classify_tags"] += 1
+            logger.warning("store.classify_tags ignored invalid last_used value: %r", last_used_str)
 
     if usage_count > 10:
         tags.append("frequently_used")
@@ -147,7 +159,8 @@ def update_index() -> dict:
         try:
             with open(fpath, "r", encoding="utf-8") as f:
                 shard = json.load(f)
-        except Exception:
+        except Exception as exc:
+            _record_error("update_index", exc)
             continue
 
         shard_id = shard.get("shard_id", fname.replace(".json", ""))
@@ -305,7 +318,8 @@ def iter_shard_skeletons() -> list[dict]:
     for path in sorted(shard_dir.glob("*.json")):
         try:
             rows.append(read_shard_skeleton(path))
-        except Exception:
+        except Exception as exc:
+            _record_error("iter_shard_skeletons", exc)
             continue
     return rows
 
@@ -316,7 +330,8 @@ def load_summary_index() -> dict:
     try:
         with open(SUMMARY_INDEX_FILE, "r", encoding="utf-8") as handle:
             data = json.load(handle)
-    except Exception:
+    except Exception as exc:
+        _record_error("load_summary_index", exc)
         return {"_v": 1, "shards": {}}
     if isinstance(data, dict) and "shards" in data:
         return data

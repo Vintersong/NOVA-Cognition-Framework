@@ -33,14 +33,20 @@ import logging
 import math
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from collections import Counter
 
 import anthropic
 
 logger = logging.getLogger(__name__)
+_error_counts: Counter[str] = Counter()
+
+
+def _record_error(operation: str, exc: Exception) -> None:
+    _error_counts[operation] += 1
+    logger.warning("ravens.%s failed (%s): %s", operation, type(exc).__name__, exc)
 
 # Timeout (seconds) for each LLM API call.  Falls back to local scores on expiry.
 _RAVEN_API_TIMEOUT = float(os.environ.get("RAVEN_API_TIMEOUT", "10"))
@@ -200,8 +206,8 @@ class Huginn:
                     used_llm = True
             except asyncio.TimeoutError:
                 logger.warning("HUGINN: Haiku API call timed out after %.0fs — using local scores", _RAVEN_API_TIMEOUT)
-            except Exception:
-                pass  # fall through to local scores already computed
+            except Exception as exc:
+                _record_error("huginn_llm_rescore", exc)
 
         max_conf = max(scores.values()) if scores else 0.0
         result = RetrievalResult(
@@ -277,8 +283,8 @@ class Huginn:
         try:
             with open(self.usage_log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception:
-            pass
+        except Exception as exc:
+            _record_error("huginn_log_write", exc)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -338,8 +344,8 @@ class Muninn:
                             f"{t.get('user', '')} → {t.get('ai', '')}"[:120]
                             for t in turns[-3:]
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _record_error("muninn_recent_turns_read", exc)
                     shard_blobs.append({
                         "id": sid,
                         "question": entry.get("guiding_question", ""),
@@ -382,8 +388,8 @@ class Muninn:
                     used_llm = True
             except asyncio.TimeoutError:
                 logger.warning("MUNINN: Sonnet API call timed out after %.0fs — using local rerank scores", _RAVEN_API_TIMEOUT)
-            except Exception:
-                pass  # fall through to local rerank already computed
+            except Exception as exc:
+                _record_error("muninn_llm_rerank", exc)
 
         result = RetrievalResult(
             shard_ids=shard_ids,
@@ -432,8 +438,8 @@ class Muninn:
                 with open(shard_path, "r", encoding="utf-8") as f:
                     shard_data = json.load(f)
                 shard_embedding = shard_data.get("context", {}).get("embedding")
-            except Exception:
-                pass
+            except Exception as exc:
+                _record_error("muninn_local_rerank_read", exc)
 
             if shard_embedding:
                 sim = _cosine(query_embedding, shard_embedding)
@@ -471,8 +477,8 @@ class Muninn:
         try:
             with open(self.usage_log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception:
-            pass
+        except Exception as exc:
+            _record_error("muninn_log_write", exc)
 
 
 # ═══════════════════════════════════════════════════════════

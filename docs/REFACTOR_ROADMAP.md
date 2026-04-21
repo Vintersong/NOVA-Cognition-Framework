@@ -22,7 +22,7 @@ nova_server.py
 ├── Index management (80 lines)
 ├── Retrieval logic (50 lines)
 ├── Input models (70 lines)
-├── MCP tool handlers (16 tools, 500+ lines)
+├── MCP tool handlers (30 tools, 500+ lines)
 ├── Session management (100 lines)
 └── Forgemaster integration (50 lines)
 ```
