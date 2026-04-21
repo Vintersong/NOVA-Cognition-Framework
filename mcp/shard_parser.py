@@ -20,8 +20,12 @@ class ShardParser:
         "timestamp",
     }
     VALID_TIERS = {"personal", "department", "studio"}
-    MIN_CONFIDENCE = -1.0
-    MAX_CONFIDENCE = 1.0
+    # Confidence is a discrete epistemic state, not a continuous score:
+    #  1  = confirmed / actively reinforced
+    #  0  = neutral / unknown / not yet evaluated
+    # -1  = contradicted / actively suppressed
+    # Fractional values are invalid because decay/reinforcement are step transitions.
+    VALID_CONFIDENCE = {-1, 0, 1}
 
     @classmethod
     def parse(cls, file_path: str | Path) -> dict[str, Any]:
@@ -87,10 +91,11 @@ class ShardParser:
             if field not in data:
                 data["valid"] = False
                 data["errors"].append(f"Missing required field: {field}")
-                continue
-            if field == "links":
-                continue
-            if isinstance(data[field], str) and not data[field].strip():
+
+        # links may legitimately be empty; all other required fields must be non-empty.
+        for field in cls.REQUIRED_FIELDS - {"links"}:
+            value = data.get(field)
+            if isinstance(value, str) and not value.strip():
                 data["valid"] = False
                 data["errors"].append(f"Missing required field: {field}")
 
@@ -100,21 +105,24 @@ class ShardParser:
             data["tier"] = "personal"
 
         try:
-            confidence = float(data.get("confidence", 0))
-            if not cls.MIN_CONFIDENCE <= confidence <= cls.MAX_CONFIDENCE:
+            confidence_raw = float(data.get("confidence", 0))
+            if not confidence_raw.is_integer():
+                raise ValueError
+            confidence = int(confidence_raw)
+            if confidence not in cls.VALID_CONFIDENCE:
                 raise ValueError
             data["confidence"] = confidence
         except (TypeError, ValueError):
             data["valid"] = False
             data["errors"].append(
                 f"Invalid confidence: {data.get('confidence')} "
-                f"(expected range [{cls.MIN_CONFIDENCE}, {cls.MAX_CONFIDENCE}])"
+                f"(expected one of {sorted(cls.VALID_CONFIDENCE)})"
             )
             data["confidence"] = 0
 
         try:
             decay_rate = float(data.get("decay_rate", 0.0))
-            if not 0.0 <= decay_rate <= 1.0:
+            if decay_rate < 0.0:
                 raise ValueError
             data["decay_rate"] = decay_rate
         except (TypeError, ValueError):
@@ -196,7 +204,7 @@ class ShardDB:
                 id TEXT PRIMARY KEY,
                 topic TEXT NOT NULL,
                 tier TEXT NOT NULL,
-                confidence REAL NOT NULL,
+                confidence INTEGER NOT NULL CHECK (confidence IN (-1, 0, 1)),
                 decay_rate REAL NOT NULL,
                 links TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
@@ -234,7 +242,7 @@ class ShardDB:
                     str(shard.get("id", "")),
                     str(shard.get("topic", "")),
                     str(shard.get("tier", "personal")),
-                    float(shard.get("confidence", 0)),
+                    int(shard.get("confidence", 0)),
                     float(shard.get("decay_rate", 0.0)),
                     links,
                     str(shard.get("timestamp", "")),
@@ -273,11 +281,22 @@ class ShardDB:
                 if shard_time.tzinfo is None:
                     shard_time = shard_time.replace(tzinfo=timezone.utc)
                 days_since = max(0, (now - shard_time).days)
-                # Linear daily decay: confidence *= max(0, 1 - decay_rate * days_since).
-                # Example: decay_rate=0.1 reduces magnitude by 10% per day, reaching 0 by day 10.
-                factor = max(0.0, 1.0 - (float(row["decay_rate"]) * days_since))
-                new_confidence = float(row["confidence"]) * factor
-                if abs(new_confidence - float(row["confidence"])) > 1e-9:
+                decay_rate = float(row["decay_rate"])
+                current_confidence = int(row["confidence"])
+
+                if decay_rate <= 0:
+                    continue
+
+                confirmed_to_neutral_threshold_days = 1.0 / decay_rate
+                neutral_to_contradicted_threshold_days = 2.0 / decay_rate
+
+                new_confidence = current_confidence
+                if current_confidence == 1 and days_since > confirmed_to_neutral_threshold_days:
+                    new_confidence = 0
+                elif current_confidence == 0 and days_since > neutral_to_contradicted_threshold_days:
+                    new_confidence = -1
+
+                if new_confidence != current_confidence:
                     self.conn.execute(
                         "UPDATE shards SET confidence=? WHERE id=?",
                         (new_confidence, row["id"]),
@@ -288,6 +307,29 @@ class ShardDB:
 
         self.conn.commit()
         return updated
+
+    def reinforce(self, shard_id: str) -> bool:
+        try:
+            row = self.conn.execute(
+                "SELECT confidence FROM shards WHERE id = ?",
+                (shard_id,),
+            ).fetchone()
+            if row is None:
+                return False
+
+            current_confidence = int(row["confidence"])
+            if current_confidence >= 1:
+                return True
+
+            new_confidence = current_confidence + 1
+            self.conn.execute(
+                "UPDATE shards SET confidence=? WHERE id=?",
+                (new_confidence, shard_id),
+            )
+            self.conn.commit()
+            return True
+        except (sqlite3.Error, TypeError, ValueError):
+            return False
 
     def query(
         self,
@@ -308,7 +350,7 @@ class ShardDB:
 
         if confidence is not None:
             sql += " AND confidence = ?"
-            params.append(float(confidence))
+            params.append(int(confidence))
 
         if topic_keyword:
             sql += " AND LOWER(topic) LIKE ?"
