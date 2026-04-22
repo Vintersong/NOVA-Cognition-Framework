@@ -37,12 +37,16 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from filelock import FileLock
 from pydantic import BaseModel, Field, ConfigDict
 
-from config import SHARD_DIR, MERGE_SIMILARITY_THRESHOLD
+from config import (
+    CLAUDE_API_KEY as _CLAUDE_API_KEY,
+    HUGINN_MODEL as _HAIKU_MODEL,
+    SHARD_DIR,
+    MERGE_SIMILARITY_THRESHOLD,
+)
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
@@ -59,12 +63,21 @@ NIDHOGG_MANIFEST_FILE = os.environ.get(
 NIDHOGG_SIMILARITY_THRESHOLD = float(
     os.environ.get("NIDHOGG_SIMILARITY_THRESHOLD", "0.55")
 )
-
-# ── Optional Haiku analysis — graceful no-op if key is absent ─────────────────
-from config import CLAUDE_API_KEY as _CLAUDE_API_KEY, HUGINN_MODEL as _HAIKU_MODEL
+_ALLOWED_ROOTS_ENV = os.environ.get("NIDHOGG_ALLOWED_ROOTS", NIDHOGG_INTAKE_DIR)
 
 # ── Supported plain-text extensions (no special parser needed) ────────────────
 _TEXT_EXTENSIONS = {".txt", ".md", ".rst", ".csv", ".json", ".yaml", ".yml", ".toml"}
+
+
+def _load_allowed_roots(raw: str) -> tuple[str, ...]:
+    return tuple(
+        str(Path(root.strip()).resolve())
+        for root in raw.split(",")
+        if root.strip()
+    )
+
+
+NIDHOGG_ALLOWED_ROOTS = _load_allowed_roots(_ALLOWED_ROOTS_ENV)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -328,7 +341,15 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
     Full ingestion pipeline for a single file.
     Returns a result dict describing what was done.
     """
-    path = str(Path(file_path).resolve())
+    try:
+        path = _resolve_allowed_ingest_path(file_path)
+    except ValueError as exc:
+        return {
+            "status": "error",
+            "code": "path_not_allowed",
+            "message": str(exc),
+            "allowed_roots": list(NIDHOGG_ALLOWED_ROOTS),
+        }
 
     if not os.path.exists(path):
         return {"error": f"File not found: {path}"}
@@ -422,6 +443,16 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
         "merge_candidates": sum(1 for a in annotated if a["merge_candidate"]),
         "matches": annotated,
     }
+
+
+def _resolve_allowed_ingest_path(file_path: str) -> str:
+    """Resolve an input path and enforce root-allowlist boundaries."""
+    resolved = Path(file_path).resolve()
+    for allowed_root in NIDHOGG_ALLOWED_ROOTS:
+        root_path = Path(allowed_root)
+        if resolved.is_relative_to(root_path):
+            return str(resolved)
+    raise ValueError(f"Access denied for path: {resolved}")
 
 
 # ═══════════════════════════════════════════════════════════

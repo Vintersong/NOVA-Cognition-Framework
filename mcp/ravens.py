@@ -28,6 +28,7 @@ Usage tracking:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -37,8 +38,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from collections import Counter
+from typing import Any
 
 import anthropic
+from config import parse_bool_env
 
 logger = logging.getLogger(__name__)
 _error_counts: Counter[str] = Counter()
@@ -50,6 +53,7 @@ def _record_error(operation: str, exc: Exception) -> None:
 
 # Timeout (seconds) for each LLM API call.  Falls back to local scores on expiry.
 _RAVEN_API_TIMEOUT = float(os.environ.get("RAVEN_API_TIMEOUT", "10"))
+_ENABLE_QUERY_PREVIEW = parse_bool_env("NOVA_LOG_QUERY_PREVIEW", default=False)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -84,6 +88,18 @@ def _parse_score_xml(raw: str) -> tuple[dict, dict]:
             scores[shard_id] = 0.5
         reasoning[shard_id] = note or "xml-scored"
     return scores, reasoning
+
+
+def _query_log_metadata(query: str) -> dict[str, Any]:
+    """Build privacy-preserving query log metadata (digest/length; preview opt-in)."""
+    digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
+    payload = {
+        "query_length": len(query),
+        "query_sha256_16": digest,
+    }
+    if _ENABLE_QUERY_PREVIEW:
+        payload["query_preview"] = query[:80]
+    return payload
 
 
 # ═══════════════════════════════════════════════════════════
@@ -277,7 +293,7 @@ class Huginn:
             "shards": result.shard_ids,
             "metadata": {
                 **result.as_log_metadata(),
-                "query_preview": query[:80],
+                **_query_log_metadata(query),
             },
         }
         try:
@@ -469,7 +485,7 @@ class Muninn:
             "shards": result.shard_ids,
             "metadata": {
                 **result.as_log_metadata(),
-                "query_preview": query[:80],
+                **_query_log_metadata(query),
                 "huginn_candidates": huginn_result.shard_ids,
                 "huginn_max_confidence": round(huginn_result.max_confidence, 4),
             },

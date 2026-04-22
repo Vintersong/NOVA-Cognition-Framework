@@ -62,6 +62,7 @@ Total exported MCP tools: 30
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import sys as _sys
@@ -558,7 +559,14 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
     except asyncio.TimeoutError:
         pass
 
-    log_operation("nova_shard_search", [], {"query": params.query})
+    log_operation(
+        "nova_shard_search",
+        [],
+        {
+            "query_length": len(params.query),
+            "query_sha256_16": hashlib.sha256(params.query.encode("utf-8")).hexdigest()[:16],
+        },
+    )
 
     return json.dumps({
         "query": params.query,
