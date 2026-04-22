@@ -10,6 +10,14 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
 
+
+def parse_bool_env(key: str, default: bool = False) -> bool:
+    """Parse a boolean env var using common truthy values."""
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 # ── Paths ────────────────────────────────────────────────────────────────────
 SHARD_DIR      = os.environ.get("NOVA_SHARD_DIR",     str(_REPO_ROOT / "shards"))
 INDEX_FILE     = os.environ.get("NOVA_INDEX_FILE",    str(_REPO_ROOT / "shard_index.json"))

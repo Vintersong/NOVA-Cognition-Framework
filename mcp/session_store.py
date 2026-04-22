@@ -37,7 +37,8 @@ def _validate_session_id(session_id: str) -> str:
     """Validate user-controlled session IDs before filesystem use."""
     if not _SESSION_ID_RE.fullmatch(session_id):
         raise ValueError(
-            "Invalid session_id. Use 1-128 chars: letters, numbers, '.', '_' or '-'."
+            "Invalid session_id. Must be 1-128 chars starting with a letter or number, "
+            "followed by letters, numbers, '.', '_', or '-'."
         )
     return session_id
 

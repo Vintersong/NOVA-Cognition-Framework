@@ -37,12 +37,16 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from filelock import FileLock
 from pydantic import BaseModel, Field, ConfigDict
 
-from config import SHARD_DIR, MERGE_SIMILARITY_THRESHOLD
+from config import (
+    CLAUDE_API_KEY as _CLAUDE_API_KEY,
+    HUGINN_MODEL as _HAIKU_MODEL,
+    SHARD_DIR,
+    MERGE_SIMILARITY_THRESHOLD,
+)
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
@@ -60,15 +64,20 @@ NIDHOGG_SIMILARITY_THRESHOLD = float(
     os.environ.get("NIDHOGG_SIMILARITY_THRESHOLD", "0.55")
 )
 _ALLOWED_ROOTS_ENV = os.environ.get("NIDHOGG_ALLOWED_ROOTS", NIDHOGG_INTAKE_DIR)
-NIDHOGG_ALLOWED_ROOTS = tuple(
-    str(Path(root.strip()).resolve()) for root in _ALLOWED_ROOTS_ENV.split(",") if root.strip()
-)
-
-# ── Optional Haiku analysis — graceful no-op if key is absent ─────────────────
-from config import CLAUDE_API_KEY as _CLAUDE_API_KEY, HUGINN_MODEL as _HAIKU_MODEL
 
 # ── Supported plain-text extensions (no special parser needed) ────────────────
 _TEXT_EXTENSIONS = {".txt", ".md", ".rst", ".csv", ".json", ".yaml", ".yml", ".toml"}
+
+
+def _load_allowed_roots(raw: str) -> tuple[str, ...]:
+    return tuple(
+        str(Path(root.strip()).resolve())
+        for root in raw.split(",")
+        if root.strip()
+    )
+
+
+NIDHOGG_ALLOWED_ROOTS = _load_allowed_roots(_ALLOWED_ROOTS_ENV)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -440,7 +449,7 @@ def _resolve_allowed_ingest_path(file_path: str) -> str:
     """Resolve an input path and enforce root-allowlist boundaries."""
     resolved = Path(file_path).resolve()
     for allowed_root in NIDHOGG_ALLOWED_ROOTS:
-        root_path = Path(allowed_root).resolve()
+        root_path = Path(allowed_root)
         if resolved.is_relative_to(root_path):
             return str(resolved)
     raise ValueError(f"Access denied for path: {resolved}")

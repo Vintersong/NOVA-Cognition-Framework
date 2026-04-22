@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,6 +15,7 @@ def test_auto_commit_uses_double_dash_for_git_add(monkeypatch: pytest.MonkeyPatc
     def _fake_run(cmd: list[str], **kwargs: Any) -> SimpleNamespace:
         calls.append(cmd)
         if cmd[:3] == ["git", "status", "--porcelain"]:
+            # Filename begins with '--' to verify '--' separator is used safely.
             return SimpleNamespace(returncode=0, stdout=" M --odd.py\n", stderr="")
         if cmd[:2] == ["git", "add"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -21,7 +23,11 @@ def test_auto_commit_uses_double_dash_for_git_add(monkeypatch: pytest.MonkeyPatc
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(evolve, "subprocess", SimpleNamespace(run=_fake_run, TimeoutExpired=TimeoutError))
+    monkeypatch.setattr(
+        evolve,
+        "subprocess",
+        SimpleNamespace(run=_fake_run, TimeoutExpired=subprocess.TimeoutExpired),
+    )
     monkeypatch.setattr(evolve, "_run_tests", lambda: evolve.TestResult(ran=False))
     monkeypatch.setattr(evolve, "_build_commit_message", lambda files: "test commit")
 

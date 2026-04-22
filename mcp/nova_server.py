@@ -564,7 +564,7 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
         [],
         {
             "query_length": len(params.query),
-            "query_sha256_12": hashlib.sha256(params.query.encode("utf-8")).hexdigest()[:12],
+            "query_sha256_16": hashlib.sha256(params.query.encode("utf-8")).hexdigest()[:16],
         },
     )
 
