@@ -7,6 +7,8 @@ Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 from typing import Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
+SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+
 
 # ── Shard tools ───────────────────────────────────────────────────────────────
 
@@ -34,7 +36,7 @@ class ShardInteractInput(BaseModel):
     shard_ids: str = Field(default="")
     message: str = Field(..., min_length=1)
     auto_select: bool = Field(default=True)
-    session_id: Optional[str] = Field(default=None)
+    session_id: Optional[str] = Field(default=None, pattern=SESSION_ID_PATTERN)
 
 
 class ShardCreateInput(BaseModel):
@@ -113,12 +115,12 @@ class GraphRelationInput(BaseModel):
 
 class SessionFlushInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
-    session_id: str = Field(..., min_length=1)
+    session_id: str = Field(..., min_length=1, pattern=SESSION_ID_PATTERN)
 
 
 class SessionLoadInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
-    session_id: str = Field(..., min_length=1)
+    session_id: str = Field(..., min_length=1, pattern=SESSION_ID_PATTERN)
 
 
 class SessionListInput(BaseModel):

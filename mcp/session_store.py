@@ -14,6 +14,7 @@ SessionStore manages the lifecycle of sessions:
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,10 +24,21 @@ from filelock import FileLock
 
 from models import UsageSummary
 
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
 
 def _now_iso() -> str:
     """Return the current UTC time as an ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_session_id(session_id: str) -> str:
+    """Validate user-controlled session IDs before filesystem use."""
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError(
+            "Invalid session_id. Use 1-128 chars: letters, numbers, '.', '_' or '-'."
+        )
+    return session_id
 
 
 # ═══════════════════════════════════════════════════════════
@@ -148,16 +160,19 @@ class SessionStore:
 
     def create(self, session_id: str) -> NovaSession:
         """Create and register a new in-memory session."""
+        session_id = _validate_session_id(session_id)
         session = NovaSession.new(session_id)
         self._sessions[session_id] = session
         return session
 
     def get(self, session_id: str) -> Optional[NovaSession]:
         """Return the in-memory session or ``None`` if not active."""
+        session_id = _validate_session_id(session_id)
         return self._sessions.get(session_id)
 
     def update(self, session: NovaSession) -> None:
         """Replace the in-memory session with the supplied instance."""
+        _validate_session_id(session.session_id)
         self._sessions[session.session_id] = session
 
     # ------------------------------------------------------------------
@@ -166,6 +181,7 @@ class SessionStore:
 
     def flush(self, session_id: str) -> None:
         """Write the session to disk and remove it from memory."""
+        session_id = _validate_session_id(session_id)
         session = self._sessions.get(session_id)
         if session is None:
             raise KeyError(f"Session '{session_id}' is not active in memory.")
@@ -178,6 +194,7 @@ class SessionStore:
 
     def load(self, session_id: str) -> NovaSession:
         """Read a session from disk into memory and return it."""
+        session_id = _validate_session_id(session_id)
         filepath = self._store_dir / f"{session_id}.json"
         if not filepath.exists():
             raise FileNotFoundError(f"No persisted session found for '{session_id}'.")

@@ -329,7 +329,11 @@ def _auto_commit(dry_run: bool = False) -> CommitResult:
             return result
 
         # Stage and commit
-        subprocess.run(["git", "add"] + changed_files, cwd=str(_REPO_ROOT), capture_output=True)
+        subprocess.run(
+            ["git", "add", "--"] + changed_files,
+            cwd=str(_REPO_ROOT),
+            capture_output=True,
+        )
         commit_msg = _build_commit_message(changed_files)
         commit = subprocess.run(
             ["git", "commit", "-m", commit_msg],

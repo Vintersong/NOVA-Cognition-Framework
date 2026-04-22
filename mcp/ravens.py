@@ -28,6 +28,7 @@ Usage tracking:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -50,6 +51,12 @@ def _record_error(operation: str, exc: Exception) -> None:
 
 # Timeout (seconds) for each LLM API call.  Falls back to local scores on expiry.
 _RAVEN_API_TIMEOUT = float(os.environ.get("RAVEN_API_TIMEOUT", "10"))
+_RAVEN_LOG_QUERY_PREVIEW = os.environ.get("NOVA_LOG_QUERY_PREVIEW", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -84,6 +91,17 @@ def _parse_score_xml(raw: str) -> tuple[dict, dict]:
             scores[shard_id] = 0.5
         reasoning[shard_id] = note or "xml-scored"
     return scores, reasoning
+
+
+def _query_log_metadata(query: str) -> dict:
+    digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:12]
+    payload = {
+        "query_length": len(query),
+        "query_sha256_12": digest,
+    }
+    if _RAVEN_LOG_QUERY_PREVIEW:
+        payload["query_preview"] = query[:80]
+    return payload
 
 
 # ═══════════════════════════════════════════════════════════
@@ -277,7 +295,7 @@ class Huginn:
             "shards": result.shard_ids,
             "metadata": {
                 **result.as_log_metadata(),
-                "query_preview": query[:80],
+                **_query_log_metadata(query),
             },
         }
         try:
@@ -469,7 +487,7 @@ class Muninn:
             "shards": result.shard_ids,
             "metadata": {
                 **result.as_log_metadata(),
-                "query_preview": query[:80],
+                **_query_log_metadata(query),
                 "huginn_candidates": huginn_result.shard_ids,
                 "huginn_max_confidence": round(huginn_result.max_confidence, 4),
             },
