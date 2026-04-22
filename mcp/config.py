@@ -48,6 +48,11 @@ HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-4-5-202510
 MUNINN_MODEL      = os.environ.get("MUNINN_MODEL",      "claude-sonnet-4-6")
 GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-flash")
 
+# ── Input validation patterns ──────────────────────────────────────────────────
+# Session IDs are persisted as filenames: keep strict and portable.
+# 1-128 chars total, start alnum, then alnum / dot / underscore / dash.
+SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+
 # ── Wiki layer ────────────────────────────────────────────────────────────────
 WIKI_DIR          = os.environ.get("NOVA_WIKI_DIR",     str(_REPO_ROOT / "wiki"))
 WIKI_SCHEMA_FILE  = os.environ.get("NOVA_WIKI_SCHEMA",  str(_REPO_ROOT / "wiki_schema.json"))

@@ -7,7 +7,7 @@ Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 from typing import Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
-SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+from config import SESSION_ID_PATTERN
 
 
 # ── Shard tools ───────────────────────────────────────────────────────────────

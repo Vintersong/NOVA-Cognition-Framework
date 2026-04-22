@@ -59,9 +59,9 @@ NIDHOGG_MANIFEST_FILE = os.environ.get(
 NIDHOGG_SIMILARITY_THRESHOLD = float(
     os.environ.get("NIDHOGG_SIMILARITY_THRESHOLD", "0.55")
 )
-_allowed_roots_env = os.environ.get("NIDHOGG_ALLOWED_ROOTS", NIDHOGG_INTAKE_DIR)
+_ALLOWED_ROOTS_ENV = os.environ.get("NIDHOGG_ALLOWED_ROOTS", NIDHOGG_INTAKE_DIR)
 NIDHOGG_ALLOWED_ROOTS = tuple(
-    str(Path(root.strip()).resolve()) for root in _allowed_roots_env.split(",") if root.strip()
+    str(Path(root.strip()).resolve()) for root in _ALLOWED_ROOTS_ENV.split(",") if root.strip()
 )
 
 # ── Optional Haiku analysis — graceful no-op if key is absent ─────────────────

@@ -94,6 +94,7 @@ def _parse_score_xml(raw: str) -> tuple[dict, dict]:
 
 
 def _query_log_metadata(query: str) -> dict:
+    """Build privacy-preserving query log metadata (digest/length; preview opt-in)."""
     digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:12]
     payload = {
         "query_length": len(query),

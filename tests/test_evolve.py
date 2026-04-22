@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -10,7 +11,7 @@ import evolve
 def test_auto_commit_uses_double_dash_for_git_add(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, **kwargs):  # noqa: ANN001
+    def _fake_run(cmd: list[str], **kwargs: Any) -> SimpleNamespace:
         calls.append(cmd)
         if cmd[:3] == ["git", "status", "--porcelain"]:
             return SimpleNamespace(returncode=0, stdout=" M --odd.py\n", stderr="")
