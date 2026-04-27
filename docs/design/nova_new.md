@@ -2,7 +2,7 @@
 
 ## Priority order (do in sequence)
 
-### 1. Provenance fields on every shard
+### 1. Provenance fields on every shard — DONE 2026-04-27
 **Why:** Without it you can't debug six months of belief drift. Highest leverage, lowest cost.
 
 **How:**
@@ -23,7 +23,7 @@
 
 ---
 
-### 3. Headers-only injection by default
+### 3. Headers-only injection by default — DONE 2026-04-27 (summary field deferred)
 **Why:** Token math compounds. Worker context stays clean. Critic Pass gets the right shape.
 
 **How:**

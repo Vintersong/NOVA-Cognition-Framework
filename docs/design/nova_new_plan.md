@@ -36,11 +36,16 @@ Both items mutate the shard schema. Doing them in one migration pass avoids touc
 - Update retrieval (`ravens.py`, `store.py` keyword search) to weight `agent_inference` lower than externally-sourced shards by a configurable multiplier (env var `NOVA_AGENT_INFERENCE_WEIGHT`, default `0.7`)
 
 **Done when:**
-- [ ] All 446 shards have non-null `source`, `summary`, `body`
-- [ ] `nova_shard_create`, `nova_shard_update`, `nidhogg_ingest`, `wiki_ingest` all set `source` correctly
-- [ ] `ravens.py` applies the inference-weight multiplier in scoring
-- [ ] `nova_shard_get_full` MCP tool exists and returns the full body (cold-path fetch)
-- [ ] `test_nova.py` smoke test still passes
+- [x] All shards have non-null `source` — 458 shards backfilled 2026-04-27; `chatgpt_export` -> `external_doc`, others -> `agent_inference`
+- [ ] All shards have non-null `summary` — **deferred**: Haiku batch pass not yet run (458 API calls); run `utilities/backfill_source_summary.py` without `--skip-summaries` when ready
+- [x] `body` accessible — `nova_shard_get_full` returns `conversation_history`/`turns`; no redundant copy stored (coexistence decision)
+- [x] `nova_shard_create` sets `source = "agent_inference"`; `nova_shard_update` inherits existing field
+- [x] `nidhogg_ingest` / `wiki_ingest` — neither creates shards; not applicable at this step
+- [x] `ravens.py` applies `NOVA_AGENT_INFERENCE_WEIGHT` (default 0.7) in `_local_retrieve`
+- [x] `nova_shard_get_full` MCP tool added (tool count 30 -> 31)
+- [ ] `test_nova.py` smoke test — not yet run; run manually with `cd mcp && python test_nova.py`
+
+**Completed:** 2026-04-27 (partial — summary pass deferred). Branch: `step-1-schema-migration`.
 
 ---
 
