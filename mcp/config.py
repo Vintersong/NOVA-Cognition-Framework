@@ -47,6 +47,12 @@ CONFIDENCE_LOW_THRESHOLD = float(os.environ.get("NOVA_CONFIDENCE_LOW", "0.4"))
 # Values < 1.0 deprioritise agent-generated content relative to external sources.
 NOVA_AGENT_INFERENCE_WEIGHT = float(os.environ.get("NOVA_AGENT_INFERENCE_WEIGHT", "0.7"))
 
+# ── Quarantine ────────────────────────────────────────────────────────────────
+# session_extracted shards are held in quarantine for this many hours.
+# During quarantine their retrieval score is multiplied by QUARANTINE_PENALTY.
+QUARANTINE_HOURS   = int(os.environ.get("NOVA_QUARANTINE_HOURS",   "48"))
+QUARANTINE_PENALTY = float(os.environ.get("NOVA_QUARANTINE_PENALTY", "0.5"))
+
 # ── Shard age classification ──────────────────────────────────────────────────
 RECENT_ACCESS_DAYS = int(os.environ.get("NOVA_RECENT_DAYS", "3"))
 STALE_ACCESS_DAYS  = int(os.environ.get("NOVA_STALE_DAYS",  "14"))

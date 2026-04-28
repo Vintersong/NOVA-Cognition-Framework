@@ -47,6 +47,9 @@ class ShardCreateInput(BaseModel):
     initial_message: str = Field(default="")
     related_shards: str = Field(default="")
     relation_type: str = Field(default="references")
+    source: Literal[
+        "user_input", "external_doc", "agent_inference", "session_extracted", "corroborated_by"
+    ] = Field(default="agent_inference", description="Provenance of this shard")
 
 
 class ShardUpdateInput(BaseModel):

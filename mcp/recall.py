@@ -17,9 +17,10 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
-from config import NOVA_AGENT_INFERENCE_WEIGHT, SHARD_DIR
+from config import NOVA_AGENT_INFERENCE_WEIGHT, QUARANTINE_PENALTY, SHARD_DIR
 from store import load_index
 
 _CACHE_TTL = float(os.environ.get("NOVA_RECALL_CACHE_TTL", "300"))
@@ -91,6 +92,15 @@ def _local_score(query: str, index: dict) -> list[tuple[str, float]]:
 
         if entry.get("meta", {}).get("source", "agent_inference") == "agent_inference":
             blended *= NOVA_AGENT_INFERENCE_WEIGHT
+
+        # Penalise shards still in quarantine window
+        quarantine_until = entry.get("meta", {}).get("quarantine_until")
+        if quarantine_until:
+            try:
+                if datetime.fromisoformat(quarantine_until) > datetime.now():
+                    blended *= QUARANTINE_PENALTY
+            except (ValueError, TypeError):
+                pass
 
         if blended > 0.0:
             scored.append((shard_id, blended))

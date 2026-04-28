@@ -41,7 +41,7 @@ from collections import Counter
 from typing import Any
 
 import anthropic
-from config import parse_bool_env, NOVA_AGENT_INFERENCE_WEIGHT
+from config import parse_bool_env, NOVA_AGENT_INFERENCE_WEIGHT, QUARANTINE_PENALTY
 
 logger = logging.getLogger(__name__)
 _error_counts: Counter[str] = Counter()
@@ -282,6 +282,16 @@ class Huginn:
             # Deprioritise agent-inferred shards relative to external sources
             if entry.get("meta", {}).get("source", "agent_inference") == "agent_inference":
                 blended *= NOVA_AGENT_INFERENCE_WEIGHT
+
+            # Penalise shards still in quarantine window
+            quarantine_until = entry.get("meta", {}).get("quarantine_until")
+            if quarantine_until:
+                try:
+                    from datetime import datetime as _dt
+                    if _dt.fromisoformat(quarantine_until) > _dt.now():
+                        blended *= QUARANTINE_PENALTY
+                except (ValueError, TypeError):
+                    pass
 
             if blended > 0.02:
                 scored.append((shard_id, blended))

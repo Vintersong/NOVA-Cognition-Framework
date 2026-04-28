@@ -82,6 +82,7 @@ from config import (
     COMPACT_THRESHOLD, COMPACT_KEEP_RECENT,
     DECAY_RATE, DECAY_INTERVAL_DAYS, MERGE_SIMILARITY_THRESHOLD,
     HUGINN_CONFIDENCE_THRESHOLD, NOTT_COUNT_THRESHOLD,
+    QUARANTINE_HOURS,
 )
 from schemas import (
     ShardInteractInput, ShardCreateInput, ShardUpdateInput, ShardSearchInput,
@@ -371,6 +372,11 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     filepath = os.path.join(SHARD_DIR, filename)
     shard_id = filename.replace(".json", "")
 
+    from datetime import timedelta
+    quarantine_until = None
+    if params.source == "session_extracted":
+        quarantine_until = (datetime.now() + timedelta(hours=QUARANTINE_HOURS)).isoformat()
+
     shard_data = {
         "shard_id": shard_id,
         "guiding_question": params.guiding_question,
@@ -382,7 +388,8 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
             "last_used": datetime.now().isoformat(),
             "confidence": 1.0,
             "enrichment_status": "pending",
-            "source": "agent_inference",
+            "source": params.source,
+            "quarantine_until": quarantine_until,
         }
     }
 
