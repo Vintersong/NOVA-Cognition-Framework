@@ -100,7 +100,7 @@ from store import (
 )
 from graph import (
     load_graph, save_graph,
-    add_shard_to_graph, add_relation,
+    add_shard_to_graph, add_relation, add_supersedes, add_corroborated_by,
     query_graph, query_graph_transitive,
 )
 from maintenance import (
@@ -305,9 +305,8 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
         try:
             data, filepath = load_shard(sid)
             update_shard_usage(data)
-            # Boost confidence on access
+            # Confidence rises only via corroborated_by edges, not on retrieval.
             meta = data.setdefault("meta_tags", {})
-            meta["confidence"] = min(1.0, meta.get("confidence", 1.0) + 0.05)
             save_shard(filepath, data)
 
             fragments = extract_fragments(data, sid)[-MAX_FRAGMENTS:]
@@ -402,8 +401,23 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     add_shard_to_graph(shard_id, shard_data)
 
     # Wire up relations to related shards
+    new_source = shard_data.get("meta_tags", {}).get("source", "agent_inference")
+    _credible_sources = {"user_input", "external_doc"}
     for related_id in ([s.strip() for s in params.related_shards.split(",") if s.strip()] if params.related_shards else []):
         add_relation(shard_id, related_id, params.relation_type)
+        # Auto-emit supersedes when a credible source contradicts an existing shard.
+        if params.relation_type == "contradicts" and new_source in _credible_sources:
+            try:
+                existing, _ = load_shard(related_id)
+                existing_conf = existing.get("meta_tags", {}).get("confidence", 1.0)
+                new_conf = shard_data.get("meta_tags", {}).get("confidence", 1.0)
+                if new_conf >= existing_conf:
+                    add_supersedes(
+                        shard_id, related_id,
+                        reason=f"New {new_source} shard (conf={new_conf}) contradicts and supersedes existing (conf={existing_conf})",
+                    )
+            except Exception:
+                pass
 
     # Enrichment runs in background — MiniLM embed + save, never blocks reply.
     loop = asyncio.get_running_loop()
@@ -903,7 +917,7 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
     All parameters optional — omit to return all relations.
     Set transitive=True to traverse the graph by BFS up to max_depth hops.
 
-    Relation types: influences, depends_on, contradicts, extends, references, merged_from
+    Relation types: influences, depends_on, contradicts, extends, references, merged_from, supersedes, corroborated_by
     """
     if _permission_context.blocks("nova_graph_query"):
         return _permission_error("nova_graph_query")
@@ -966,17 +980,19 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
     """
     Manually add a directed relation between two shards in the knowledge graph.
     Use this when you notice a connection that wasn't auto-detected.
-    
+
     Relation types:
-      influences   — shard A shapes the thinking in shard B
-      depends_on   — shard A requires shard B to make sense
-      contradicts  — shards are in tension, revisit both
-      extends      — shard A builds on shard B
-      references   — shard A cites or mentions shard B
+      influences       — shard A shapes the thinking in shard B
+      depends_on       — shard A requires shard B to make sense
+      contradicts      — shards are in tension, revisit both
+      extends          — shard A builds on shard B
+      references       — shard A cites or mentions shard B
+      supersedes       — shard A replaces shard B (reason field required)
+      corroborated_by  — shard A is confirmed by shard B
     """
     if _permission_context.blocks("nova_graph_relate"):
         return _permission_error("nova_graph_relate")
-    add_relation(params.source_id, params.target_id, params.relation_type, params.notes)
+    add_relation(params.source_id, params.target_id, params.relation_type, params.notes, params.reason)
 
     return json.dumps({
         "status": "relation_added",
