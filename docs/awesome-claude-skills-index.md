@@ -177,6 +177,61 @@
 - [agentskill.sh](https://agentskill.sh) - Browse and install 69,000+ AI agent skills for Claude Code, Cursor, Copilot, Windsurf, Zed, and 20+ AI tools.
 - [Agent Almanac](https://github.com/pjt222/agent-almanac) - 317 skills, 65 agents, and 14 teams for Claude Code following the Agent Skills open standard across 50+ domains.
 
+---
+
+## Forgemaster Gap Analysis
+
+Cross-reference against `forgemaster/SKILL_LIBRARY.md`. Last reviewed: 2026-04-05.
+
+### Already covered — no action needed
+
+| Awesome skill | Covered by |
+|---|---|
+| test-driven-development | `agentic-workflows/test-driven-development` |
+| using-git-worktrees | `agentic-workflows/using-git-worktrees` |
+| finishing-a-development-branch | `agentic-workflows/finishing-a-development-branch` |
+| systematic-debugging | `agentic-workflows/systematic-debugging` |
+| brainstorming | `agentic-workflows/brainstorming` |
+| aws-skills | `infrastructure/aws` |
+| azure (infra) | `infrastructure/azure` |
+| hashicorp / terraform | `infrastructure/terraform` |
+| postgres, mysql (read-only) | `databases/postgres-expert`, `databases/sql-analyst` |
+| deep-research, manus | `autonomous-agents/researcher` |
+| x-twitter-scraper | `autonomous-agents/twitter` |
+| OWASP, defense-in-depth, VibeSec | `security/security-audit` |
+| webapp-testing (Playwright) | `autonomous-agents/browser` |
+| linear-claude-skill / linear-cli | `project-management/linear-tools` |
+| pm-skills, Product-Manager-Skills | `project-management/project-manager` |
+| slides, revealjs-skill | `frontend-design/slides` |
+| elevenlabs / google-tts | `communication/presentation` (partial) |
+
+### Gaps — worth pulling into the library
+
+| Skill | Source repo | Target category | Priority |
+|---|---|---|---|
+| `docx` / `xlsx` / `pptx` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills) | `communication/` | High — document I/O missing entirely |
+| `internal-comms` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/internal-comms) | `communication/` | High — status reports, newsletters, incident reports |
+| `paper-search` | [ykdojo/paper-search](https://github.com/ykdojo/paper-search) | `autonomous-agents/` | High — OpenAlex 250M papers, no API key |
+| `article-extractor` | [michalparkola](https://github.com/michalparkola/tapestry-skills-for-claude-code/tree/main/article-extractor) | `autonomous-agents/` | High — complements researcher workflow |
+| `youtube-transcript` | [michalparkola](https://github.com/michalparkola/tapestry-skills-for-claude-code/tree/main/youtube-transcript) | `autonomous-agents/` | Medium — useful for research pipelines |
+| `varlock` (secret management) | [wrsmith108/varlock-claude-skill](https://github.com/wrsmith108/varlock-claude-skill) | `security/` | Medium — secrets never in session/logs/git |
+| `sanitize` (PII redaction) | [openclaw/skills](https://github.com/openclaw/skills/tree/main/skills/agentward-ai/sanitize) | `security/` | Medium — 15 PII categories, fully local |
+| `avoid-ai-writing` | [conorbronsdon](https://github.com/conorbronsdon/avoid-ai-writing) | `communication/` | Medium — audit/rewrite AI writing patterns |
+| `azure-devops` | [sanjay3290/ai-skills](https://github.com/sanjay3290/ai-skills/tree/main/skills/azure-devops) | `infrastructure/` or `code-intelligence/` | Low — only needed if using Azure DevOps |
+| `debug-skill` (CLI debugger) | [AlmogBaku/debug-skill](https://github.com/AlmogBaku/debug-skill) | `agentic-workflows/` | Low — breakpoints/stepping, tool-dependent |
+
+### Skip — niche or external-tool-dependent
+
+- `move-code-quality-skill` — Move language only
+- `pypict-claude-skill` — PICT combinatorial testing, very niche
+- `claude-starter` — meta template, not a skill
+- `task-observer` — self-modifying meta skill, conflicts with Forgemaster ownership model
+- `manus`, `jules` — delegate to external agents, not portable
+- `google-workspace-skills` — large OAuth suite, only worth adding for Google-heavy workflows
+- `web-artifacts-builder` — claude.ai artifact generation, not relevant to server-side NOVA
+
+---
+
 ## 🤝 Contribution
 
 If you have suggestions, improvements, or new resources to add:

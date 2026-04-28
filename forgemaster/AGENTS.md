@@ -6,8 +6,10 @@ description: >
   Human touchpoints: design doc, plan approval, PR review.
 agent_roles:
   - orchestrator
+  - planner
   - implementer
   - reviewer
+  - qa
   - researcher
 preferred_models:
   claude-sonnet: [architecture, review, ambiguity]
@@ -18,7 +20,7 @@ tools_allowed:
   - git
   - mcp_nova
   - mcp_gemini
-  - mcp_stitch
+  - mcp_stitch  # pending — auth blocked, see KNOWN_ISSUES.md
 context_files:
   - forgemaster/AGENTS.md
   - forgemaster/skills/forgemaster-orchestrator.md
@@ -55,7 +57,7 @@ Every 3 sprints: nova_shard_consolidate (maintain memory health)
 
 ## Skill Library
 The full skill library is indexed at `forgemaster/SKILL_LIBRARY.md`.
-It covers 15 specialization domains with 150+ skills across the workspace.
+It covers 15 specialization domains with 200+ skills across the workspace.
 Always consult it when a task falls outside Forgemaster's core domain.
 
 Core skills (load first for internal operations):
@@ -67,6 +69,7 @@ Core skills (load first for internal operations):
 - forgemaster-verification: evidence before completion claims
 - forgemaster-git-workflow: branch setup and integration
 - forgemaster-code-review: two-stage spec then quality review
+- forgemaster-qa-review: stage 3 structural QA (thresholds, anti-patterns, JIRA)
 - forgemaster-nova-session-handoff: persist state across sessions
 
 Extended domains (see SKILL_LIBRARY.md for paths):

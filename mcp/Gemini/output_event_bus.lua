@@ -1,4 +1,3 @@
-```lua
 -- event_bus.lua
 
 --- A simple event bus module for LÖVE2D games.
@@ -154,4 +153,3 @@ function EventBus.unsubscribe(event_name, callback)
 end
 
 return EventBus
-```

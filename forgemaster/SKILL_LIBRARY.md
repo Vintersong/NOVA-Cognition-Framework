@@ -22,6 +22,7 @@ Internal orchestration and execution skills. Always loaded first.
 | Verification | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-verification.md` | Evidence before completion claims |
 | Git Workflow | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-git-workflow.md` | Branch setup and PR integration |
 | Code Review | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-code-review.md` | Two-stage spec + quality review |
+| QA Review | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-qa-review.md` | Stage 3 structural QA: thresholds, anti-patterns, JIRA comments |
 | Session Handoff | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-nova-session-handoff.md` | Persist state across sessions |
 
 ---
@@ -32,8 +33,7 @@ Skills for the memory layer itself — loading, writing, and maintaining shards.
 
 | Skill | Path | When to load |
 |---|---|---|
-| NOVA v2 Architecture | `NOVA-Cognition-Framework/mcp/SKILL_v2.md` | Memory-heavy operations, shard strategy |
-| NOVA v1 Reference | `NOVA-Cognition-Framework/mcp/SKILL.md` | Legacy shard structure reference |
+| NOVA Architecture | `NOVA-Cognition-Framework/mcp/SKILL.md` | Memory-heavy operations, shard strategy |
 
 ---
 

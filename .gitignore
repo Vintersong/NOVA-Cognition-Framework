@@ -1,11 +1,37 @@
-.env
-.mcp.json
+# Python
 __pycache__/
 *.pyc
 *.pyo
+
+# NOVA runtime files — auto-generated, never commit
 shard_index.json
 shard_graph.json
+summary_index.json
+summary_index.md
 nova_usage.jsonl
+nova_autoresearch.jsonl
+
+# Shard data — personal, never commit
 shards/
+nova_sessions/
+donors/
+intake/chats/
+
+# Output / experiments
+output/
+
+# Secrets
+.env
+.env.local
+# Keep .env.example — it's the template
+!.env.example
+
+# Binary assets (tracked in docs/ but not committed)
 *.pdf
 *.pptx
+
+# MCP local config
+.mcp.json
+
+# Claude Code local config — user-specific permissions and allowlists
+.claude/settings.local.json

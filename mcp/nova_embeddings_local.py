@@ -1,5 +1,5 @@
 """
-nova_embeddings_local.py — Local embedding backend for nova_server_v2.py
+nova_embeddings_local.py — Local embedding backend for nova_server.py
 
 Provides enrich_shard and _generate_compaction_summary using local sentence-transformers.
 No API key required. Fully local and offline after first run.
@@ -17,28 +17,48 @@ Model: all-MiniLM-L6-v2
   - Apache 2.0 license
 """
 
+import threading
+from datetime import datetime
+
 # ═══════════════════════════════════════════════════════════
 # LOCAL EMBEDDING MODEL
 # ═══════════════════════════════════════════════════════════
 
 _embedding_model = None
+_model_lock = threading.Lock()
 
 def get_embedding_model():
     """
-    Lazy-load the sentence-transformers model.
-    Only loads once per server session.
+    Load the sentence-transformers model.
+    Thread-safe. Only loads once per server session.
     """
     global _embedding_model
-    if _embedding_model is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-            _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            print("[OK] Local embedding model loaded (all-MiniLM-L6-v2)")
-        except ImportError:
-            print("[WARN] sentence-transformers not installed. Run: pip install sentence-transformers")
-            print("  Falling back to keyword-only search.")
-            _embedding_model = None
+    with _model_lock:
+        if _embedding_model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                print("[OK] Local embedding model loaded (all-MiniLM-L6-v2)")
+            except ImportError:
+                print("[WARN] sentence-transformers not installed. Run: pip install sentence-transformers")
+                print("  Falling back to keyword-only search.")
+                _embedding_model = None
     return _embedding_model
+
+
+def prewarm_embedding_model() -> None:
+    """
+    Start loading the embedding model in a background daemon thread at server startup.
+    Returns immediately — model loads in the background so the first shard
+    operation never blocks waiting for weights to load.
+    """
+    def _load():
+        print("[NOVA] Pre-warming embedding model in background...")
+        get_embedding_model()
+        print("[NOVA] Embedding model ready.")
+
+    t = threading.Thread(target=_load, daemon=True, name="nova-embed-prewarm")
+    t.start()
 
 
 def generate_local_embedding(text: str) -> list[float] | None:
@@ -56,36 +76,65 @@ def generate_local_embedding(text: str) -> list[float] | None:
 
 def generate_local_summary(turns: list[dict], shard_id: str) -> str:
     """
-    Generate a compaction summary without any API.
-    Extracts key phrases from the conversation using simple heuristics.
-    Not as good as GPT but zero cost and zero latency.
+    Structured compaction summary.
+    Goal/Progress/Decisions/Next-Steps template borrowed from
+    hermes-agent ContextCompressor. No LLM required — heuristic extraction.
     """
     if not turns:
         return "Empty conversation."
 
-    # Collect user messages (they carry the intent)
-    user_messages = [t.get("user", "") for t in turns if t.get("user")]
+    user_messages = [t.get("user", "").strip() for t in turns if t.get("user", "").strip()]
+    ai_messages = [t.get("ai", "").strip() for t in turns if t.get("ai", "").strip()]
 
     if not user_messages:
         return "Conversation with no user messages."
 
-    # Take first, middle, and last user message as summary anchors
-    anchors = []
-    if len(user_messages) >= 1:
-        anchors.append(user_messages[0][:120])
-    if len(user_messages) >= 3:
-        mid = len(user_messages) // 2
-        anchors.append(user_messages[mid][:120])
-    if len(user_messages) >= 2:
-        anchors.append(user_messages[-1][:120])
+    # [GOAL] — opening intent captured from first user message
+    goal = user_messages[0][:200]
 
-    anchor_text = " → ".join(anchors)
-    return f"Conversation covering: {anchor_text} ({len(turns)} turns compacted)"
+    # [PROGRESS] — turn count + last user request
+    final_user = user_messages[-1][:120] if len(user_messages) > 1 else ""
+    progress = (
+        f"{len(turns)} turns. Last request: {final_user}"
+        if final_user else f"{len(turns)} turns."
+    )
 
+    # [DECISIONS] — scan AI responses for decision-bearing sentences
+    decision_keywords = (
+        "decided", "will use", "using", "chosen", "approach",
+        "implement", "solution", "going with", "selected",
+    )
+    decisions: list[str] = []
+    for msg in ai_messages:
+        lower = msg.lower()
+        for kw in decision_keywords:
+            if kw in lower:
+                for sentence in msg.split(". "):
+                    if kw in sentence.lower():
+                        decisions.append(sentence.strip()[:120])
+                        break
+                break
+        if len(decisions) >= 3:
+            break
 
-# ═══════════════════════════════════════════════════════════
-# REPLACEMENT FUNCTIONS — paste these into nova_server_v2.py
-# ═══════════════════════════════════════════════════════════
+    # [NEXT] — first sentence of the last AI message
+    next_step = ""
+    if ai_messages:
+        first_sentence = ai_messages[-1].split(". ")[0].strip()[:120]
+        if len(first_sentence) > 10:
+            next_step = first_sentence
+
+    parts = [
+        f"[GOAL] {goal}",
+        f"[PROGRESS] {progress}",
+    ]
+    if decisions:
+        parts.append("[DECISIONS] " + " | ".join(decisions))
+    if next_step:
+        parts.append(f"[NEXT] {next_step}")
+
+    return "\n".join(parts)
+
 
 def enrich_shard(shard_id: str, shard_data: dict):
     """
@@ -106,7 +155,7 @@ def enrich_shard(shard_id: str, shard_data: dict):
     embed_text = guiding_question + " " + recent_text
 
     if model is None:
-        shard_data.setdefault("meta_tags", {})["enrichment_status"] = "pending_no_model"
+        shard_data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
         return
 
     try:
@@ -127,7 +176,7 @@ def enrich_shard(shard_id: str, shard_data: dict):
             "topics": keywords,
             "conversation_type": shard_data.get("meta_tags", {}).get("intent", "general"),
             "embedding": embedding,
-            "last_context_update": __import__('datetime').datetime.now().isoformat(),
+            "last_context_update": datetime.now().isoformat(),
             "embedding_model": "all-MiniLM-L6-v2"
         }
         shard_data["meta_tags"]["enrichment_status"] = "enriched_local"
@@ -137,66 +186,5 @@ def enrich_shard(shard_id: str, shard_data: dict):
 
 
 def _generate_compaction_summary(turns: list[dict], shard_id: str) -> str:
-    """
-    Generate compaction summary without any API.
-    """
+    """Generate compaction summary without any API."""
     return generate_local_summary(turns, shard_id)
-
-
-# ═══════════════════════════════════════════════════════════
-# UPDATED REQUIREMENTS
-# ═══════════════════════════════════════════════════════════
-
-REQUIREMENTS = """
-# NOVA v2 MCP Server dependencies — local embeddings, no API key required
-mcp[cli]>=1.0.0
-pydantic>=2.0.0
-sentence-transformers>=2.2.0
-python-dotenv>=1.0.0
-# openai is no longer required
-"""
-
-
-# ═══════════════════════════════════════════════════════════
-# BATCH ENRICHMENT SCRIPT
-# ═══════════════════════════════════════════════════════════
-
-BATCH_ENRICHMENT_SCRIPT = """
-# Run this once to enrich all existing shards with local embeddings
-# After running, merge suggestions will work in nova_shard_consolidate
-
-import os
-import json
-from pathlib import Path
-
-SHARD_DIR = os.environ.get("NOVA_SHARD_DIR", "shards")
-
-# Import the local functions
-from nova_embeddings_local import enrich_shard
-
-shards = list(Path(SHARD_DIR).glob("*.json"))
-print(f"Enriching {len(shards)} shards...")
-
-enriched = 0
-for i, fpath in enumerate(shards, 1):
-    try:
-        with open(fpath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        # Skip already enriched with local model
-        if data.get("meta_tags", {}).get("enrichment_status") == "enriched_local":
-            continue
-            
-        enrich_shard(data["shard_id"], data)
-        
-        with open(fpath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        
-        enriched += 1
-        if enriched % 50 == 0:
-            print(f"  Progress: {enriched} shards enriched...")
-    except Exception as e:
-        print(f"  Error on {fpath.name}: {e}")
-
-print(f"Done. {enriched} shards enriched with local embeddings.")
-"""

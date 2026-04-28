@@ -7,9 +7,10 @@ Load this skill at the start of every sprint, before decomposing any work.
 You are the Forgemaster Orchestrator. Your job is to:
 1. Load project context from NOVA
 2. Understand the full scope of what needs to be done
-3. Decompose the request into typed, routable tickets
-4. Assign each ticket to the correct model lane
-5. Hand off to execution skills
+3. Consult the skill library for relevant skills
+4. Decompose the request into typed, routable tickets
+5. Assign each ticket to the correct model lane and skill file
+6. Hand off to execution skills
 
 ## Sprint Start Protocol
 
@@ -19,8 +20,41 @@ nova_shard_interact(message="[project name] current state")
 
 # Step 2: Load any related shards surfaced
 # Step 3: Read the design doc or feature request
-# Step 4: Decompose into tickets (see below)
+# Step 4: Consult forgemaster/SKILL_LIBRARY.md for relevant skills
+# Step 5: Decompose into tickets (see below)
 ```
+
+## Skill Library Lookup
+
+Before decomposing tickets, consult `forgemaster/SKILL_LIBRARY.md` to identify which skill files are relevant to the current task. Read the matched skill files before dispatching.
+
+**Lookup process:**
+1. Read `forgemaster/SKILL_LIBRARY.md`
+2. Match the task domain to a category (Engineering, Game Dev, Frontend, etc.)
+3. Identify the specific skill path from the table
+4. Read that skill file into context before executing the relevant ticket
+5. Add the skill path to the ticket's `skill` field
+
+**Core skills** (always available, no lookup needed):
+
+| Task type | Skill file |
+|---|---|
+| Sprint planning, routing | `forgemaster/skills/forgemaster-orchestrator.md` |
+| Implementation | `forgemaster/skills/forgemaster-implementation.md` |
+| Code review | `forgemaster/skills/forgemaster-code-review.md` |
+| Debugging | `forgemaster/skills/forgemaster-systematic-debugging.md` |
+| Verification | `forgemaster/skills/forgemaster-verification.md` |
+| Git / PR | `forgemaster/skills/forgemaster-git-workflow.md` |
+| Session handoff | `forgemaster/skills/forgemaster-nova-session-handoff.md` |
+
+**Extended domains** — consult `SKILL_LIBRARY.md` when the task involves:
+- A specific language or framework (Python, React, Rust, etc.)
+- Game development work
+- Frontend design or UI refinement
+- Infrastructure, DevOps, or databases
+- Security audit
+- Autonomous research or browsing
+- Any domain not covered by the core skills above
 
 ## Ticket Types and Model Routing
 
@@ -42,6 +76,7 @@ Each ticket must include:
 TICKET-[N]
   type: [architecture | implementation | review | research | boilerplate | documentation]
   model: [claude-sonnet | gemini-flash | claude-haiku]
+  skill: [path to skill file, or 'none']  ← load this before executing
   confidence: [0.0 - 1.0]  ← required for gemini-flash tickets
   title: [one line summary]
   depends_on: [list of ticket IDs, or none]
@@ -77,7 +112,7 @@ If unsure of the confidence score, default to 0.5 and route to claude-sonnet ins
 
 - Never route ambiguous tickets to gemini-flash — resolve ambiguity first with claude-sonnet
 - Never use gpt-4o or any OpenAI model — banned. Use claude-haiku for research and documentation
-- Every ticket must have acceptance criteria before dispatch
-- Every gemini-flash ticket must include a confidence score
+- Always consult SKILL_LIBRARY.md before dispatching tickets in extended domains
+- Every ticket must have a skill field, acceptance criteria, and confidence score (gemini-flash only)
 - Maximum 5 tickets in a single sprint wave; break larger work into multiple waves
 - If a ticket cannot be fully specified, create an `ambiguity` ticket first

@@ -14,7 +14,7 @@
 5. [NOVA Memory System (v2)](#5-nova-memory-system-v2)
    - 5.1 [Core Design Philosophy](#51-core-design-philosophy)
    - 5.2 [Shard Data Model](#52-shard-data-model)
-   - 5.3 [MCP Server — nova_server_v2.py](#53-mcp-server--nova_server_v2py)
+   - 5.3 [MCP Server — nova_server.py](#53-mcp-server--nova_serverpy)
    - 5.4 [11 Exposed MCP Tools](#54-11-exposed-mcp-tools)
    - 5.5 [Confidence and Decay System](#55-confidence-and-decay-system)
    - 5.6 [Auto-Compaction Engine](#56-auto-compaction-engine)
@@ -25,7 +25,7 @@
 6. [Forgemaster Orchestration Layer](#6-forgemaster-orchestration-layer)
    - 6.1 [System Overview](#61-system-overview)
    - 6.2 [Model Routing Strategy](#62-model-routing-strategy)
-   - 6.3 [Core Skill Library (9 skills)](#63-core-skill-library-9-skills)
+   - 6.3 [Core Skill Library (10 skills)](#63-core-skill-library-10-skills)
    - 6.4 [Agent Persona System](#64-agent-persona-system)
    - 6.5 [Extended Skill Library (150+ skills)](#65-extended-skill-library-150-skills)
    - 6.6 [Sprint Workflow](#66-sprint-workflow)
@@ -67,7 +67,7 @@ The core thesis this system embodies is: **"Structure over processing power — 
 | **Owner** | Personal project (Moldo) |
 | **Primary language** | Python |
 | **Protocol** | Model Context Protocol (MCP) |
-| **Active server** | `mcp/nova_server_v2.py` |
+| **Active server** | `mcp/nova_server.py` |
 | **Live shard count** | 424 JSON shards |
 | **Total content files** | 814+ (forgemaster) |
 | **MCP tools exposed** | 11 |
@@ -147,15 +147,13 @@ NOVA-Cognition-Framework/
 ├── shard_index.json             ← Runtime: auto-generated index of all shards
 │
 ├── mcp/                         ← NOVA MCP SERVER (primary)
-│   ├── nova_server_v2.py        ← ACTIVE server (v2, 11 tools)
+│   ├── nova_server.py           ← ACTIVE server (18 tools)
 │   ├── nova_embeddings_local.py ← Local sentence-transformers embedding module
-│   ├── nova_server.py           ← v1 reference only, DO NOT USE
-│   ├── SKILL_v2.md              ← ACTIVE skill definition for NOVA agents
-│   ├── SKILL.md                 ← v1 reference only
+│   ├── SKILL.md                 ← ACTIVE skill definition for NOVA agents
 │   └── requirements.txt         ← mcp[cli], pydantic, sentence-transformers, python-dotenv
 │
 ├── python/                      ← Utility scripts
-│   ├── shard_index.py           ← Index manager (imported by nova_server_v2)
+│   ├── shard_index.py           ← Index manager (imported by nova_server)
 │   ├── context_extractor.py     ← Batch enrichment via OpenAI GPT-4 + ada-002
 │   ├── main.py                  ← (entry point, not analyzed in detail)
 │   ├── rename_shards.py         ← Batch rename utility
@@ -237,7 +235,7 @@ NOVA-Cognition-Framework/
 
 ### 5.1 Core Design Philosophy
 
-NOVA's philosophy is stated explicitly in `mcp/SKILL_v2.md`:
+NOVA's philosophy is stated explicitly in `mcp/SKILL.md`:
 
 > **"Structure over processing power. Intelligence emerges from recursive interaction with well-organized memory, not from larger context windows. Memory is reconstructed, not retained. The processor is stateless by design — this is a feature, not a limitation."**
 
@@ -288,7 +286,7 @@ Every piece of memory is a **shard** — a self-contained JSON document stored a
 - **Intent tagging** — Shards can be `reflection`, `planning`, `research`, `brainstorm`, `archive`, or `forgotten`. This allows filtering by purpose, not just content.
 - **Compaction summary preserved** — When a shard is auto-compacted, the summary of the removed turns is prepended to the context summary, so no information is permanently lost.
 
-### 5.3 MCP Server — nova_server_v2.py
+### 5.3 MCP Server — nova_server.py
 
 The server runs via `mcp[cli]` using the `FastMCP` framework from the MCP SDK. It is fully asynchronous (all tool handlers are `async def`).
 
@@ -520,7 +518,7 @@ In addition to tools, the server exposes 4 MCP resources (queryable via `nova://
 
 | Resource | URI | Content |
 |---|---|---|
-| Skill definition | `nova://skill` | Contents of `SKILL_v2.md` (falls back to `SKILL.md`) |
+| Skill definition | `nova://skill` | Contents of `SKILL.md` |
 | Shard index | `nova://index` | Full `shard_index.json` as JSON |
 | Knowledge graph | `nova://graph` | Full `shard_graph.json` as JSON |
 | Usage log | `nova://usage` | Last 100 JSONL entries from `nova_usage.jsonl` |
@@ -564,7 +562,7 @@ The orchestrator classifies each ticket into a type and routes it to the optimal
 
 **Hard routing rule:** Ambiguous tickets MUST NOT go to gemini-flash. Unresolved ambiguity must be resolved by claude-sonnet first. This is a hard gate in the orchestrator skill.
 
-### 6.3 Core Skill Library (9 skills)
+### 6.3 Core Skill Library (10 skills)
 
 All core skills live in `forgemaster/skills/` and are markdown files that define agent behavior when loaded as context.
 
@@ -592,6 +590,9 @@ Branch setup, commit conventions, integration, and PR creation protocols.
 #### `forgemaster-code-review.md`
 Two-stage review: spec compliance first (does the code do what the ticket specified?), then quality (is it idiomatic, maintainable, secure?). Stage 1 gates Stage 2 — quality review on non-compliant code is skipped.
 
+#### `forgemaster-qa-review.md`
+Stage 3 structural QA. Runs after `forgemaster-code-review.md` Stages 1 and 2. Catches anti-patterns specific to LLM-generated code that standard review misses: compounding complexity, silent state mutation, error suppression, and duplication that degrades across iterations. Applies quantitative thresholds (cyclomatic complexity, function length, duplication ratio, test coverage, cognitive complexity) with explicit flag vs block levels, plus a combined escalation rule: any two metrics tripping simultaneously auto-promotes to BLOCKER.
+
 #### `forgemaster-nova-session-handoff.md`
 The session boundary protocol. Defines exactly what to write to NOVA before ending any session:
 ```
@@ -604,17 +605,17 @@ Without this, the next session starts from zero context.
 
 ### 6.4 Agent Persona System
 
-`forgemaster/agents/` contains **357 agent persona definitions** across **18 domain folders**:
+`forgemaster/agents/` contains **305 agent persona definitions** across **18 domain folders**:
 
 | Domain | Purpose |
 |---|---|
 | `academic/` | Research, scholarly writing |
-| `autonomous-agents/` | Browser automation, lead gen, data collection |
 | `design/` | UI/UX, design systems |
 | `engineering/` | Software development across stacks |
 | `game-development/` | Full game studio pipeline |
 | `integrations/` | API integrations, connector agents |
 | `marketing/` | Content, campaign, copywriting |
+| `openFang/` | Ported openFang ecosystem agents — code review persona plus TOML-based generalist configs (analyst, architect, coder, debugger, devops, planner) |
 | `paid-media/` | Media buying, campaign management |
 | `product/` | Product management, roadmap |
 | `project-management/` | Jira, Linear, Notion |
@@ -702,7 +703,7 @@ All skill files follow the content standard defined in `forgemaster/STANDARDS.md
 ### 7.1 shard_index.py
 
 **Location:** `python/shard_index.py`  
-**Dual purpose:** Standalone maintenance script AND importable module for nova_server_v2.
+**Dual purpose:** Standalone maintenance script AND importable module for nova_server.
 
 **Key functions:**
 
@@ -778,9 +779,9 @@ python context_extractor.py --force  # Re-enrich all shards (even already enrich
 
 **Usage:**
 ```bash
-python tools/chatgpt_to_nova.py \
-  --input "E:/ChatGPT Chats" \
-  --output "./shards" \
+python utilities/chatgpt_to_nova.py \
+  --input ./chatgpt_export \
+  --output ./shards \
   --min-turns 2 \
   --dry-run    # Preview without writing
 ```
@@ -845,7 +846,7 @@ Examples:
 ### `.env` (Never Commit)
 ```ini
 OPENAI_API_KEY=sk-...    # Required for context_extractor.py only
-                          # NOT required for nova_server_v2.py
+                          # NOT required for nova_server.py
 ```
 
 ### Claude Desktop Integration
@@ -854,9 +855,9 @@ OPENAI_API_KEY=sk-...    # Required for context_extractor.py only
   "mcpServers": {
     "nova": {
       "command": "python",
-      "args": ["C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/mcp/nova_server_v2.py"],
+      "args": ["<repo>/mcp/nova_server.py"],
       "env": {
-        "NOVA_SHARD_DIR": "C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/shards"
+        "NOVA_SHARD_DIR": "<repo>/shards"
       }
     }
   }
@@ -884,7 +885,7 @@ Likely includes: `openai`, `python-dotenv` (for `context_extractor.py` which use
 
 ### Import relationships
 ```
-nova_server_v2.py
+nova_server.py
     └── imports nova_embeddings_local.py (enrich_shard_async, _generate_compaction_summary)
     └── (previously imported shard_index.py, now has its own copy of the functions)
 
@@ -907,7 +908,7 @@ MCP Client (Claude Desktop / Claude Code / Cursor)
     │ stdio (MCP protocol)
     │
     ▼
-nova_server_v2.py
+nova_server.py
     │
     ├── reads/writes ──→ shards/*.json (flat file storage)
     ├── reads/writes ──→ shard_index.json (search index)
@@ -978,7 +979,7 @@ Forgemaster skills/agents (context files, loaded by MCP client)
 
 ### Strengths
 
-1. **Zero infrastructure footprint** — Runs with `python nova_server_v2.py`. No database, no Docker, no cloud services required for core operation.
+1. **Zero infrastructure footprint** — Runs with `python nova_server.py`. No database, no Docker, no cloud services required for core operation.
 
 2. **Offline-capable** — Local embeddings mean the memory system works with no internet connection after initial model download.
 
