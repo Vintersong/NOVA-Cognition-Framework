@@ -71,6 +71,7 @@ class NottReport:
     merge_suggestions: list[dict] = field(default_factory=list)
     quarantine_results: list[dict] = field(default_factory=list)
     decay_on_read_results: list[dict] = field(default_factory=list)
+    cluster_results: dict = field(default_factory=dict)
     graph_entities_synced: int = 0
     total_shards: int = 0
     duration_ms: float = 0.0
@@ -83,10 +84,12 @@ class NottReport:
         contradicted = sum(1 for r in self.quarantine_results if r["outcome"] == "contradicted")
         q_note = f", graduated {graduated} / contradicted {contradicted} quarantined" if self.quarantine_results else ""
         dor_note = f", decay-on-read penalised {len(self.decay_on_read_results)}" if self.decay_on_read_results else ""
+        cl = self.cluster_results
+        cluster_note = f", clustered {cl.get('shards_assigned', 0)} shards into {cl.get('clusters_found', 0)} clusters" if cl.get("recomputed") else ""
         return (
             f"Decayed {len(self.decayed_shards)} shards, "
             f"compacted {len(self.compacted_shards)}, "
-            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}."
+            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}{cluster_note}."
         )
 
     def to_dict(self) -> dict:
@@ -99,6 +102,7 @@ class NottReport:
             "merge_suggestions": self.merge_suggestions[:10],  # cap at 10
             "quarantine_results": self.quarantine_results,
             "decay_on_read_results": self.decay_on_read_results,
+            "cluster_results": self.cluster_results,
             "graph_entities_synced": self.graph_entities_synced,
             "total_shards": self.total_shards,
             "duration_ms": round(self.duration_ms, 1),
@@ -190,6 +194,7 @@ class Nott:
         if trigger == NottTrigger.SCHEDULED:
             report.quarantine_results = await self._quarantine_pass(index, dry_run)
             report.decay_on_read_results = await self._decay_on_read_pass(index, dry_run)
+            report.cluster_results = await self._cluster_pass(index, dry_run)
 
         # Rebuild index after mutations (skip on dry_run)
         if not dry_run and trigger in (NottTrigger.POST_SPRINT, NottTrigger.SCHEDULED):
@@ -430,6 +435,59 @@ class Nott:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor, self._decay_on_read_pass_sync, index, dry_run
+        )
+
+    # ── Cluster pass ─────────────────────────────────────────────────────────
+
+    def _cluster_pass_sync(self, index: dict, dry_run: bool) -> dict:
+        """
+        Run community detection on the knowledge graph and write cluster_id to
+        every shard's meta_tags. Only runs when topology has changed enough
+        (NOVA_CLUSTER_RECOMPUTE_THRESHOLD, default 5% edge-count delta).
+
+        Returns a summary dict: {recomputed, clusters_found, shards_assigned, algorithm}.
+        """
+        from clustering import detect_communities, should_recompute, stamp_cluster_run
+
+        graph = self._load_graph()
+        if not should_recompute(graph):
+            return {"recomputed": False, "clusters_found": 0, "shards_assigned": 0}
+
+        membership = detect_communities(graph)
+        if not membership:
+            return {"recomputed": True, "clusters_found": 0, "shards_assigned": 0, "algorithm": "none"}
+
+        clusters_found = len(set(membership.values()))
+        assigned = 0
+
+        for shard_id, cluster_id in membership.items():
+            if shard_id not in index:
+                continue
+            try:
+                data, filepath = self._load_shard(shard_id)
+            except FileNotFoundError:
+                continue
+
+            data.setdefault("meta_tags", {})["cluster_id"] = cluster_id
+            if not dry_run:
+                self._save_shard(filepath, data)
+            assigned += 1
+
+        if not dry_run:
+            edge_count = len(graph.get("relations", []))
+            stamp_cluster_run(graph, edge_count)
+            self._save_graph(graph)
+
+        return {
+            "recomputed": True,
+            "clusters_found": clusters_found,
+            "shards_assigned": assigned,
+        }
+
+    async def _cluster_pass(self, index: dict, dry_run: bool) -> dict:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._cluster_pass_sync, index, dry_run
         )
 
     # ── Graph sync ───────────────────────────────────────────────────────
