@@ -20,8 +20,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from config import NOVA_AGENT_INFERENCE_WEIGHT, QUARANTINE_PENALTY, SHARD_DIR
-from store import load_index
+from config import NOVA_AGENT_INFERENCE_WEIGHT, NOVA_PROJECT_CONTEXT, QUARANTINE_PENALTY, SHARD_DIR
+from store import load_index, passes_state_gate
 from access_log import log_shard_access
 
 _CACHE_TTL = float(os.environ.get("NOVA_RECALL_CACHE_TTL", "300"))
@@ -140,12 +140,13 @@ def hook_recall(
 
     index = load_index()
 
-    # Pre-filter: confidence floor + exclude archived/forgotten
+    # Pre-filter: confidence floor + exclude archived/forgotten + state gate
     eligible = {
         sid: entry for sid, entry in index.items()
         if entry.get("confidence", 1.0) >= min_confidence
         and "archived" not in entry.get("tags", [])
         and "forgotten" not in entry.get("tags", [])
+        and passes_state_gate(entry, NOVA_PROJECT_CONTEXT)
     }
 
     if not eligible:

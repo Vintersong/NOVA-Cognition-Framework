@@ -41,7 +41,8 @@ from collections import Counter
 from typing import Any
 
 import anthropic
-from config import parse_bool_env, NOVA_AGENT_INFERENCE_WEIGHT, QUARANTINE_PENALTY
+from config import parse_bool_env, NOVA_AGENT_INFERENCE_WEIGHT, NOVA_PROJECT_CONTEXT, QUARANTINE_PENALTY
+from store import passes_state_gate
 
 logger = logging.getLogger(__name__)
 _error_counts: Counter[str] = Counter()
@@ -254,6 +255,8 @@ class Huginn:
         for shard_id, entry in index.items():
             tags = entry.get("tags", [])
             if "archived" in tags or "forgotten" in tags:
+                continue
+            if not passes_state_gate(entry, NOVA_PROJECT_CONTEXT):
                 continue
 
             confidence = entry.get("confidence", 1.0)

@@ -50,6 +50,18 @@ class ShardCreateInput(BaseModel):
     source: Literal[
         "user_input", "external_doc", "agent_inference", "session_extracted", "corroborated_by"
     ] = Field(default="agent_inference", description="Provenance of this shard")
+    project_context: Optional[str] = Field(
+        default=None,
+        description="Project or context tag this shard applies to. Retrieval excludes it when NOVA_PROJECT_CONTEXT is set and doesn't match.",
+    )
+    validity_start: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp — shard is excluded from retrieval before this date.",
+    )
+    validity_end: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp — shard is excluded from retrieval after this date.",
+    )
 
 
 class ShardUpdateInput(BaseModel):

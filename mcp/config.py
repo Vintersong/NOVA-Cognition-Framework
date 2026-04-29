@@ -47,6 +47,10 @@ CONFIDENCE_LOW_THRESHOLD = float(os.environ.get("NOVA_CONFIDENCE_LOW", "0.4"))
 # Values < 1.0 deprioritise agent-generated content relative to external sources.
 NOVA_AGENT_INFERENCE_WEIGHT = float(os.environ.get("NOVA_AGENT_INFERENCE_WEIGHT", "0.7"))
 
+# ── State-aware retrieval gating ─────────────────────────────────────────────
+# When set, shards whose project_context doesn't include this value are excluded.
+NOVA_PROJECT_CONTEXT = os.environ.get("NOVA_PROJECT_CONTEXT", "")
+
 # ── Decay on read ─────────────────────────────────────────────────────────────
 # Shards retrieved more than THRESHOLD times in WINDOW_DAYS without a new
 # corroborated_by edge receive a confidence penalty of PENALTY per NÓTT pass.

@@ -394,6 +394,12 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
             "enrichment_status": "pending",
             "source": params.source,
             "quarantine_until": quarantine_until,
+            "project_context": params.project_context,
+            "validity_window": (
+                {"start": params.validity_start, "end": params.validity_end}
+                if params.validity_start or params.validity_end else None
+            ),
+            "superseded_by": None,
         }
     }
 
@@ -419,7 +425,7 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
         # Auto-emit supersedes when a credible source contradicts an existing shard.
         if params.relation_type == "contradicts" and new_source in _credible_sources:
             try:
-                existing, _ = load_shard(related_id)
+                existing, existing_filepath = load_shard(related_id)
                 existing_conf = existing.get("meta_tags", {}).get("confidence", 1.0)
                 new_conf = shard_data.get("meta_tags", {}).get("confidence", 1.0)
                 if new_conf >= existing_conf:
@@ -427,6 +433,9 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
                         shard_id, related_id,
                         reason=f"New {new_source} shard (conf={new_conf}) contradicts and supersedes existing (conf={existing_conf})",
                     )
+                    existing.setdefault("meta_tags", {})["superseded_by"] = shard_id
+                    save_shard(existing_filepath, existing)
+                    patch_index_entry(related_id, existing)
             except Exception:
                 pass
 
