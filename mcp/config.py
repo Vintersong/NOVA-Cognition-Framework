@@ -47,6 +47,14 @@ CONFIDENCE_LOW_THRESHOLD = float(os.environ.get("NOVA_CONFIDENCE_LOW", "0.4"))
 # Values < 1.0 deprioritise agent-generated content relative to external sources.
 NOVA_AGENT_INFERENCE_WEIGHT = float(os.environ.get("NOVA_AGENT_INFERENCE_WEIGHT", "0.7"))
 
+# ── Decay on read ─────────────────────────────────────────────────────────────
+# Shards retrieved more than THRESHOLD times in WINDOW_DAYS without a new
+# corroborated_by edge receive a confidence penalty of PENALTY per NÓTT pass.
+ACCESS_LOG_FILE          = os.environ.get("NOVA_ACCESS_LOG",              str(_REPO_ROOT / "shard_access.jsonl"))
+DECAY_ON_READ_THRESHOLD  = int(os.environ.get("NOVA_DECAY_ON_READ_THRESHOLD",   "5"))
+DECAY_ON_READ_WINDOW_DAYS = int(os.environ.get("NOVA_DECAY_ON_READ_WINDOW_DAYS", "7"))
+DECAY_ON_READ_PENALTY    = float(os.environ.get("NOVA_DECAY_ON_READ_PENALTY",   "0.05"))
+
 # ── Quarantine ────────────────────────────────────────────────────────────────
 # session_extracted shards are held in quarantine for this many hours.
 # During quarantine their retrieval score is multiplied by QUARANTINE_PENALTY.

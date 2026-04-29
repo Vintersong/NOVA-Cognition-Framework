@@ -109,6 +109,7 @@ from maintenance import (
     maybe_compact_shard, cosine_similarity, find_merge_candidates,
 )
 from usage import log_operation
+from access_log import log_shard_access
 from nova_embeddings_local import enrich_shard, prewarm_embedding_model
 from permissions import ToolPermissionContext, set_active as _set_active_permissions
 from models import UsageSummary
@@ -359,6 +360,9 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
 
     log_operation("nova_shard_interact", shard_ids, log_entry)
 
+    for sid in shard_ids:
+        log_shard_access(sid, "nova_shard_interact")
+
     return response_str
 
 
@@ -591,6 +595,10 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
             "query_sha256_16": hashlib.sha256(params.query.encode("utf-8")).hexdigest()[:16],
         },
     )
+
+    returned_ids = [r["shard_id"] for r in results[:params.top_n]]
+    for sid in returned_ids:
+        log_shard_access(sid, "nova_shard_search")
 
     return json.dumps({
         "query": params.query,

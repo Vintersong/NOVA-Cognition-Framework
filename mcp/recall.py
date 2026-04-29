@@ -22,6 +22,7 @@ from pathlib import Path
 
 from config import NOVA_AGENT_INFERENCE_WEIGHT, QUARANTINE_PENALTY, SHARD_DIR
 from store import load_index
+from access_log import log_shard_access
 
 _CACHE_TTL = float(os.environ.get("NOVA_RECALL_CACHE_TTL", "300"))
 
@@ -169,4 +170,8 @@ def hook_recall(
         })
 
     _cache_set(key, results)
+
+    for r in results:
+        log_shard_access(r["shard_id"], "hook_recall")
+
     return results

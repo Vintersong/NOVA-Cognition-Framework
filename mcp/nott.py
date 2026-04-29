@@ -70,6 +70,7 @@ class NottReport:
     compacted_shards: list[str] = field(default_factory=list)
     merge_suggestions: list[dict] = field(default_factory=list)
     quarantine_results: list[dict] = field(default_factory=list)
+    decay_on_read_results: list[dict] = field(default_factory=list)
     graph_entities_synced: int = 0
     total_shards: int = 0
     duration_ms: float = 0.0
@@ -81,10 +82,11 @@ class NottReport:
         graduated = sum(1 for r in self.quarantine_results if r["outcome"] == "graduated")
         contradicted = sum(1 for r in self.quarantine_results if r["outcome"] == "contradicted")
         q_note = f", graduated {graduated} / contradicted {contradicted} quarantined" if self.quarantine_results else ""
+        dor_note = f", decay-on-read penalised {len(self.decay_on_read_results)}" if self.decay_on_read_results else ""
         return (
             f"Decayed {len(self.decayed_shards)} shards, "
             f"compacted {len(self.compacted_shards)}, "
-            f"found {len(self.merge_suggestions)} merge candidates{q_note}."
+            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}."
         )
 
     def to_dict(self) -> dict:
@@ -96,6 +98,7 @@ class NottReport:
             "compacted_shards": self.compacted_shards,
             "merge_suggestions": self.merge_suggestions[:10],  # cap at 10
             "quarantine_results": self.quarantine_results,
+            "decay_on_read_results": self.decay_on_read_results,
             "graph_entities_synced": self.graph_entities_synced,
             "total_shards": self.total_shards,
             "duration_ms": round(self.duration_ms, 1),
@@ -186,6 +189,7 @@ class Nott:
 
         if trigger == NottTrigger.SCHEDULED:
             report.quarantine_results = await self._quarantine_pass(index, dry_run)
+            report.decay_on_read_results = await self._decay_on_read_pass(index, dry_run)
 
         # Rebuild index after mutations (skip on dry_run)
         if not dry_run and trigger in (NottTrigger.POST_SPRINT, NottTrigger.SCHEDULED):
@@ -360,6 +364,72 @@ class Nott:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor, self._quarantine_pass_sync, index, dry_run
+        )
+
+    # ── Decay-on-read pass ───────────────────────────────────────────────────
+
+    def _decay_on_read_pass_sync(self, index: dict, dry_run: bool) -> list[dict]:
+        """
+        Penalise shards retrieved too frequently without corroboration.
+
+        For each shard accessed more than DECAY_ON_READ_THRESHOLD times in
+        DECAY_ON_READ_WINDOW_DAYS: apply DECAY_ON_READ_PENALTY if no
+        corroborated_by edge was added to it within the same window.
+        Runs only on SCHEDULED trigger.
+        """
+        from config import DECAY_ON_READ_THRESHOLD, DECAY_ON_READ_WINDOW_DAYS, DECAY_ON_READ_PENALTY
+        from access_log import read_access_log
+        from datetime import timedelta
+
+        access_map = read_access_log(DECAY_ON_READ_WINDOW_DAYS)
+        if not access_map:
+            return []
+
+        graph = self._load_graph()
+        relations = graph.get("relations", [])
+        window_start = (datetime.now() - timedelta(days=DECAY_ON_READ_WINDOW_DAYS)).isoformat()
+
+        corroborated_recently: set[str] = {
+            r["source"]
+            for r in relations
+            if r.get("type") == "corroborated_by" and r.get("created_at", "") >= window_start
+        }
+
+        results = []
+        for shard_id, timestamps in access_map.items():
+            if len(timestamps) <= DECAY_ON_READ_THRESHOLD:
+                continue
+            if shard_id in corroborated_recently:
+                continue
+            if shard_id not in index:
+                continue
+
+            try:
+                data, filepath = self._load_shard(shard_id)
+            except FileNotFoundError:
+                continue
+
+            shard_meta = data.setdefault("meta_tags", {})
+            old_conf = shard_meta.get("confidence", 1.0)
+            new_conf = round(max(0.1, old_conf - DECAY_ON_READ_PENALTY), 4)
+            shard_meta["confidence"] = new_conf
+
+            if not dry_run:
+                self._save_shard(filepath, data)
+
+            results.append({
+                "shard_id": shard_id,
+                "access_count": len(timestamps),
+                "old_confidence": round(old_conf, 4),
+                "new_confidence": new_conf,
+            })
+
+        return results
+
+    async def _decay_on_read_pass(self, index: dict, dry_run: bool) -> list[dict]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._decay_on_read_pass_sync, index, dry_run
         )
 
     # ── Graph sync ───────────────────────────────────────────────────────
