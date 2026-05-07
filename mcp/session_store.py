@@ -14,6 +14,7 @@ SessionStore manages the lifecycle of sessions:
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,12 +22,26 @@ from typing import Optional
 
 from filelock import FileLock
 
+from atomic_io import atomic_write_json
+from config import SESSION_ID_PATTERN
 from models import UsageSummary
+
+_SESSION_ID_RE = re.compile(SESSION_ID_PATTERN)
 
 
 def _now_iso() -> str:
     """Return the current UTC time as an ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_session_id(session_id: str) -> str:
+    """Validate user-controlled session IDs before filesystem use."""
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError(
+            "Invalid session_id. Must be 1-128 chars starting with a letter or number, "
+            "followed by letters, numbers, '.', '_', or '-'."
+        )
+    return session_id
 
 
 # ═══════════════════════════════════════════════════════════
@@ -104,6 +119,25 @@ class NovaSession:
             last_active=_now_iso(),
         )
 
+    def add_message_with_usage(
+        self, role: str, content: str, input_tokens: int, output_tokens: int
+    ) -> NovaSession:
+        """Return a new session using exact API token counts instead of word estimates."""
+        entry: dict = {
+            "role": role,
+            "content": content,
+            "timestamp": _now_iso(),
+        }
+        new_messages = self.messages + (entry,)
+        new_usage = self.usage.add_turn_exact(input_tokens, output_tokens)
+        return NovaSession(
+            session_id=self.session_id,
+            messages=new_messages,
+            usage=new_usage,
+            created_at=self.created_at,
+            last_active=_now_iso(),
+        )
+
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
@@ -148,16 +182,19 @@ class SessionStore:
 
     def create(self, session_id: str) -> NovaSession:
         """Create and register a new in-memory session."""
+        session_id = _validate_session_id(session_id)
         session = NovaSession.new(session_id)
         self._sessions[session_id] = session
         return session
 
     def get(self, session_id: str) -> Optional[NovaSession]:
         """Return the in-memory session or ``None`` if not active."""
+        session_id = _validate_session_id(session_id)
         return self._sessions.get(session_id)
 
     def update(self, session: NovaSession) -> None:
         """Replace the in-memory session with the supplied instance."""
+        _validate_session_id(session.session_id)
         self._sessions[session.session_id] = session
 
     # ------------------------------------------------------------------
@@ -166,18 +203,19 @@ class SessionStore:
 
     def flush(self, session_id: str) -> None:
         """Write the session to disk and remove it from memory."""
+        session_id = _validate_session_id(session_id)
         session = self._sessions.get(session_id)
         if session is None:
             raise KeyError(f"Session '{session_id}' is not active in memory.")
         filepath = self._store_dir / f"{session_id}.json"
         lock_path = str(filepath) + ".lock"
         with FileLock(lock_path, timeout=5):
-            with open(filepath, "w", encoding="utf-8") as fh:
-                json.dump(session.to_dict(), fh, indent=2)
+            atomic_write_json(filepath, session.to_dict())
         del self._sessions[session_id]
 
     def load(self, session_id: str) -> NovaSession:
         """Read a session from disk into memory and return it."""
+        session_id = _validate_session_id(session_id)
         filepath = self._store_dir / f"{session_id}.json"
         if not filepath.exists():
             raise FileNotFoundError(f"No persisted session found for '{session_id}'.")

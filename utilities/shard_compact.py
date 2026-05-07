@@ -2,10 +2,10 @@
 shard_compact.py — Compact bloated NOVA shards (stdlib only, no external dependencies)
 
 Usage:
-    python tools/shard_compact.py [options]
+    python utilities/shard_compact.py [options]
 
 Options:
-    --shard-dir   Path to shard directory (default: nova_memory/ relative to repo root)
+    --shard-dir   Path to shard directory (default: shards/ relative to repo root)
     --threshold   Max conversation turns before a shard is considered bloated (default: 30)
     --dry-run     Report what would be compacted without writing anything
     --fail-on-bloat  Exit with code 1 if any shard exceeds threshold (CI use)
@@ -13,20 +13,21 @@ Options:
 
 Examples:
     # Check for bloat without writing (CI):
-    python tools/shard_compact.py --fail-on-bloat --dry-run
+    python utilities/shard_compact.py --fail-on-bloat --dry-run
 
     # Preview what would be compacted:
-    python tools/shard_compact.py --dry-run
+    python utilities/shard_compact.py --dry-run
 
     # Compact all bloated shards in a custom directory:
-    python tools/shard_compact.py --shard-dir ./shards --threshold 20
+    python utilities/shard_compact.py --shard-dir ./shards --threshold 20
 
     # Force-process all shards regardless of turn count:
-    python tools/shard_compact.py --all
+    python utilities/shard_compact.py --all
 """
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,7 +132,7 @@ def print_summary(rows: list[tuple[str, int, int, str]]) -> None:
 
 def main() -> int:
     repo_root = Path(__file__).parent.parent
-    default_shard_dir = repo_root / "nova_memory"
+    default_shard_dir = Path(os.environ.get("NOVA_SHARD_DIR", str(repo_root / "shards")))
 
     parser = argparse.ArgumentParser(
         description="Compact bloated NOVA shards. Stdlib only — no external dependencies.",
@@ -140,7 +141,7 @@ def main() -> int:
     parser.add_argument(
         "--shard-dir",
         default=str(default_shard_dir),
-        help="Path to shard directory (default: nova_memory/ at repo root)",
+        help="Path to shard directory (default: $NOVA_SHARD_DIR or shards/ at repo root)",
     )
     parser.add_argument(
         "--threshold",

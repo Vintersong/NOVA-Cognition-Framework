@@ -22,6 +22,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from filelock import FileLock
+
+from atomic_io import atomic_write_json
 from config import WIKI_DIR, WIKI_INDEX_FILE
 
 
@@ -212,8 +215,9 @@ def load_wiki_index() -> dict:
 
 
 def save_wiki_index(index: dict) -> None:
-    with open(_INDEX_FILE, "w", encoding="utf-8") as f:
-        json.dump(index, f)     # no indent — embeddings make this huge
+    # No indent — embeddings make this huge.
+    with FileLock(str(_INDEX_FILE) + ".lock", timeout=5):
+        atomic_write_json(_INDEX_FILE, index, indent=None)
 
 
 def upsert_wiki_embedding(slug: str, title: str, embedding: list[float]) -> None:
@@ -281,8 +285,8 @@ def load_wiki_schema() -> list[WikiPageSpec]:
 def save_wiki_schema(pages: list[WikiPageSpec]) -> None:
     from config import WIKI_SCHEMA_FILE
     schema_path = Path(WIKI_SCHEMA_FILE)
-    with open(schema_path, "w", encoding="utf-8") as f:
-        json.dump({"pages": [p.to_dict() for p in pages]}, f, indent=2)
+    with FileLock(str(schema_path) + ".lock", timeout=5):
+        atomic_write_json(schema_path, {"pages": [p.to_dict() for p in pages]})
 
 
 def schema_by_slug(slug: str) -> Optional[WikiPageSpec]:

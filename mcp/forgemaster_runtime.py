@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 forgemaster_runtime.py — Forgemaster execution harness.
 
@@ -18,6 +16,8 @@ Per-call events are appended to the path in FORGEMASTER_EVENT_LOG
 (environment variable) when set — one JSON object per line.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -30,6 +30,7 @@ from typing import Optional
 from config import HUGINN_MODEL, MUNINN_MODEL, GEMINI_MODEL
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
+from graph import add_corroborated_by
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,10 @@ _ROUTING_TABLE: dict[str, str] = {
     "research": HUGINN_MODEL,
     "documentation": HUGINN_MODEL,
     "fast-tasks": HUGINN_MODEL,
-    # stitch lane (no config constant — UI model not yet defined)
-    "ui": "stitch",
-    "frontend": "stitch",
-    "mockup": "stitch",
+    # claude design lane (Sonnet handles UI/frontend — stitch was a placeholder, now deprecated)
+    "ui": MUNINN_MODEL,
+    "frontend": MUNINN_MODEL,
+    "mockup": MUNINN_MODEL,
 }
 
 # Agent roles that require write-capable tools.  If those tools are denied,
@@ -232,7 +233,18 @@ def _write_implementation_file(rel_path: str, code: str) -> str:
     """
     target = (_REPO_ROOT / rel_path).resolve()
     repo = _REPO_ROOT.resolve()
-    if not str(target).startswith(str(repo)):
+    try:
+        within_repo = target.is_relative_to(repo)
+    except AttributeError:  # pragma: no cover - Python < 3.9 fallback
+        try:
+            within_repo = os.path.commonpath((str(repo), str(target))) == str(repo)
+        except ValueError:
+            within_repo = False
+    if not within_repo:
+        logger.error(
+            "ForgemasterRuntime._write_implementation_file: rejected path escape rel_path=%s",
+            rel_path,
+        )
         raise ValueError(f"Refusing to write outside repo root: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code, encoding="utf-8")
@@ -356,7 +368,7 @@ class ForgemasterRuntime:
             model_used = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
             in_tok = out_tok = latency_ms = 0
 
-        session = session.add_message("assistant", response_text)
+        session = session.add_message_with_usage("assistant", response_text, in_tok, out_tok)
         self._session_store.update(session)
 
         _log_event({
@@ -501,14 +513,45 @@ class ForgemasterRuntime:
         }
         self._session_store.flush(sprint_id)
 
+        # ── Outcome-based reinforcement ───────────────────────────────────
+        review_head = review_out.strip().splitlines()[0] if review_out.strip() else ""
+        sprint_passed = review_head.upper().startswith("PASS")
+        contributing_shards = shard_ids or []
+
+        if sprint_passed and contributing_shards:
+            for shard_id in contributing_shards:
+                try:
+                    add_corroborated_by(shard_id, sprint_id)
+                except Exception as exc:
+                    logger.warning(
+                        "ForgemasterRuntime.run_sprint: corroborated_by write failed "
+                        "shard=%s sprint=%s — %s", shard_id, sprint_id, exc
+                    )
+        elif not sprint_passed and contributing_shards:
+            _log_event({
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "sprint_id": sprint_id,
+                "role": "outcome",
+                "event": "sprint_failed_candidates_for_review",
+                "contributing_shards": contributing_shards,
+                "review_head": review_head,
+            })
+            logger.warning(
+                "ForgemasterRuntime.run_sprint: sprint %s FAILED — "
+                "contributing shards flagged for review: %s",
+                sprint_id, contributing_shards,
+            )
+
         return {
             "sprint_id": sprint_id,
             "turns": 4,
             "session_id": sprint_id,
             "token_totals": token_totals,
             "implementation_file": impl_file_path,
-            "review_head": review_out.strip().splitlines()[0] if review_out.strip() else "",
+            "review_head": review_head,
             "status": "complete",
+            "outcome": "pass" if sprint_passed else "fail",
+            "corroborated_shards": contributing_shards if sprint_passed else [],
         }
 
     def get_permitted_lanes(

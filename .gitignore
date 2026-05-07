@@ -10,6 +10,7 @@ summary_index.json
 summary_index.md
 nova_usage.jsonl
 nova_autoresearch.jsonl
+shard_access.jsonl
 
 # Shard data — personal, never commit
 shards/
@@ -34,4 +35,4 @@ output/
 .mcp.json
 
 # Claude Code local config — user-specific permissions and allowlists
-.claude/settings.local.json
+**/.claude/settings.local.json

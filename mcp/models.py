@@ -29,3 +29,10 @@ class UsageSummary:
             input_tokens=self.input_tokens + len(prompt.split()),
             output_tokens=self.output_tokens + len(output.split()),
         )
+
+    def add_turn_exact(self, input_tokens: int, output_tokens: int) -> UsageSummary:
+        """Return a new ``UsageSummary`` using exact token counts from the API response."""
+        return UsageSummary(
+            input_tokens=self.input_tokens + input_tokens,
+            output_tokens=self.output_tokens + output_tokens,
+        )

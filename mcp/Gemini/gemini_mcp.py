@@ -5,8 +5,11 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 import json
+import sys
 
-MODEL = "gemini-2.5-flash"
+# Allow importing config from mcp/ when this module is loaded by nova_server.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from config import GEMINI_MODEL as MODEL
 _client = None
 _ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
 

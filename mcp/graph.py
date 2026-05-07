@@ -12,6 +12,7 @@ from datetime import datetime
 
 from filelock import FileLock
 
+from atomic_io import atomic_write_json
 from config import GRAPH_FILE
 
 
@@ -31,8 +32,7 @@ def load_graph() -> dict:
 
 def save_graph(graph: dict):
     with FileLock(GRAPH_FILE + ".lock", timeout=5):
-        with open(GRAPH_FILE, "w", encoding="utf-8") as f:
-            json.dump(graph, f, indent=2)
+        atomic_write_json(GRAPH_FILE, graph)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -53,7 +53,7 @@ def add_shard_to_graph(shard_id: str, shard_data: dict):
     save_graph(graph)
 
 
-def add_relation(source_id: str, target_id: str, relation_type: str, notes: str = ""):
+def add_relation(source_id: str, target_id: str, relation_type: str, notes: str = "", reason: str = ""):
     """Add a directed relation between two shards. Deduplicates exact matches."""
     graph = load_graph()
     relation = {
@@ -63,6 +63,8 @@ def add_relation(source_id: str, target_id: str, relation_type: str, notes: str 
         "notes": notes,
         "created_at": datetime.now().isoformat(),
     }
+    if reason:
+        relation["reason"] = reason
     existing = graph.get("relations", [])
     for r in existing:
         if (r["source"] == source_id
@@ -72,6 +74,16 @@ def add_relation(source_id: str, target_id: str, relation_type: str, notes: str 
     existing.append(relation)
     graph["relations"] = existing
     save_graph(graph)
+
+
+def add_supersedes(source_id: str, target_id: str, reason: str) -> None:
+    """Write a supersedes edge from source to target with a mandatory reason."""
+    add_relation(source_id, target_id, "supersedes", reason=reason)
+
+
+def add_corroborated_by(source_id: str, corroborating_id: str) -> None:
+    """Write a corroborated_by edge: source is confirmed by corroborating_id."""
+    add_relation(source_id, corroborating_id, "corroborated_by")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -101,7 +113,7 @@ def query_graph(pattern: dict) -> list[dict]:
 
 def query_graph_transitive(
     root_id: str,
-    relation_type: str = None,
+    relation_type: str | None = None,
     direction: str = "outbound",
     max_depth: int = 3,
 ) -> list[dict]:

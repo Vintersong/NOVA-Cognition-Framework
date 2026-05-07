@@ -33,7 +33,7 @@ Architecture:
   Knowledge Graph (inter-shard navigation)
     --> relationships, entities, pattern queries
 
-Tools (18 total):
+Core tools in this module (19 total):
   nova_shard_interact   — load shards into context
   nova_shard_create     — create new shard (+ post-write hook)
   nova_shard_update     — append to shard (+ post-write hook + auto-compact)
@@ -42,6 +42,7 @@ Tools (18 total):
     nova_shard_summary    — compact browse index with short synopsis
     nova_shard_list       — full raw dump fallback for legacy/admin use
   nova_shard_get        — read full raw shard content, no side effects
+  nova_shard_get_full   — cold-path full-body fetch (summary + conversation body)
   nova_shard_merge      — merge shards into meta-shard
   nova_shard_archive    — soft-delete (sets intent=archived)
   nova_shard_forget     — hard soft-delete with provenance log
@@ -52,9 +53,17 @@ Tools (18 total):
   nova_session_load     — restore stored session to memory
   nova_session_list     — list all stored session IDs
   nova_forgemaster_sprint — full 4-turn sprint pipeline
+
+Additional registered tools from other modules:
+  - Wiki tools (6): nova_wiki_schema, nova_wiki_ingest, nova_wiki_query, nova_wiki_get, nova_wiki_list, nova_wiki_lint
+  - Nidhogg tools (3): nidhogg_ingest, nidhogg_scan, nidhogg_status
+  - Evolution tool (1): nova_evolve
+  - Gemini tools (2): gemini_execute_ticket, gemini_load_file
+Total exported MCP tools: 31
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import sys as _sys
@@ -73,11 +82,12 @@ from config import (
     COMPACT_THRESHOLD, COMPACT_KEEP_RECENT,
     DECAY_RATE, DECAY_INTERVAL_DAYS, MERGE_SIMILARITY_THRESHOLD,
     HUGINN_CONFIDENCE_THRESHOLD, NOTT_COUNT_THRESHOLD,
+    QUARANTINE_HOURS,
 )
 from schemas import (
     ShardInteractInput, ShardCreateInput, ShardUpdateInput, ShardSearchInput,
     ShardListInput, ShardIndexInput, ShardMergeInput, ShardArchiveInput, ShardForgetInput, ShardGetInput,
-    ShardConsolidateInput, GraphQueryInput, GraphRelationInput,
+    ShardConsolidateInput, ShardGetFullInput, GraphQueryInput, GraphRelationInput,
     SessionFlushInput, SessionLoadInput, SessionListInput,
     ForgemasterSprintInput,
 )
@@ -91,7 +101,7 @@ from store import (
 )
 from graph import (
     load_graph, save_graph,
-    add_shard_to_graph, add_relation,
+    add_shard_to_graph, add_relation, add_supersedes, add_corroborated_by,
     query_graph, query_graph_transitive,
 )
 from maintenance import (
@@ -99,6 +109,7 @@ from maintenance import (
     maybe_compact_shard, cosine_similarity, find_merge_candidates,
 )
 from usage import log_operation
+from access_log import log_shard_access
 from nova_embeddings_local import enrich_shard, prewarm_embedding_model
 from permissions import ToolPermissionContext, set_active as _set_active_permissions
 from models import UsageSummary
@@ -117,6 +128,28 @@ from wiki_tools import register_wiki_tools
 # Bootstrap
 os.makedirs(SHARD_DIR, exist_ok=True)
 prewarm_embedding_model()  # start loading embedding weights in background immediately
+
+
+# ── Per-shard mutation lock ─────────────────────────────────────────────────
+# Serialises the foreground save and the background enrich+save for the same
+# shard so a rapid second nova_shard_update can't have its turn overwritten by
+# the first call's still-running background enrichment.
+#
+# WeakValueDictionary lets unused locks be GC'd once no task holds or waits on
+# them — both the foreground block and the background task closure keep a
+# strong ref while they're in flight, so the same lock object is reused for
+# overlapping calls and dropped afterwards.
+import weakref
+
+_shard_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+def _get_shard_lock(shard_id: str) -> asyncio.Lock:
+    lock = _shard_locks.get(shard_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _shard_locks[shard_id] = lock
+    return lock
 
 # === Permission context ===
 # Populated from env vars at startup.  Default: all tools permitted.
@@ -164,6 +197,7 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_shard_summary",
     "nova_shard_list",
     "nova_shard_get",
+    "nova_shard_get_full",
     "nova_shard_merge",
     "nova_shard_archive",
     "nova_shard_forget",
@@ -224,6 +258,13 @@ _muninn = Muninn(
     usage_log_file=USAGE_LOG_FILE,
 )
 
+def _pre_compact_stub(_data: dict, _shard_id: str) -> None:
+    # TODO: replace with lightweight Haiku fact-extraction so key statements
+    # survive maybe_compact_shard's lossy summarization. Wired here so the
+    # Nott pre_compact hook fires; today it's a deliberate no-op.
+    return None
+
+
 _nott = Nott(
     shard_dir=SHARD_DIR,
     graph_file=GRAPH_FILE,
@@ -237,6 +278,7 @@ _nott = Nott(
     merge_fn=find_merge_candidates,
     load_graph_fn=load_graph,
     save_graph_fn=save_graph,
+    pre_compact_fn=_pre_compact_stub,
 )
 
 # ── Hook registry — event-driven dispatch (replaces bespoke create_task calls) ──
@@ -295,12 +337,11 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
         try:
             data, filepath = load_shard(sid)
             update_shard_usage(data)
-            # Boost confidence on access
+            # Confidence rises only via corroborated_by edges, not on retrieval.
             meta = data.setdefault("meta_tags", {})
-            meta["confidence"] = min(1.0, meta.get("confidence", 1.0) + 0.05)
             save_shard(filepath, data)
 
-            fragments = extract_fragments(data, sid)[-MAX_FRAGMENTS:]
+            fragments = extract_fragments(data, sid, max_turns=MAX_FRAGMENTS)
 
             loaded.append({
                 "shard_id": sid,
@@ -349,6 +390,9 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
 
     log_operation("nova_shard_interact", shard_ids, log_entry)
 
+    for sid in shard_ids:
+        log_shard_access(sid, "nova_shard_interact")
+
     return response_str
 
 
@@ -362,6 +406,11 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     filepath = os.path.join(SHARD_DIR, filename)
     shard_id = filename.replace(".json", "")
 
+    from datetime import timedelta
+    quarantine_until = None
+    if params.source == "session_extracted":
+        quarantine_until = (datetime.now() + timedelta(hours=QUARANTINE_HOURS)).isoformat()
+
     shard_data = {
         "shard_id": shard_id,
         "guiding_question": params.guiding_question,
@@ -372,7 +421,15 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
             "usage_count": 1,
             "last_used": datetime.now().isoformat(),
             "confidence": 1.0,
-            "enrichment_status": "pending"
+            "enrichment_status": "pending",
+            "source": params.source,
+            "quarantine_until": quarantine_until,
+            "project_context": params.project_context,
+            "validity_window": (
+                {"start": params.validity_start, "end": params.validity_end}
+                if params.validity_start or params.validity_end else None
+            ),
+            "superseded_by": None,
         }
     }
 
@@ -384,23 +441,48 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
         })
 
     # Persist immediately so the shard exists on disk even if enrichment stalls.
-    save_shard(filepath, shard_data)
-    patch_index_entry(shard_id, shard_data)
+    # Holding the per-shard lock here means a second concurrent call on the same
+    # shard_id (rare for create, but possible if the caller picks a colliding id)
+    # waits for both the foreground save and the background enrich to finish
+    # before mutating.
+    shard_lock = _get_shard_lock(shard_id)
+    async with shard_lock:
+        save_shard(filepath, shard_data)
+        patch_index_entry(shard_id, shard_data)
 
     # Register in knowledge graph
     add_shard_to_graph(shard_id, shard_data)
 
     # Wire up relations to related shards
+    new_source = shard_data.get("meta_tags", {}).get("source", "agent_inference")
+    _credible_sources = {"user_input", "external_doc"}
     for related_id in ([s.strip() for s in params.related_shards.split(",") if s.strip()] if params.related_shards else []):
         add_relation(shard_id, related_id, params.relation_type)
+        # Auto-emit supersedes when a credible source contradicts an existing shard.
+        if params.relation_type == "contradicts" and new_source in _credible_sources:
+            try:
+                existing, existing_filepath = load_shard(related_id)
+                existing_conf = existing.get("meta_tags", {}).get("confidence", 1.0)
+                new_conf = shard_data.get("meta_tags", {}).get("confidence", 1.0)
+                if new_conf >= existing_conf:
+                    add_supersedes(
+                        shard_id, related_id,
+                        reason=f"New {new_source} shard (conf={new_conf}) contradicts and supersedes existing (conf={existing_conf})",
+                    )
+                    existing.setdefault("meta_tags", {})["superseded_by"] = shard_id
+                    save_shard(existing_filepath, existing)
+                    patch_index_entry(related_id, existing)
+            except Exception:
+                pass
 
     # Enrichment runs in background — MiniLM embed + save, never blocks reply.
     loop = asyncio.get_running_loop()
 
     async def _background_enrich_and_persist() -> None:
-        await loop.run_in_executor(None, enrich_shard, shard_id, shard_data)
-        await loop.run_in_executor(None, save_shard, filepath, shard_data)
-        await loop.run_in_executor(None, patch_index_entry, shard_id, shard_data)
+        async with shard_lock:
+            await loop.run_in_executor(None, enrich_shard, shard_id, shard_data)
+            await loop.run_in_executor(None, save_shard, filepath, shard_data)
+            await loop.run_in_executor(None, patch_index_entry, shard_id, shard_data)
 
     asyncio.create_task(_background_enrich_and_persist())
 
@@ -428,26 +510,34 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     """Append to a shard. Triggers post-write enrichment hook and auto-compaction if threshold exceeded."""
     if _permission_context.blocks("nova_shard_update"):
         return _permission_error("nova_shard_update")
-    try:
-        data, filepath = load_shard(params.shard_id)
-    except FileNotFoundError:
-        return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
 
-    data.setdefault("conversation_history", []).append({
-        "timestamp": datetime.now().isoformat(),
-        "user": params.user_message,
-        "ai": params.ai_response
-    })
-    update_shard_usage(data)
+    # Acquire the per-shard lock BEFORE load_shard so a rapid second call to
+    # the same shard sees the prior call's background enrich+save before it
+    # reads from disk. Without this, call 2 reads stale state and call 1's
+    # background save later overwrites call 2's appended turn.
+    shard_lock = _get_shard_lock(params.shard_id)
+    async with shard_lock:
+        try:
+            data, filepath = load_shard(params.shard_id)
+        except FileNotFoundError:
+            return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
+
+        data.setdefault("conversation_history", []).append({
+            "timestamp": datetime.now().isoformat(),
+            "user": params.user_message,
+            "ai": params.ai_response
+        })
+        update_shard_usage(data)
+
+        # Persist the new turn immediately so no data is lost if enrichment stalls.
+        data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
+        save_shard(filepath, data)
+        patch_index_entry(params.shard_id, data)
 
     # NÓTT owns compaction — fire-and-forget post-sprint cycle
-    # (replaces inline maybe_compact_shard call)
+    # (replaces inline maybe_compact_shard call). Emitted outside the lock so
+    # NÓTT's pass doesn't block on the same lock the next caller is waiting on.
     _hooks.emit(NovaHookEvent.POST_SPRINT)
-
-    # Persist the new turn immediately so no data is lost if enrichment stalls.
-    data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
-    save_shard(filepath, data)
-    patch_index_entry(params.shard_id, data)
 
     # Update graph entity confidence
     graph = load_graph()
@@ -461,9 +551,10 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     loop = asyncio.get_running_loop()
 
     async def _background_enrich_and_persist() -> None:
-        await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
-        await loop.run_in_executor(None, save_shard, filepath, data)
-        await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
+        async with shard_lock:
+            await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
+            await loop.run_in_executor(None, save_shard, filepath, data)
+            await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
     asyncio.create_task(_background_enrich_and_persist())
 
@@ -551,7 +642,18 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
     except asyncio.TimeoutError:
         pass
 
-    log_operation("nova_shard_search", [], {"query": params.query})
+    log_operation(
+        "nova_shard_search",
+        [],
+        {
+            "query_length": len(params.query),
+            "query_sha256_16": hashlib.sha256(params.query.encode("utf-8")).hexdigest()[:16],
+        },
+    )
+
+    returned_ids = [r["shard_id"] for r in results[:params.top_n]]
+    for sid in returned_ids:
+        log_shard_access(sid, "nova_shard_search")
 
     return json.dumps({
         "query": params.query,
@@ -685,6 +787,30 @@ async def nova_shard_get(params: ShardGetInput) -> str:
         }, indent=2)
 
     return json.dumps(data, indent=2)
+
+
+@mcp.tool(name="nova_shard_get_full")
+async def nova_shard_get_full(params: ShardGetFullInput) -> str:
+    """Cold-path full-body fetch. Returns conversation_history/turns payload without side effects. Use nova_shard_get for raw metadata."""
+    if _permission_context.blocks("nova_shard_get_full"):
+        return _permission_error("nova_shard_get_full")
+    try:
+        data, _ = load_shard(params.shard_id)
+    except FileNotFoundError:
+        return json.dumps({
+            "status": "error",
+            "shard_id": params.shard_id,
+            "message": f"Shard '{params.shard_id}' not found."
+        }, indent=2)
+
+    body = data.get("conversation_history") or data.get("turns") or []
+    return json.dumps({
+        "shard_id": params.shard_id,
+        "guiding_question": data.get("guiding_question", ""),
+        "source": data.get("meta_tags", {}).get("source", "agent_inference"),
+        "summary": data.get("meta_tags", {}).get("summary", ""),
+        "body": body,
+    }, indent=2)
 
 
 @mcp.tool(name="nova_shard_merge")
@@ -861,7 +987,7 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
     All parameters optional — omit to return all relations.
     Set transitive=True to traverse the graph by BFS up to max_depth hops.
 
-    Relation types: influences, depends_on, contradicts, extends, references, merged_from
+    Relation types: influences, depends_on, contradicts, extends, references, merged_from, supersedes, corroborated_by
     """
     if _permission_context.blocks("nova_graph_query"):
         return _permission_error("nova_graph_query")
@@ -924,17 +1050,19 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
     """
     Manually add a directed relation between two shards in the knowledge graph.
     Use this when you notice a connection that wasn't auto-detected.
-    
+
     Relation types:
-      influences   — shard A shapes the thinking in shard B
-      depends_on   — shard A requires shard B to make sense
-      contradicts  — shards are in tension, revisit both
-      extends      — shard A builds on shard B
-      references   — shard A cites or mentions shard B
+      influences       — shard A shapes the thinking in shard B
+      depends_on       — shard A requires shard B to make sense
+      contradicts      — shards are in tension, revisit both
+      extends          — shard A builds on shard B
+      references       — shard A cites or mentions shard B
+      supersedes       — shard A replaces shard B (reason field required)
+      corroborated_by  — shard A is confirmed by shard B
     """
     if _permission_context.blocks("nova_graph_relate"):
         return _permission_error("nova_graph_relate")
-    add_relation(params.source_id, params.target_id, params.relation_type, params.notes)
+    add_relation(params.source_id, params.target_id, params.relation_type, params.notes, params.reason)
 
     return json.dumps({
         "status": "relation_added",

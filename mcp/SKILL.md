@@ -29,7 +29,9 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (18 total)
+## Tools (30 total)
+
+### Core shard + graph + session (18)
 
 | Tool | Purpose |
 |---|---|
@@ -51,6 +53,22 @@ Principle Library (reasoning methodology)
 | `nova_session_load` | Restore a stored session to memory. |
 | `nova_session_list` | List all stored session IDs. |
 | `nova_forgemaster_sprint` | Full 4-turn sprint pipeline. |
+
+### Wiki (6)
+
+`nova_wiki_schema`, `nova_wiki_ingest`, `nova_wiki_query`, `nova_wiki_get`, `nova_wiki_list`, `nova_wiki_lint`
+
+### Nidhogg (3)
+
+`nidhogg_ingest`, `nidhogg_scan`, `nidhogg_status`
+
+### Evolution (1)
+
+`nova_evolve`
+
+### Gemini (2)
+
+`gemini_execute_ticket`, `gemini_load_file`
 
 ---
 
