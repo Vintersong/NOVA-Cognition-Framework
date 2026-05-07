@@ -47,6 +47,7 @@ from config import (
     SHARD_DIR,
     MERGE_SIMILARITY_THRESHOLD,
 )
+from graph import add_corroborated_by
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
@@ -417,6 +418,12 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
             merge_candidate=match["merge_candidate"],
             analysis=analysis,
         )
+        # External doc at merge-candidate similarity confirms the shard's belief.
+        if match["merge_candidate"]:
+            try:
+                add_corroborated_by(shard_id, path)
+            except Exception:
+                pass
         annotated.append({
             "shard_id": shard_id,
             "similarity_score": match["similarity_score"],

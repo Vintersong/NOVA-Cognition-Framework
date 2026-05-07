@@ -5,7 +5,7 @@ Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 """
 
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from config import SESSION_ID_PATTERN
 
@@ -47,6 +47,21 @@ class ShardCreateInput(BaseModel):
     initial_message: str = Field(default="")
     related_shards: str = Field(default="")
     relation_type: str = Field(default="references")
+    source: Literal[
+        "user_input", "external_doc", "agent_inference", "session_extracted", "corroborated_by"
+    ] = Field(default="agent_inference", description="Provenance of this shard")
+    project_context: Optional[str] = Field(
+        default=None,
+        description="Project or context tag this shard applies to. Retrieval excludes it when NOVA_PROJECT_CONTEXT is set and doesn't match.",
+    )
+    validity_start: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp — shard is excluded from retrieval before this date.",
+    )
+    validity_end: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp — shard is excluded from retrieval after this date.",
+    )
 
 
 class ShardUpdateInput(BaseModel):
@@ -92,6 +107,11 @@ class ShardConsolidateInput(BaseModel):
     dry_run: bool = Field(default=False)
 
 
+class ShardGetFullInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_id: str = Field(..., min_length=1)
+
+
 # ── Graph tools ───────────────────────────────────────────────────────────────
 
 class GraphQueryInput(BaseModel):
@@ -107,8 +127,18 @@ class GraphRelationInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
     source_id: str = Field(..., min_length=1)
     target_id: str = Field(..., min_length=1)
-    relation_type: str = Field(..., min_length=1)
+    relation_type: Literal[
+        "influences", "depends_on", "contradicts", "extends", "references",
+        "merged_from", "supersedes", "corroborated_by",
+    ] = Field(..., description="Edge type")
     notes: str = Field(default="")
+    reason: str = Field(default="", description="Required for supersedes edges — explain why source supersedes target")
+
+    @model_validator(mode="after")
+    def _require_reason_for_supersedes(self) -> "GraphRelationInput":
+        if self.relation_type == "supersedes" and not self.reason:
+            raise ValueError("'reason' is required when relation_type is 'supersedes'")
+        return self
 
 
 # ── Session tools ─────────────────────────────────────────────────────────────

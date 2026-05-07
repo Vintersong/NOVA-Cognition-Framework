@@ -5,7 +5,7 @@ Usage:
     python utilities/shard_compact.py [options]
 
 Options:
-    --shard-dir   Path to shard directory (default: nova_memory/ relative to repo root)
+    --shard-dir   Path to shard directory (default: shards/ relative to repo root)
     --threshold   Max conversation turns before a shard is considered bloated (default: 30)
     --dry-run     Report what would be compacted without writing anything
     --fail-on-bloat  Exit with code 1 if any shard exceeds threshold (CI use)
@@ -27,6 +27,7 @@ Examples:
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,7 +132,7 @@ def print_summary(rows: list[tuple[str, int, int, str]]) -> None:
 
 def main() -> int:
     repo_root = Path(__file__).parent.parent
-    default_shard_dir = repo_root / "nova_memory"
+    default_shard_dir = Path(os.environ.get("NOVA_SHARD_DIR", str(repo_root / "shards")))
 
     parser = argparse.ArgumentParser(
         description="Compact bloated NOVA shards. Stdlib only — no external dependencies.",
@@ -140,7 +141,7 @@ def main() -> int:
     parser.add_argument(
         "--shard-dir",
         default=str(default_shard_dir),
-        help="Path to shard directory (default: nova_memory/ at repo root)",
+        help="Path to shard directory (default: $NOVA_SHARD_DIR or shards/ at repo root)",
     )
     parser.add_argument(
         "--threshold",

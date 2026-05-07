@@ -24,6 +24,7 @@ Internal orchestration and execution skills. Always loaded first.
 | Code Review | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-code-review.md` | Two-stage spec + quality review |
 | QA Review | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-qa-review.md` | Stage 3 structural QA: thresholds, anti-patterns, JIRA comments |
 | Session Handoff | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-nova-session-handoff.md` | Persist state across sessions |
+| HeavySkill | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-heavyskill.md` | Hard verifiable reasoning: K=3 parallel Haiku thinkers + Sonnet deliberation |
 
 ---
 

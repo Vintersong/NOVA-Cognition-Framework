@@ -1,4 +1,27 @@
 {
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 \"C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/mcp/nova_hook_recall.py\" --top-k 3 --min-confidence 0.85"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 \"C:/Users/Moldo/Master Project NOVA/repos/forgemaster-harvest/NOVA-Cognition-Framework/mcp/nova_hook_extract.py\""
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "mcp__nova__nova_shard_interact",

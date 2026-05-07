@@ -17,6 +17,10 @@ import json
 import sys
 from collections import defaultdict, Counter
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import nova_server
 from nova_server import (
     nova_shard_index,

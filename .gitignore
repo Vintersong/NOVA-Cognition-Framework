@@ -10,6 +10,7 @@ summary_index.json
 summary_index.md
 nova_usage.jsonl
 nova_autoresearch.jsonl
+shard_access.jsonl
 
 # Shard data — personal, never commit
 shards/

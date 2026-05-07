@@ -33,7 +33,7 @@ Architecture:
   Knowledge Graph (inter-shard navigation)
     --> relationships, entities, pattern queries
 
-Core tools in this module (18 total):
+Core tools in this module (19 total):
   nova_shard_interact   — load shards into context
   nova_shard_create     — create new shard (+ post-write hook)
   nova_shard_update     — append to shard (+ post-write hook + auto-compact)
@@ -42,6 +42,7 @@ Core tools in this module (18 total):
     nova_shard_summary    — compact browse index with short synopsis
     nova_shard_list       — full raw dump fallback for legacy/admin use
   nova_shard_get        — read full raw shard content, no side effects
+  nova_shard_get_full   — cold-path full-body fetch (summary + conversation body)
   nova_shard_merge      — merge shards into meta-shard
   nova_shard_archive    — soft-delete (sets intent=archived)
   nova_shard_forget     — hard soft-delete with provenance log
@@ -58,7 +59,7 @@ Additional registered tools from other modules:
   - Nidhogg tools (3): nidhogg_ingest, nidhogg_scan, nidhogg_status
   - Evolution tool (1): nova_evolve
   - Gemini tools (2): gemini_execute_ticket, gemini_load_file
-Total exported MCP tools: 30
+Total exported MCP tools: 31
 """
 
 import asyncio
@@ -81,11 +82,12 @@ from config import (
     COMPACT_THRESHOLD, COMPACT_KEEP_RECENT,
     DECAY_RATE, DECAY_INTERVAL_DAYS, MERGE_SIMILARITY_THRESHOLD,
     HUGINN_CONFIDENCE_THRESHOLD, NOTT_COUNT_THRESHOLD,
+    QUARANTINE_HOURS,
 )
 from schemas import (
     ShardInteractInput, ShardCreateInput, ShardUpdateInput, ShardSearchInput,
     ShardListInput, ShardIndexInput, ShardMergeInput, ShardArchiveInput, ShardForgetInput, ShardGetInput,
-    ShardConsolidateInput, GraphQueryInput, GraphRelationInput,
+    ShardConsolidateInput, ShardGetFullInput, GraphQueryInput, GraphRelationInput,
     SessionFlushInput, SessionLoadInput, SessionListInput,
     ForgemasterSprintInput,
 )
@@ -99,7 +101,7 @@ from store import (
 )
 from graph import (
     load_graph, save_graph,
-    add_shard_to_graph, add_relation,
+    add_shard_to_graph, add_relation, add_supersedes, add_corroborated_by,
     query_graph, query_graph_transitive,
 )
 from maintenance import (
@@ -107,6 +109,7 @@ from maintenance import (
     maybe_compact_shard, cosine_similarity, find_merge_candidates,
 )
 from usage import log_operation
+from access_log import log_shard_access
 from nova_embeddings_local import enrich_shard, prewarm_embedding_model
 from permissions import ToolPermissionContext, set_active as _set_active_permissions
 from models import UsageSummary
@@ -172,6 +175,7 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_shard_summary",
     "nova_shard_list",
     "nova_shard_get",
+    "nova_shard_get_full",
     "nova_shard_merge",
     "nova_shard_archive",
     "nova_shard_forget",
@@ -303,9 +307,8 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
         try:
             data, filepath = load_shard(sid)
             update_shard_usage(data)
-            # Boost confidence on access
+            # Confidence rises only via corroborated_by edges, not on retrieval.
             meta = data.setdefault("meta_tags", {})
-            meta["confidence"] = min(1.0, meta.get("confidence", 1.0) + 0.05)
             save_shard(filepath, data)
 
             fragments = extract_fragments(data, sid)[-MAX_FRAGMENTS:]
@@ -357,6 +360,9 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
 
     log_operation("nova_shard_interact", shard_ids, log_entry)
 
+    for sid in shard_ids:
+        log_shard_access(sid, "nova_shard_interact")
+
     return response_str
 
 
@@ -370,6 +376,11 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     filepath = os.path.join(SHARD_DIR, filename)
     shard_id = filename.replace(".json", "")
 
+    from datetime import timedelta
+    quarantine_until = None
+    if params.source == "session_extracted":
+        quarantine_until = (datetime.now() + timedelta(hours=QUARANTINE_HOURS)).isoformat()
+
     shard_data = {
         "shard_id": shard_id,
         "guiding_question": params.guiding_question,
@@ -380,7 +391,15 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
             "usage_count": 1,
             "last_used": datetime.now().isoformat(),
             "confidence": 1.0,
-            "enrichment_status": "pending"
+            "enrichment_status": "pending",
+            "source": params.source,
+            "quarantine_until": quarantine_until,
+            "project_context": params.project_context,
+            "validity_window": (
+                {"start": params.validity_start, "end": params.validity_end}
+                if params.validity_start or params.validity_end else None
+            ),
+            "superseded_by": None,
         }
     }
 
@@ -399,8 +418,26 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     add_shard_to_graph(shard_id, shard_data)
 
     # Wire up relations to related shards
+    new_source = shard_data.get("meta_tags", {}).get("source", "agent_inference")
+    _credible_sources = {"user_input", "external_doc"}
     for related_id in ([s.strip() for s in params.related_shards.split(",") if s.strip()] if params.related_shards else []):
         add_relation(shard_id, related_id, params.relation_type)
+        # Auto-emit supersedes when a credible source contradicts an existing shard.
+        if params.relation_type == "contradicts" and new_source in _credible_sources:
+            try:
+                existing, existing_filepath = load_shard(related_id)
+                existing_conf = existing.get("meta_tags", {}).get("confidence", 1.0)
+                new_conf = shard_data.get("meta_tags", {}).get("confidence", 1.0)
+                if new_conf >= existing_conf:
+                    add_supersedes(
+                        shard_id, related_id,
+                        reason=f"New {new_source} shard (conf={new_conf}) contradicts and supersedes existing (conf={existing_conf})",
+                    )
+                    existing.setdefault("meta_tags", {})["superseded_by"] = shard_id
+                    save_shard(existing_filepath, existing)
+                    patch_index_entry(related_id, existing)
+            except Exception:
+                pass
 
     # Enrichment runs in background — MiniLM embed + save, never blocks reply.
     loop = asyncio.get_running_loop()
@@ -568,6 +605,10 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
         },
     )
 
+    returned_ids = [r["shard_id"] for r in results[:params.top_n]]
+    for sid in returned_ids:
+        log_shard_access(sid, "nova_shard_search")
+
     return json.dumps({
         "query": params.query,
         "results": results[:params.top_n],
@@ -700,6 +741,30 @@ async def nova_shard_get(params: ShardGetInput) -> str:
         }, indent=2)
 
     return json.dumps(data, indent=2)
+
+
+@mcp.tool(name="nova_shard_get_full")
+async def nova_shard_get_full(params: ShardGetFullInput) -> str:
+    """Cold-path full-body fetch. Returns conversation_history/turns payload without side effects. Use nova_shard_get for raw metadata."""
+    if _permission_context.blocks("nova_shard_get_full"):
+        return _permission_error("nova_shard_get_full")
+    try:
+        data, _ = load_shard(params.shard_id)
+    except FileNotFoundError:
+        return json.dumps({
+            "status": "error",
+            "shard_id": params.shard_id,
+            "message": f"Shard '{params.shard_id}' not found."
+        }, indent=2)
+
+    body = data.get("conversation_history") or data.get("turns") or []
+    return json.dumps({
+        "shard_id": params.shard_id,
+        "guiding_question": data.get("guiding_question", ""),
+        "source": data.get("meta_tags", {}).get("source", "agent_inference"),
+        "summary": data.get("meta_tags", {}).get("summary", ""),
+        "body": body,
+    }, indent=2)
 
 
 @mcp.tool(name="nova_shard_merge")
@@ -876,7 +941,7 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
     All parameters optional — omit to return all relations.
     Set transitive=True to traverse the graph by BFS up to max_depth hops.
 
-    Relation types: influences, depends_on, contradicts, extends, references, merged_from
+    Relation types: influences, depends_on, contradicts, extends, references, merged_from, supersedes, corroborated_by
     """
     if _permission_context.blocks("nova_graph_query"):
         return _permission_error("nova_graph_query")
@@ -939,17 +1004,19 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
     """
     Manually add a directed relation between two shards in the knowledge graph.
     Use this when you notice a connection that wasn't auto-detected.
-    
+
     Relation types:
-      influences   — shard A shapes the thinking in shard B
-      depends_on   — shard A requires shard B to make sense
-      contradicts  — shards are in tension, revisit both
-      extends      — shard A builds on shard B
-      references   — shard A cites or mentions shard B
+      influences       — shard A shapes the thinking in shard B
+      depends_on       — shard A requires shard B to make sense
+      contradicts      — shards are in tension, revisit both
+      extends          — shard A builds on shard B
+      references       — shard A cites or mentions shard B
+      supersedes       — shard A replaces shard B (reason field required)
+      corroborated_by  — shard A is confirmed by shard B
     """
     if _permission_context.blocks("nova_graph_relate"):
         return _permission_error("nova_graph_relate")
-    add_relation(params.source_id, params.target_id, params.relation_type, params.notes)
+    add_relation(params.source_id, params.target_id, params.relation_type, params.notes, params.reason)
 
     return json.dumps({
         "status": "relation_added",

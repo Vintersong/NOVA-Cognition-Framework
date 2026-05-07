@@ -41,7 +41,8 @@ from collections import Counter
 from typing import Any
 
 import anthropic
-from config import parse_bool_env
+from config import parse_bool_env, NOVA_AGENT_INFERENCE_WEIGHT, NOVA_PROJECT_CONTEXT, QUARANTINE_PENALTY
+from store import passes_state_gate
 
 logger = logging.getLogger(__name__)
 _error_counts: Counter[str] = Counter()
@@ -255,6 +256,8 @@ class Huginn:
             tags = entry.get("tags", [])
             if "archived" in tags or "forgotten" in tags:
                 continue
+            if not passes_state_gate(entry, NOVA_PROJECT_CONTEXT):
+                continue
 
             confidence = entry.get("confidence", 1.0)
             # trust_score: boosted by access frequency, reduced on low-confidence updates
@@ -278,6 +281,20 @@ class Huginn:
             jaccard = len(overlap) / max(len(union), 1)
             # Blend 60/40, then scale by confidence × trust
             blended = (0.6 * base_score + 0.4 * jaccard) * confidence * trust
+
+            # Deprioritise agent-inferred shards relative to external sources
+            if entry.get("meta", {}).get("source", "agent_inference") == "agent_inference":
+                blended *= NOVA_AGENT_INFERENCE_WEIGHT
+
+            # Penalise shards still in quarantine window
+            quarantine_until = entry.get("meta", {}).get("quarantine_until")
+            if quarantine_until:
+                try:
+                    from datetime import datetime as _dt
+                    if _dt.fromisoformat(quarantine_until) > _dt.now():
+                        blended *= QUARANTINE_PENALTY
+                except (ValueError, TypeError):
+                    pass
 
             if blended > 0.02:
                 scored.append((shard_id, blended))

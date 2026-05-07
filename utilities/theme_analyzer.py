@@ -8,7 +8,7 @@ Usage:
     python tools/theme_analyzer.py [options]
 
 Options:
-    --shard-dir           Path to shard directory (default: nova_memory/ at repo root)
+    --shard-dir           Path to shard directory (default: $NOVA_SHARD_DIR or shards/ at repo root)
     --n-clusters          Number of theme clusters (default: 8)
     --dry-run             Print proposed theme assignments without writing anything
     --export-cluster-map  Write nova_cluster_map.json into --shard-dir summarizing
@@ -27,6 +27,7 @@ Examples:
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -161,6 +162,7 @@ def run_analysis(
     dry_run: bool,
     export_cluster_map: bool,
     shard_dir: Path,
+    repo_root: Path,
 ) -> None:
     import numpy as np
 
@@ -233,7 +235,7 @@ def run_analysis(
             "theme": "meta",
             "clusters": cluster_info,
         }
-        map_path = shard_dir / "nova_cluster_map.json"
+        map_path = repo_root / "nova_cluster_map.json"
         if dry_run:
             print(f"\n[DRY RUN] Would write cluster map to: {map_path}")
         else:
@@ -251,7 +253,7 @@ def run_analysis(
 
 def main() -> int:
     repo_root = Path(__file__).parent.parent
-    default_shard_dir = repo_root / "nova_memory"
+    default_shard_dir = Path(os.environ.get("NOVA_SHARD_DIR", str(repo_root / "shards")))
 
     parser = argparse.ArgumentParser(
         description="Cluster NOVA shards by semantic theme and auto-tag them.",
@@ -260,7 +262,7 @@ def main() -> int:
     parser.add_argument(
         "--shard-dir",
         default=str(default_shard_dir),
-        help="Path to shard directory (default: nova_memory/ at repo root)",
+        help="Path to shard directory (default: $NOVA_SHARD_DIR or shards/ at repo root)",
     )
     parser.add_argument(
         "--n-clusters",
@@ -301,6 +303,7 @@ def main() -> int:
         dry_run=args.dry_run,
         export_cluster_map=args.export_cluster_map,
         shard_dir=shard_dir,
+        repo_root=repo_root,
     )
 
     return 0

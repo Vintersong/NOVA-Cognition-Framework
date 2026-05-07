@@ -62,9 +62,9 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (30 total)
+## NOVA MCP Tools (31 total)
 
-### Core shard ops (`nova_server.py`, 18)
+### Core shard ops (`nova_server.py`, 19)
 
 | Tool | Purpose |
 |---|---|
@@ -76,6 +76,7 @@ NOVA-Cognition-Framework/
 | `nova_shard_summary` | Summarise shard contents |
 | `nova_shard_list` | List all shards sorted by confidence |
 | `nova_shard_get` | Read full shard content, no side effects |
+| `nova_shard_get_full` | Cold-path full-body fetch — returns summary + conversation body |
 | `nova_shard_merge` | Merge related shards into meta-shard |
 | `nova_shard_archive` | Soft-archive stale shards |
 | `nova_shard_forget` | Hard exclude with provenance log |
@@ -137,6 +138,7 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-code-review` | Two-stage spec + quality review |
 | `forgemaster-qa-review` | Stage 3 structural QA |
 | `forgemaster-nova-session-handoff` | Persisting state across sessions |
+| `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
 
 For all other domains see `forgemaster/SKILL_LIBRARY.md` (15 categories, 208 skills).
 

@@ -53,7 +53,7 @@ def add_shard_to_graph(shard_id: str, shard_data: dict):
     save_graph(graph)
 
 
-def add_relation(source_id: str, target_id: str, relation_type: str, notes: str = ""):
+def add_relation(source_id: str, target_id: str, relation_type: str, notes: str = "", reason: str = ""):
     """Add a directed relation between two shards. Deduplicates exact matches."""
     graph = load_graph()
     relation = {
@@ -63,6 +63,8 @@ def add_relation(source_id: str, target_id: str, relation_type: str, notes: str 
         "notes": notes,
         "created_at": datetime.now().isoformat(),
     }
+    if reason:
+        relation["reason"] = reason
     existing = graph.get("relations", [])
     for r in existing:
         if (r["source"] == source_id
@@ -72,6 +74,16 @@ def add_relation(source_id: str, target_id: str, relation_type: str, notes: str 
     existing.append(relation)
     graph["relations"] = existing
     save_graph(graph)
+
+
+def add_supersedes(source_id: str, target_id: str, reason: str) -> None:
+    """Write a supersedes edge from source to target with a mandatory reason."""
+    add_relation(source_id, target_id, "supersedes", reason=reason)
+
+
+def add_corroborated_by(source_id: str, corroborating_id: str) -> None:
+    """Write a corroborated_by edge: source is confirmed by corroborating_id."""
+    add_relation(source_id, corroborating_id, "corroborated_by")
 
 
 # ═══════════════════════════════════════════════════════════

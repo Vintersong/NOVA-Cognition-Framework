@@ -196,6 +196,49 @@ def patch_index_entry(shard_id: str, shard_data: dict) -> dict:
     return index
 
 
+def passes_state_gate(entry: dict, project_context: str = "") -> bool:
+    """
+    Return False for shards that should be excluded from retrieval based on
+    state-aware preconditions:
+      - superseded_by is set (another shard has replaced this one)
+      - validity_window.end is in the past
+      - validity_window.start is in the future
+      - project_context is set on both shard and env, and they don't match
+
+    Absence of any precondition field means no restriction.
+    """
+    meta = entry.get("meta", {})
+    now = datetime.now()
+
+    if meta.get("superseded_by"):
+        return False
+
+    validity = meta.get("validity_window")
+    if validity:
+        start_str = validity.get("start")
+        end_str = validity.get("end")
+        try:
+            if start_str and datetime.fromisoformat(start_str) > now:
+                return False
+        except (ValueError, TypeError):
+            pass
+        try:
+            if end_str and datetime.fromisoformat(end_str) < now:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    shard_ctx = meta.get("project_context")
+    if shard_ctx and project_context:
+        if isinstance(shard_ctx, list):
+            if project_context not in shard_ctx:
+                return False
+        elif shard_ctx != project_context:
+            return False
+
+    return True
+
+
 def _format_created_date(raw: Any, fallback_path: Path | None = None) -> str:
     if isinstance(raw, str) and raw:
         candidate = raw.replace("Z", "+00:00")

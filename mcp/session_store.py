@@ -118,6 +118,25 @@ class NovaSession:
             last_active=_now_iso(),
         )
 
+    def add_message_with_usage(
+        self, role: str, content: str, input_tokens: int, output_tokens: int
+    ) -> NovaSession:
+        """Return a new session using exact API token counts instead of word estimates."""
+        entry: dict = {
+            "role": role,
+            "content": content,
+            "timestamp": _now_iso(),
+        }
+        new_messages = self.messages + (entry,)
+        new_usage = self.usage.add_turn_exact(input_tokens, output_tokens)
+        return NovaSession(
+            session_id=self.session_id,
+            messages=new_messages,
+            usage=new_usage,
+            created_at=self.created_at,
+            last_active=_now_iso(),
+        )
+
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
