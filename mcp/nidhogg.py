@@ -41,6 +41,7 @@ from pathlib import Path
 from filelock import FileLock
 from pydantic import BaseModel, Field, ConfigDict
 
+from atomic_io import atomic_write_json
 from config import (
     CLAUDE_API_KEY as _CLAUDE_API_KEY,
     HUGINN_MODEL as _HAIKU_MODEL,
@@ -124,8 +125,7 @@ def _load_manifest() -> dict:
 
 def _save_manifest(manifest: dict) -> None:
     with FileLock(NIDHOGG_MANIFEST_FILE + ".lock", timeout=5):
-        with open(NIDHOGG_MANIFEST_FILE, "w", encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2)
+        atomic_write_json(NIDHOGG_MANIFEST_FILE, manifest)
 
 
 def _file_hash(path: str) -> str:

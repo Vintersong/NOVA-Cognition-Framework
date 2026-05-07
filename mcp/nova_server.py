@@ -129,6 +129,28 @@ from wiki_tools import register_wiki_tools
 os.makedirs(SHARD_DIR, exist_ok=True)
 prewarm_embedding_model()  # start loading embedding weights in background immediately
 
+
+# ── Per-shard mutation lock ─────────────────────────────────────────────────
+# Serialises the foreground save and the background enrich+save for the same
+# shard so a rapid second nova_shard_update can't have its turn overwritten by
+# the first call's still-running background enrichment.
+#
+# WeakValueDictionary lets unused locks be GC'd once no task holds or waits on
+# them — both the foreground block and the background task closure keep a
+# strong ref while they're in flight, so the same lock object is reused for
+# overlapping calls and dropped afterwards.
+import weakref
+
+_shard_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+def _get_shard_lock(shard_id: str) -> asyncio.Lock:
+    lock = _shard_locks.get(shard_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _shard_locks[shard_id] = lock
+    return lock
+
 # === Permission context ===
 # Populated from env vars at startup.  Default: all tools permitted.
 _denied_tools_env = os.environ.get("NOVA_DENIED_TOOLS", "")
@@ -236,6 +258,13 @@ _muninn = Muninn(
     usage_log_file=USAGE_LOG_FILE,
 )
 
+def _pre_compact_stub(_data: dict, _shard_id: str) -> None:
+    # TODO: replace with lightweight Haiku fact-extraction so key statements
+    # survive maybe_compact_shard's lossy summarization. Wired here so the
+    # Nott pre_compact hook fires; today it's a deliberate no-op.
+    return None
+
+
 _nott = Nott(
     shard_dir=SHARD_DIR,
     graph_file=GRAPH_FILE,
@@ -249,6 +278,7 @@ _nott = Nott(
     merge_fn=find_merge_candidates,
     load_graph_fn=load_graph,
     save_graph_fn=save_graph,
+    pre_compact_fn=_pre_compact_stub,
 )
 
 # ── Hook registry — event-driven dispatch (replaces bespoke create_task calls) ──
@@ -311,7 +341,7 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
             meta = data.setdefault("meta_tags", {})
             save_shard(filepath, data)
 
-            fragments = extract_fragments(data, sid)[-MAX_FRAGMENTS:]
+            fragments = extract_fragments(data, sid, max_turns=MAX_FRAGMENTS)
 
             loaded.append({
                 "shard_id": sid,
@@ -411,8 +441,14 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
         })
 
     # Persist immediately so the shard exists on disk even if enrichment stalls.
-    save_shard(filepath, shard_data)
-    patch_index_entry(shard_id, shard_data)
+    # Holding the per-shard lock here means a second concurrent call on the same
+    # shard_id (rare for create, but possible if the caller picks a colliding id)
+    # waits for both the foreground save and the background enrich to finish
+    # before mutating.
+    shard_lock = _get_shard_lock(shard_id)
+    async with shard_lock:
+        save_shard(filepath, shard_data)
+        patch_index_entry(shard_id, shard_data)
 
     # Register in knowledge graph
     add_shard_to_graph(shard_id, shard_data)
@@ -443,9 +479,10 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     loop = asyncio.get_running_loop()
 
     async def _background_enrich_and_persist() -> None:
-        await loop.run_in_executor(None, enrich_shard, shard_id, shard_data)
-        await loop.run_in_executor(None, save_shard, filepath, shard_data)
-        await loop.run_in_executor(None, patch_index_entry, shard_id, shard_data)
+        async with shard_lock:
+            await loop.run_in_executor(None, enrich_shard, shard_id, shard_data)
+            await loop.run_in_executor(None, save_shard, filepath, shard_data)
+            await loop.run_in_executor(None, patch_index_entry, shard_id, shard_data)
 
     asyncio.create_task(_background_enrich_and_persist())
 
@@ -473,26 +510,34 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     """Append to a shard. Triggers post-write enrichment hook and auto-compaction if threshold exceeded."""
     if _permission_context.blocks("nova_shard_update"):
         return _permission_error("nova_shard_update")
-    try:
-        data, filepath = load_shard(params.shard_id)
-    except FileNotFoundError:
-        return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
 
-    data.setdefault("conversation_history", []).append({
-        "timestamp": datetime.now().isoformat(),
-        "user": params.user_message,
-        "ai": params.ai_response
-    })
-    update_shard_usage(data)
+    # Acquire the per-shard lock BEFORE load_shard so a rapid second call to
+    # the same shard sees the prior call's background enrich+save before it
+    # reads from disk. Without this, call 2 reads stale state and call 1's
+    # background save later overwrites call 2's appended turn.
+    shard_lock = _get_shard_lock(params.shard_id)
+    async with shard_lock:
+        try:
+            data, filepath = load_shard(params.shard_id)
+        except FileNotFoundError:
+            return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
+
+        data.setdefault("conversation_history", []).append({
+            "timestamp": datetime.now().isoformat(),
+            "user": params.user_message,
+            "ai": params.ai_response
+        })
+        update_shard_usage(data)
+
+        # Persist the new turn immediately so no data is lost if enrichment stalls.
+        data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
+        save_shard(filepath, data)
+        patch_index_entry(params.shard_id, data)
 
     # NÓTT owns compaction — fire-and-forget post-sprint cycle
-    # (replaces inline maybe_compact_shard call)
+    # (replaces inline maybe_compact_shard call). Emitted outside the lock so
+    # NÓTT's pass doesn't block on the same lock the next caller is waiting on.
     _hooks.emit(NovaHookEvent.POST_SPRINT)
-
-    # Persist the new turn immediately so no data is lost if enrichment stalls.
-    data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
-    save_shard(filepath, data)
-    patch_index_entry(params.shard_id, data)
 
     # Update graph entity confidence
     graph = load_graph()
@@ -506,9 +551,10 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     loop = asyncio.get_running_loop()
 
     async def _background_enrich_and_persist() -> None:
-        await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
-        await loop.run_in_executor(None, save_shard, filepath, data)
-        await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
+        async with shard_lock:
+            await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
+            await loop.run_in_executor(None, save_shard, filepath, data)
+            await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
     asyncio.create_task(_background_enrich_and_persist())
 

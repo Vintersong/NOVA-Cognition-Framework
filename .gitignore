@@ -35,4 +35,4 @@ output/
 .mcp.json
 
 # Claude Code local config — user-specific permissions and allowlists
-.claude/settings.local.json
+**/.claude/settings.local.json

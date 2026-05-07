@@ -24,10 +24,12 @@ try:
 except ImportError:  # pragma: no cover - optional dependency fallback
     ijson = None
 
+from atomic_io import atomic_write_json, atomic_write_text
 from config import (
     SHARD_DIR, INDEX_FILE, SUMMARY_INDEX_FILE, SUMMARY_MARKDOWN_FILE,
     CONFIDENCE_LOW_THRESHOLD, RECENT_ACCESS_DAYS, STALE_ACCESS_DAYS,
 )
+from timeutils import parse_iso, now_utc
 
 logger = logging.getLogger(__name__)
 _error_counts: Counter[str] = Counter()
@@ -71,8 +73,7 @@ def load_shard(shard_id: str) -> tuple[dict, str]:
 def save_shard(filepath: str, data: dict):
     lock_path = filepath + ".lock"
     with FileLock(lock_path, timeout=5):
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        atomic_write_json(filepath, data)
 
 
 def update_shard_usage(data: dict):
@@ -81,9 +82,19 @@ def update_shard_usage(data: dict):
     meta["last_used"] = datetime.now().isoformat()
 
 
-def extract_fragments(shard_data: dict, shard_id: str) -> list[str]:
+def extract_fragments(shard_data: dict, shard_id: str, max_turns: int | None = None) -> list[str]:
+    """Render the shard's conversation history into [SHARD: …] User/NOVA lines.
+
+    `max_turns` slices the *last N turns* from conversation_history before
+    rendering. Each turn produces up to two lines (user + ai), so the previous
+    pattern of slicing the rendered list `[-MAX_FRAGMENTS:]` produced half as
+    many turns as the variable name implied.
+    """
+    history = shard_data.get("conversation_history", [])
+    if max_turns is not None and max_turns >= 0:
+        history = history[-max_turns:]
     fragments = []
-    for entry in shard_data.get("conversation_history", []):
+    for entry in history:
         if entry.get("user"):
             fragments.append(f"[SHARD: {shard_id}] User: {entry['user']}")
         if entry.get("ai"):
@@ -108,28 +119,26 @@ def load_index() -> dict:
 
 def save_index(index: dict):
     with FileLock(INDEX_FILE + ".lock", timeout=5):
-        with open(INDEX_FILE, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2)
+        atomic_write_json(INDEX_FILE, index)
 
 
 def classify_tags(shard: dict) -> list[str]:
     tags = []
-    now = datetime.now()
+    now = now_utc()
     meta = shard.get("meta_tags", {})
     usage_count = meta.get("usage_count", 0)
     last_used_str = meta.get("last_used")
     confidence = meta.get("confidence", 1.0)
 
-    if last_used_str:
-        try:
-            last_used = datetime.fromisoformat(last_used_str)
-            if now - last_used < timedelta(days=RECENT_ACCESS_DAYS):
-                tags.append("recent")
-            if now - last_used > timedelta(days=STALE_ACCESS_DAYS):
-                tags.append("stale")
-        except (ValueError, TypeError):
-            _error_counts["classify_tags"] += 1
-            logger.warning("store.classify_tags ignored invalid last_used value: %r", last_used_str)
+    last_used = parse_iso(last_used_str) if last_used_str else None
+    if last_used is not None:
+        if now - last_used < timedelta(days=RECENT_ACCESS_DAYS):
+            tags.append("recent")
+        if now - last_used > timedelta(days=STALE_ACCESS_DAYS):
+            tags.append("stale")
+    elif last_used_str:
+        _error_counts["classify_tags"] += 1
+        logger.warning("store.classify_tags ignored invalid last_used value: %r", last_used_str)
 
     if usage_count > 10:
         tags.append("frequently_used")
@@ -164,13 +173,19 @@ def update_index() -> dict:
             continue
 
         shard_id = shard.get("shard_id", fname.replace(".json", ""))
+        context_summary = shard.get("context", {}).get("summary", "")
+        # Mirror context.summary into meta.summary so adversarial.py and recall.py
+        # filters that read entry["meta"]["summary"] aren't silent no-ops.
+        meta = dict(shard.get("meta_tags", {}))
+        if context_summary and not meta.get("summary"):
+            meta["summary"] = context_summary
         index[shard_id] = {
             "shard_id": shard_id,
             "filename": fname,
             "guiding_question": shard.get("guiding_question", ""),
             "tags": classify_tags(shard),
-            "meta": shard.get("meta_tags", {}),
-            "context_summary": shard.get("context", {}).get("summary", ""),
+            "meta": meta,
+            "context_summary": context_summary,
             "context_topics": shard.get("context", {}).get("topics", []),
             "confidence": shard.get("meta_tags", {}).get("confidence", 1.0),
         }
@@ -182,13 +197,17 @@ def update_index() -> dict:
 def patch_index_entry(shard_id: str, shard_data: dict) -> dict:
     """Update a single shard entry in the index without full rescan."""
     index = load_index()
+    context_summary = shard_data.get("context", {}).get("summary", "")
+    meta = dict(shard_data.get("meta_tags", {}))
+    if context_summary and not meta.get("summary"):
+        meta["summary"] = context_summary
     index[shard_id] = {
         "shard_id": shard_id,
         "filename": shard_id + ".json",
         "guiding_question": shard_data.get("guiding_question", ""),
         "tags": classify_tags(shard_data),
-        "meta": shard_data.get("meta_tags", {}),
-        "context_summary": shard_data.get("context", {}).get("summary", ""),
+        "meta": meta,
+        "context_summary": context_summary,
         "context_topics": shard_data.get("context", {}).get("topics", []),
         "confidence": shard_data.get("meta_tags", {}).get("confidence", 1.0),
     }
@@ -208,25 +227,19 @@ def passes_state_gate(entry: dict, project_context: str = "") -> bool:
     Absence of any precondition field means no restriction.
     """
     meta = entry.get("meta", {})
-    now = datetime.now()
+    now = now_utc()
 
     if meta.get("superseded_by"):
         return False
 
     validity = meta.get("validity_window")
     if validity:
-        start_str = validity.get("start")
-        end_str = validity.get("end")
-        try:
-            if start_str and datetime.fromisoformat(start_str) > now:
-                return False
-        except (ValueError, TypeError):
-            pass
-        try:
-            if end_str and datetime.fromisoformat(end_str) < now:
-                return False
-        except (ValueError, TypeError):
-            pass
+        start = parse_iso(validity.get("start"))
+        if start is not None and start > now:
+            return False
+        end = parse_iso(validity.get("end"))
+        if end is not None and end < now:
+            return False
 
     shard_ctx = meta.get("project_context")
     if shard_ctx and project_context:
@@ -390,8 +403,7 @@ def save_summary_index(summary_index: dict):
         "shards": summary_index.get("shards", {}),
     }
     with FileLock(SUMMARY_INDEX_FILE + ".lock", timeout=5):
-        with open(SUMMARY_INDEX_FILE, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
+        atomic_write_json(SUMMARY_INDEX_FILE, payload)
 
 
 def heuristic_summary_sentence(skeleton: dict) -> str:
@@ -479,8 +491,7 @@ def save_summary_markdown(rows: list[dict]):
         hashtags = " ".join(f"#{tag}" for tag in tags)
         lines.append(f"- [{theme}] {row.get('d', '')} | conf:{row.get('c', 0):.2f} | {hashtags}".rstrip())
     with FileLock(SUMMARY_MARKDOWN_FILE + ".lock", timeout=5):
-        with open(SUMMARY_MARKDOWN_FILE, "w", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + ("\n" if lines else ""))
+        atomic_write_text(SUMMARY_MARKDOWN_FILE, "\n".join(lines) + ("\n" if lines else ""))
 
 
 def rebuild_summary_markdown_from_store():

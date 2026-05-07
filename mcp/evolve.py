@@ -43,6 +43,7 @@ from typing import Any
 from filelock import FileLock
 from pydantic import BaseModel, Field, ConfigDict
 
+from atomic_io import atomic_write_json
 from config import SHARD_DIR, USAGE_LOG_FILE, MERGE_SIMILARITY_THRESHOLD
 from permissions import is_blocked, denial_payload
 from store import load_index, load_shard
@@ -143,8 +144,7 @@ def _load_evolve_config() -> dict[str, Any]:
 
 def _save_evolve_config(cfg: dict[str, Any]) -> None:
     with FileLock(str(_EVOLVE_CONFIG_FILE) + ".lock", timeout=5):
-        with open(_EVOLVE_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        atomic_write_json(_EVOLVE_CONFIG_FILE, cfg)
 
 
 def _limits_reached(cfg: dict[str, Any]) -> bool:

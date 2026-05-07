@@ -23,6 +23,7 @@ from config import (
     DECAY_INTERVAL_DAYS,
     MERGE_SIMILARITY_THRESHOLD,
 )
+from timeutils import parse_iso, now_utc
 
 
 # ═══════════════════════════════════════════════════════════
@@ -47,19 +48,18 @@ def apply_confidence_decay(shard_data: dict) -> float:
     if not last_used_str:
         return current_confidence
 
-    try:
-        last_used = datetime.fromisoformat(last_used_str)
-        days_since = (datetime.now() - last_used).days
+    last_used = parse_iso(last_used_str)
+    if last_used is None:
+        return current_confidence
 
-        if days_since >= DECAY_INTERVAL_DAYS:
-            periods = days_since // DECAY_INTERVAL_DAYS
-            new_confidence = current_confidence
-            for _ in range(periods):
-                new_confidence = max(0.1, new_confidence * (1.0 - DECAY_RATE))
-            meta["confidence"] = round(new_confidence, 4)
-            return new_confidence
-    except (ValueError, TypeError):
-        pass
+    days_since = (now_utc() - last_used).days
+    if days_since >= DECAY_INTERVAL_DAYS:
+        periods = days_since // DECAY_INTERVAL_DAYS
+        new_confidence = current_confidence
+        for _ in range(periods):
+            new_confidence = max(0.1, new_confidence * (1.0 - DECAY_RATE))
+        meta["confidence"] = round(new_confidence, 4)
+        return new_confidence
 
     return current_confidence
 
