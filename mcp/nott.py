@@ -35,6 +35,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Callable, Optional
 
+from timeutils import parse_iso, now_utc
+
 # Borrowed from hermes-agent cron/scheduler.py:
 # when a SESSION_START cycle has nothing to report, suppress the log write
 # rather than writing an empty entry.
@@ -195,8 +197,15 @@ class Nott:
             report.compacted_shards = await self._compact_pass(index, dry_run)
             report.graph_entities_synced = self._graph_sync(index, dry_run)
 
-        if trigger == NottTrigger.SCHEDULED:
+        # Quarantine graduation runs on POST_SPRINT and SESSION_START as well as
+        # SCHEDULED — otherwise hook-extracted shards stay penalised forever
+        # because users rarely invoke nova_shard_consolidate manually.
+        # The pass early-returns cheaply when no shards have quarantine_until.
+        if trigger in (NottTrigger.POST_SPRINT, NottTrigger.SCHEDULED,
+                       NottTrigger.SESSION_START, NottTrigger.COUNT_THRESHOLD):
             report.quarantine_results = await self._quarantine_pass(index, dry_run)
+
+        if trigger == NottTrigger.SCHEDULED:
             report.decay_on_read_results = await self._decay_on_read_pass(index, dry_run)
             report.cluster_results = await self._cluster_pass(index, dry_run)
             report.adversarial_results = await self._adversarial_pass(index, dry_run)
@@ -328,9 +337,17 @@ class Nott:
         Inspect every shard whose quarantine_until is in the past.
         - If a contradicts edge points at it: apply QUARANTINE_PENALTY to confidence, clear field.
         - Otherwise: graduate (clear quarantine_until).
-        Runs only on SCHEDULED trigger.
+        Runs on POST_SPRINT, SESSION_START, SCHEDULED, and COUNT_THRESHOLD triggers.
+        Early-exits when no shards are quarantined to keep SESSION_START cheap.
         """
-        now = datetime.now()
+        # Fast path: nothing to do if no shard has quarantine_until set.
+        if not any(
+            entry.get("meta", {}).get("quarantine_until")
+            for entry in index.values()
+        ):
+            return []
+
+        now = now_utc()
         graph = self._load_graph()
         relations = graph.get("relations", [])
         contradicted_ids = {r["target"] for r in relations if r["type"] == "contradicts"}
@@ -340,9 +357,8 @@ class Nott:
             quarantine_until_str = entry.get("meta", {}).get("quarantine_until")
             if not quarantine_until_str:
                 continue
-            try:
-                quarantine_until = datetime.fromisoformat(quarantine_until_str)
-            except (ValueError, TypeError):
+            quarantine_until = parse_iso(quarantine_until_str)
+            if quarantine_until is None:
                 continue
             if quarantine_until > now:
                 continue  # still in window
@@ -397,13 +413,15 @@ class Nott:
 
         graph = self._load_graph()
         relations = graph.get("relations", [])
-        window_start = (datetime.now() - timedelta(days=DECAY_ON_READ_WINDOW_DAYS)).isoformat()
+        window_start = now_utc() - timedelta(days=DECAY_ON_READ_WINDOW_DAYS)
 
-        corroborated_recently: set[str] = {
-            r["source"]
-            for r in relations
-            if r.get("type") == "corroborated_by" and r.get("created_at", "") >= window_start
-        }
+        corroborated_recently: set[str] = set()
+        for r in relations:
+            if r.get("type") != "corroborated_by":
+                continue
+            created = parse_iso(r.get("created_at"))
+            if created is not None and created >= window_start:
+                corroborated_recently.add(r["source"])
 
         results = []
         for shard_id, timestamps in access_map.items():

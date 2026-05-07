@@ -22,6 +22,7 @@ from typing import Optional
 
 from filelock import FileLock
 
+from atomic_io import atomic_write_json
 from config import SESSION_ID_PATTERN
 from models import UsageSummary
 
@@ -209,8 +210,7 @@ class SessionStore:
         filepath = self._store_dir / f"{session_id}.json"
         lock_path = str(filepath) + ".lock"
         with FileLock(lock_path, timeout=5):
-            with open(filepath, "w", encoding="utf-8") as fh:
-                json.dump(session.to_dict(), fh, indent=2)
+            atomic_write_json(filepath, session.to_dict())
         del self._sessions[session_id]
 
     def load(self, session_id: str) -> NovaSession:

@@ -12,6 +12,7 @@ from datetime import datetime
 
 from filelock import FileLock
 
+from atomic_io import atomic_write_json
 from config import GRAPH_FILE
 
 
@@ -31,8 +32,7 @@ def load_graph() -> dict:
 
 def save_graph(graph: dict):
     with FileLock(GRAPH_FILE + ".lock", timeout=5):
-        with open(GRAPH_FILE, "w", encoding="utf-8") as f:
-            json.dump(graph, f, indent=2)
+        atomic_write_json(GRAPH_FILE, graph)
 
 
 # ═══════════════════════════════════════════════════════════

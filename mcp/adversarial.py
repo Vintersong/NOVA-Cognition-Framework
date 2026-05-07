@@ -23,6 +23,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from timeutils import parse_iso, now_utc
+
 from config import (
     ADVERSARIAL_MIN_INTERVAL_DAYS,
     ADVERSARIAL_TOP_N,
@@ -57,17 +59,16 @@ def should_run(graph: dict) -> bool:
     last_run_str = meta.get("last_run")
     if not last_run_str:
         return True
-    try:
-        last_run = datetime.fromisoformat(last_run_str)
-        return datetime.now() - last_run >= timedelta(days=ADVERSARIAL_MIN_INTERVAL_DAYS)
-    except (ValueError, TypeError):
+    last_run = parse_iso(last_run_str)
+    if last_run is None:
         return True
+    return now_utc() - last_run >= timedelta(days=ADVERSARIAL_MIN_INTERVAL_DAYS)
 
 
 def stamp_run(graph: dict, pass_id: str) -> None:
     """Record last-run timestamp and pass_id into the graph dict (caller must save)."""
     graph.setdefault("_adversarial_meta", {}).update({
-        "last_run": datetime.now().isoformat(),
+        "last_run": now_utc().isoformat(),
         "last_pass_id": pass_id,
     })
 

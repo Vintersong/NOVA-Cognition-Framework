@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timedelta
 
 from config import ACCESS_LOG_FILE
+from timeutils import parse_iso, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 def log_shard_access(shard_id: str, source: str) -> None:
     """Append one access record. Never raises — retrieval must not be blocked."""
     entry = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_utc().isoformat(),
         "shard_id": shard_id,
         "source": source,
     }
@@ -40,7 +41,7 @@ def read_access_log(window_days: int) -> dict[str, list[str]]:
     Return {shard_id: [timestamp, ...]} for accesses within the last window_days.
     Empty dict if the log doesn't exist yet.
     """
-    cutoff = datetime.now() - timedelta(days=window_days)
+    cutoff = now_utc() - timedelta(days=window_days)
     result: dict[str, list[str]] = {}
     try:
         with open(ACCESS_LOG_FILE, "r", encoding="utf-8") as f:
@@ -50,11 +51,11 @@ def read_access_log(window_days: int) -> dict[str, list[str]]:
                     continue
                 try:
                     entry = json.loads(line)
-                    ts = datetime.fromisoformat(entry["timestamp"])
-                    if ts >= cutoff:
+                    ts = parse_iso(entry["timestamp"])
+                    if ts is not None and ts >= cutoff:
                         sid = entry["shard_id"]
                         result.setdefault(sid, []).append(entry["timestamp"])
-                except (json.JSONDecodeError, KeyError, ValueError):
+                except (json.JSONDecodeError, KeyError):
                     continue
     except FileNotFoundError:
         pass
