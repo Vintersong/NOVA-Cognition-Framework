@@ -138,6 +138,7 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-code-review` | Two-stage spec + quality review |
 | `forgemaster-qa-review` | Stage 3 structural QA |
 | `forgemaster-nova-session-handoff` | Persisting state across sessions |
+| `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
 
 For all other domains see `forgemaster/SKILL_LIBRARY.md` (15 categories, 208 skills).
 

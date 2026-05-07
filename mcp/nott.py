@@ -72,6 +72,7 @@ class NottReport:
     quarantine_results: list[dict] = field(default_factory=list)
     decay_on_read_results: list[dict] = field(default_factory=list)
     cluster_results: dict = field(default_factory=dict)
+    adversarial_results: dict = field(default_factory=dict)
     graph_entities_synced: int = 0
     total_shards: int = 0
     duration_ms: float = 0.0
@@ -86,10 +87,12 @@ class NottReport:
         dor_note = f", decay-on-read penalised {len(self.decay_on_read_results)}" if self.decay_on_read_results else ""
         cl = self.cluster_results
         cluster_note = f", clustered {cl.get('shards_assigned', 0)} shards into {cl.get('clusters_found', 0)} clusters" if cl.get("recomputed") else ""
+        adv = self.adversarial_results
+        adv_note = f", adversarial found {adv.get('contradictions_found', 0)} contradictions in {adv.get('shards_reviewed', 0)} shards" if adv and not adv.get("skipped") else ""
         return (
             f"Decayed {len(self.decayed_shards)} shards, "
             f"compacted {len(self.compacted_shards)}, "
-            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}{cluster_note}."
+            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}{cluster_note}{adv_note}."
         )
 
     def to_dict(self) -> dict:
@@ -103,6 +106,7 @@ class NottReport:
             "quarantine_results": self.quarantine_results,
             "decay_on_read_results": self.decay_on_read_results,
             "cluster_results": self.cluster_results,
+            "adversarial_results": self.adversarial_results,
             "graph_entities_synced": self.graph_entities_synced,
             "total_shards": self.total_shards,
             "duration_ms": round(self.duration_ms, 1),
@@ -195,6 +199,7 @@ class Nott:
             report.quarantine_results = await self._quarantine_pass(index, dry_run)
             report.decay_on_read_results = await self._decay_on_read_pass(index, dry_run)
             report.cluster_results = await self._cluster_pass(index, dry_run)
+            report.adversarial_results = await self._adversarial_pass(index, dry_run)
 
         # Rebuild index after mutations (skip on dry_run)
         if not dry_run and trigger in (NottTrigger.POST_SPRINT, NottTrigger.SCHEDULED):
@@ -488,6 +493,32 @@ class Nott:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor, self._cluster_pass_sync, index, dry_run
+        )
+
+    # ── Adversarial pass ─────────────────────────────────────────────────────
+
+    def _adversarial_pass_sync(self, index: dict, dry_run: bool) -> dict:
+        """
+        Send top-N highest-confidence shards to Gemini Flash for contradiction
+        hunting. Runs at most once per ADVERSARIAL_MIN_INTERVAL_DAYS.
+        Findings become `contradicts` edges with adversarial-pass provenance.
+        """
+        from adversarial import run_adversarial_pass
+        from graph import add_relation
+
+        graph = self._load_graph()
+        return run_adversarial_pass(
+            index=index,
+            graph=graph,
+            save_graph_fn=self._save_graph,
+            add_relation_fn=add_relation,
+            dry_run=dry_run,
+        )
+
+    async def _adversarial_pass(self, index: dict, dry_run: bool) -> dict:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._adversarial_pass_sync, index, dry_run
         )
 
     # ── Graph sync ───────────────────────────────────────────────────────

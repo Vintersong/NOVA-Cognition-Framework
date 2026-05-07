@@ -47,6 +47,12 @@ CONFIDENCE_LOW_THRESHOLD = float(os.environ.get("NOVA_CONFIDENCE_LOW", "0.4"))
 # Values < 1.0 deprioritise agent-generated content relative to external sources.
 NOVA_AGENT_INFERENCE_WEIGHT = float(os.environ.get("NOVA_AGENT_INFERENCE_WEIGHT", "0.7"))
 
+# ── Adversarial NÓTT pass ────────────────────────────────────────────────────
+# Number of highest-confidence shards checked per adversarial run.
+ADVERSARIAL_TOP_N           = int(os.environ.get("NOVA_ADVERSARIAL_TOP_N",            "10"))
+# Minimum days between adversarial runs (weekly by default).
+ADVERSARIAL_MIN_INTERVAL_DAYS = int(os.environ.get("NOVA_ADVERSARIAL_INTERVAL_DAYS",  "7"))
+
 # ── State-aware retrieval gating ─────────────────────────────────────────────
 # When set, shards whose project_context doesn't include this value are excluded.
 NOVA_PROJECT_CONTEXT = os.environ.get("NOVA_PROJECT_CONTEXT", "")
