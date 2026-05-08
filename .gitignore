@@ -16,7 +16,7 @@ shard_access.jsonl
 shards/
 nova_sessions/
 donors/
-intake/chats/
+intake/
 
 # Output / experiments
 output/
@@ -36,3 +36,10 @@ output/
 
 # Claude Code local config — user-specific permissions and allowlists
 **/.claude/settings.local.json
+/.sdd/
+
+# shard_parser facts corpus — user-personal (track examples/ only)
+facts/*
+!facts/examples/
+!facts/examples/**
+facts_index.db

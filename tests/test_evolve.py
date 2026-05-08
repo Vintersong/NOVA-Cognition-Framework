@@ -16,7 +16,8 @@ def test_auto_commit_uses_double_dash_for_git_add(monkeypatch: pytest.MonkeyPatc
         calls.append(cmd)
         if cmd[:3] == ["git", "status", "--porcelain"]:
             # Filename begins with '--' to verify '--' separator is used safely.
-            return SimpleNamespace(returncode=0, stdout=" M --odd.py\n", stderr="")
+            # Path is under the allowlist (mcp/) so the file isn't filtered out.
+            return SimpleNamespace(returncode=0, stdout=" M mcp/--odd.py\n", stderr="")
         if cmd[:2] == ["git", "add"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if cmd[:2] == ["git", "commit"]:

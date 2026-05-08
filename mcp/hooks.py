@@ -34,6 +34,22 @@ logger = logging.getLogger(__name__)
 # Handler signature: async def handler(**kwargs) -> None
 HookHandler = Callable[..., Awaitable[None]]
 
+# Module-level strong-ref set keeping fire-and-forget tasks alive.
+# Without this, asyncio may garbage-collect a Task before it completes
+# (Python emits a "Task was destroyed but it is pending!" warning) and
+# any exception raised inside the handler vanishes silently.
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _on_task_done(task: asyncio.Task[Any]) -> None:
+    """Remove the task from the strong-ref set and surface any exception."""
+    _BACKGROUND_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("hook handler %s raised: %s", task.get_name(), exc, exc_info=exc)
+
 
 class NovaHookEvent(Enum):
     SESSION_START    = "session_start"
@@ -68,10 +84,16 @@ class NovaHookRegistry:
         """
         for handler in self._handlers[event]:
             try:
-                asyncio.create_task(handler(**kwargs))
+                task = asyncio.create_task(
+                    handler(**kwargs),
+                    name=f"hook:{event.value}:{getattr(handler, '__name__', repr(handler))}",
+                )
             except RuntimeError:
                 # No running event loop (e.g. sync test context) — skip silently.
                 logger.debug("NovaHookRegistry.emit: no event loop for %s", event.value)
+                continue
+            _BACKGROUND_TASKS.add(task)
+            task.add_done_callback(_on_task_done)
 
     async def emit_wait(self, event: NovaHookEvent, **kwargs: Any) -> None:
         """

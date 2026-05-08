@@ -1,0 +1,13 @@
+@@id: nova_architecture
+@@topic: NOVA architecture overview
+@@tier: studio
+@@confidence: 1
+@@decay_rate: 0.0
+@@links: forgemaster, shard_parser
+@@timestamp: 2026-05-08T00:00:00+00:00
+---
+NOVA is a persistent memory MCP server. The float-confidence JSON shard store
+holds conversation history; the `.shard` files indexed here are a separate
+curated facts corpus with discrete {-1, 0, 1} confidence. HUGINN runs the
+JSON store over dense embeddings; nova_facts_search runs this corpus via
+SQLite keyword pre-filter before HUGINN.

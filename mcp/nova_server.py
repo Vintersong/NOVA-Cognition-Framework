@@ -124,10 +124,25 @@ from gemini_mcp import register_gemini_tools
 from nidhogg import register_nidhogg_tools
 from evolve import register_evolve_tools
 from wiki_tools import register_wiki_tools
+from facts import register_facts_tools, search_facts
 
 # Bootstrap
 os.makedirs(SHARD_DIR, exist_ok=True)
 prewarm_embedding_model()  # start loading embedding weights in background immediately
+
+# Surface degraded-mode features when CLAUDE_API_KEY is absent. Today the
+# server falls back to local-only retrieval silently, masking the fact that
+# HUGINN re-scoring, MUNINN deep rerank, and remote enrichment are all off.
+import logging as _logging
+from config import CLAUDE_API_KEY as _CLAUDE_API_KEY
+_logger = _logging.getLogger(__name__)
+if not _CLAUDE_API_KEY:
+    _logger.warning(
+        "CLAUDE_API_KEY not set — running in local-only mode. "
+        "Disabled features: HUGINN Haiku re-score, MUNINN Sonnet rerank, "
+        "remote summary generation. Local fallbacks (token-overlap, embedding "
+        "cosine, structured summaries) still active."
+    )
 
 
 # ── Per-shard mutation lock ─────────────────────────────────────────────────
@@ -182,6 +197,7 @@ register_gemini_tools(mcp)
 register_nidhogg_tools(mcp)
 register_evolve_tools(mcp)
 register_wiki_tools(mcp)
+register_facts_tools(mcp)
 
 # ═══════════════════════════════════════════════════════════
 # PERMISSION HELPERS
@@ -308,18 +324,36 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
     huginn_confidence: float = 0.0
     muninn_used: bool = False
 
+    facts_hits: list[dict] = []
     if not shard_ids and params.auto_select:
         inferred = True
         index = load_index() or update_index()
-        # ━━ HUGINN — fast first pass ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        huginn_result = await _huginn.retrieve(params.message, index)
-        huginn_confidence = huginn_result.max_confidence
-        retrieval = huginn_result
-        # ━━ MUNINN — deep pass if HUGINN not confident ━━━━━━━━━━━━━━━━━━━━━━
-        if not huginn_result.is_confident(_huginn.confidence_threshold):
-            retrieval = await _muninn.rerank(params.message, huginn_result, index)
-            muninn_used = True
-        shard_ids = retrieval.shard_ids or []
+        # ━━ FACTS — SQLite keyword pre-filter (cheap, always tried) ━━━━━━━━
+        try:
+            facts_hits = search_facts(params.message, confidence=1, limit=5)
+        except Exception:
+            facts_hits = []
+        # ━━ HUGINN — fast first pass (outer 20s guard so call never hangs) ━━
+        try:
+            huginn_result = await asyncio.wait_for(
+                _huginn.retrieve(params.message, index),
+                timeout=20.0,
+            )
+            huginn_confidence = huginn_result.max_confidence
+            retrieval = huginn_result
+            # ━━ MUNINN — deep pass if HUGINN not confident ━━━━━━━━━━━━━━━━
+            if not huginn_result.is_confident(_huginn.confidence_threshold):
+                try:
+                    retrieval = await asyncio.wait_for(
+                        _muninn.rerank(params.message, huginn_result, index),
+                        timeout=20.0,
+                    )
+                    muninn_used = True
+                except asyncio.TimeoutError:
+                    retrieval = huginn_result
+            shard_ids = retrieval.shard_ids or []
+        except asyncio.TimeoutError:
+            shard_ids = []
         # ━━ NÓTT — lightweight session-start decay (fire-and-forget) ━━━━━━━━
         _hooks.emit(NovaHookEvent.SESSION_START)
 
@@ -361,6 +395,7 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
         "inferred": inferred,
         "huginn_confidence": round(huginn_confidence, 4),
         "muninn_used": muninn_used,
+        "facts": facts_hits,
         "shards": loaded,
         "errors": errors
     }

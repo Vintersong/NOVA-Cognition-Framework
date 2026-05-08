@@ -15,17 +15,17 @@ def _build_runtime(tmp_path: Path) -> runtime.ForgemasterRuntime:
     return runtime.ForgemasterRuntime(store, permissions)
 
 
-def test_write_implementation_file_writes_inside_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_implementation_file_writes_inside_allowlist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime, "_REPO_ROOT", tmp_path)
-    written = runtime._write_implementation_file("nested/output.py", "print('ok')\n")
+    written = runtime._write_implementation_file("output/nested/result.py", "print('ok')\n")
     assert Path(written).exists()
     assert Path(written).read_text(encoding="utf-8") == "print('ok')\n"
 
 
 def test_write_implementation_file_rejects_traversal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime, "_REPO_ROOT", tmp_path)
-    with pytest.raises(ValueError, match="outside repo root"):
-        runtime._write_implementation_file("../escape.py", "x = 1\n")
+    with pytest.raises(ValueError, match=r"'\.\.' traversal"):
+        runtime._write_implementation_file("output/../escape.py", "x = 1\n")
 
 
 def test_get_permitted_lanes_marks_implementer_restricted(tmp_path: Path) -> None:

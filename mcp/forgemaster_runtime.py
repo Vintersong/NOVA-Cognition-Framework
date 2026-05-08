@@ -224,28 +224,72 @@ def _extract_target_file(design_doc: str) -> Optional[str]:
     return None
 
 
+_DEFAULT_WRITE_ROOTS = ("output", "intake")
+
+
+def _allowed_write_roots() -> tuple[Path, ...]:
+    """
+    Resolve the allowlisted subtrees that ``_write_implementation_file`` may
+    write into. Defaults to ``output/`` and ``intake/`` under the repo root.
+    Override via the ``FORGEMASTER_WRITE_ROOTS`` env var (comma-separated,
+    paths relative to the repo root).
+    """
+    raw = os.environ.get("FORGEMASTER_WRITE_ROOTS", "")
+    names = [n.strip() for n in raw.split(",") if n.strip()] or list(_DEFAULT_WRITE_ROOTS)
+    repo = _REPO_ROOT.resolve()
+    return tuple((repo / n).resolve() for n in names)
+
+
 def _write_implementation_file(rel_path: str, code: str) -> str:
     """
     Write *code* to *rel_path* relative to the repo root.
 
-    Only allows writes inside the repo root tree (no escape via '..').
+    Hardened against design-doc-driven path attacks:
+      - Rejects absolute paths.
+      - Rejects any path containing a ``..`` component (traversal).
+      - Resolved target must live under one of the allowlisted roots
+        (default ``output/`` and ``intake/``; override with
+        ``FORGEMASTER_WRITE_ROOTS``).
+
     Returns the absolute path written.
     """
-    target = (_REPO_ROOT / rel_path).resolve()
-    repo = _REPO_ROOT.resolve()
-    try:
-        within_repo = target.is_relative_to(repo)
-    except AttributeError:  # pragma: no cover - Python < 3.9 fallback
-        try:
-            within_repo = os.path.commonpath((str(repo), str(target))) == str(repo)
-        except ValueError:
-            within_repo = False
-    if not within_repo:
+    if os.path.isabs(rel_path):
         logger.error(
-            "ForgemasterRuntime._write_implementation_file: rejected path escape rel_path=%s",
+            "ForgemasterRuntime._write_implementation_file: rejected absolute path rel_path=%s",
             rel_path,
         )
-        raise ValueError(f"Refusing to write outside repo root: {target}")
+        raise ValueError(f"Refusing to write absolute path: {rel_path}")
+
+    parts = Path(rel_path).parts
+    if ".." in parts:
+        logger.error(
+            "ForgemasterRuntime._write_implementation_file: rejected traversal rel_path=%s",
+            rel_path,
+        )
+        raise ValueError(f"Refusing to write path with '..' traversal: {rel_path}")
+
+    target = (_REPO_ROOT / rel_path).resolve()
+    allowed_roots = _allowed_write_roots()
+
+    def _is_under(child: Path, parent: Path) -> bool:
+        try:
+            return child.is_relative_to(parent)
+        except AttributeError:  # pragma: no cover - Python < 3.9 fallback
+            try:
+                return os.path.commonpath((str(parent), str(child))) == str(parent)
+            except ValueError:
+                return False
+
+    if not any(_is_under(target, root) for root in allowed_roots):
+        logger.error(
+            "ForgemasterRuntime._write_implementation_file: target outside allowlist rel_path=%s allowed=%s",
+            rel_path,
+            [str(r) for r in allowed_roots],
+        )
+        raise ValueError(
+            f"Refusing to write outside allowlist: {target} (allowed: {[str(r) for r in allowed_roots]})"
+        )
+
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code, encoding="utf-8")
     return str(target)

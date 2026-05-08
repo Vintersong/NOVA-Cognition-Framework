@@ -396,6 +396,88 @@ class ShardDB:
             )
         return result
 
+    def search(
+        self,
+        query: str,
+        *,
+        confidence: int | None = 1,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Keyword search across topic + content. Used as a HUGINN pre-filter.
+
+        Defaults to ``confidence=1`` (only confirmed facts). Pass
+        ``confidence=None`` to search all confidence states. Malformed shards
+        are excluded.
+        """
+        if not query or not query.strip():
+            return []
+
+        sql = (
+            "SELECT id, topic, tier, confidence, decay_rate, links, timestamp, "
+            "content, malformed, errors FROM shards WHERE malformed = 0"
+        )
+        params: list[Any] = []
+        if confidence is not None:
+            sql += " AND confidence = ?"
+            params.append(int(confidence))
+
+        # Each token must appear in either topic or content. Conservative AND
+        # semantics keep false positives down; for 50+ token queries the user
+        # should fall back to the full HUGINN path.
+        tokens = [t for t in query.lower().split() if t]
+        for tok in tokens:
+            sql += " AND (LOWER(topic) LIKE ? OR LOWER(CAST(content AS TEXT)) LIKE ?)"
+            params.extend([f"%{tok}%", f"%{tok}%"])
+
+        sql += " LIMIT ?"
+        params.append(int(limit))
+
+        try:
+            rows = self.conn.execute(sql, params).fetchall()
+        except sqlite3.Error:
+            return []
+
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            links = [link.strip() for link in str(row["links"]).split(",") if link.strip()]
+            raw_content = row["content"]
+            if isinstance(raw_content, memoryview):
+                raw_content = raw_content.tobytes()
+            if isinstance(raw_content, (bytes, bytearray)):
+                content = raw_content.decode("utf-8", errors="replace")
+            else:
+                content = str(raw_content)
+            result.append({
+                "id": row["id"],
+                "topic": row["topic"],
+                "tier": row["tier"],
+                "confidence": row["confidence"],
+                "links": links,
+                "timestamp": row["timestamp"],
+                "content": content,
+            })
+        return result
+
+    def rebuild_from_dir(self, facts_dir: str | Path) -> int:
+        """Wipe and re-populate the index from every ``.shard`` file under
+        ``facts_dir``. Returns the number of files indexed."""
+        try:
+            self.conn.execute("DELETE FROM shards")
+            self.conn.commit()
+        except sqlite3.Error:
+            return 0
+
+        root = Path(facts_dir)
+        if not root.is_dir():
+            return 0
+
+        count = 0
+        for path in root.rglob("*.shard"):
+            if self.add_file(path):
+                count += 1
+        return count
+
     def close(self) -> None:
         self.conn.close()
 

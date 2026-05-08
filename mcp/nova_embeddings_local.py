@@ -17,8 +17,11 @@ Model: all-MiniLM-L6-v2
   - Apache 2.0 license
 """
 
+import logging
 import threading
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════
 # LOCAL EMBEDDING MODEL
@@ -38,12 +41,22 @@ def get_embedding_model():
             try:
                 from sentence_transformers import SentenceTransformer
                 _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-                print("[OK] Local embedding model loaded (all-MiniLM-L6-v2)")
+                logger.info("Local embedding model loaded (all-MiniLM-L6-v2)")
             except ImportError:
-                print("[WARN] sentence-transformers not installed. Run: pip install sentence-transformers")
-                print("  Falling back to keyword-only search.")
+                logger.warning("sentence-transformers not installed — falling back to keyword-only search. Run: pip install sentence-transformers")
                 _embedding_model = None
     return _embedding_model
+
+
+def get_embedding_model_if_ready() -> object | None:
+    """Non-blocking check — returns the model only if already loaded, None otherwise."""
+    acquired = _model_lock.acquire(blocking=False)
+    if not acquired:
+        return None  # prewarm thread still loading
+    try:
+        return _embedding_model
+    finally:
+        _model_lock.release()
 
 
 def prewarm_embedding_model() -> None:
@@ -53,9 +66,9 @@ def prewarm_embedding_model() -> None:
     operation never blocks waiting for weights to load.
     """
     def _load():
-        print("[NOVA] Pre-warming embedding model in background...")
+        logger.info("Pre-warming embedding model in background...")
         get_embedding_model()
-        print("[NOVA] Embedding model ready.")
+        logger.info("Embedding model ready.")
 
     t = threading.Thread(target=_load, daemon=True, name="nova-embed-prewarm")
     t.start()
@@ -70,7 +83,7 @@ def generate_local_embedding(text: str) -> list[float] | None:
         embedding = model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
     except Exception as e:
-        print(f"  ⚠ Embedding error: {e}")
+        logger.warning("Embedding error: %s", e)
         return None
 
 
