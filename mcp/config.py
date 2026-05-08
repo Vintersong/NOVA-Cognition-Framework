@@ -90,6 +90,12 @@ GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-flash")
 # 1-128 chars total, start alnum, then alnum / dot / underscore / dash.
 SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 
+# ── Facts corpus (shard_parser SQLite pre-filter) ────────────────────────────
+# Curated `.shard` files indexed by SQLite for HUGINN's pre-filter pass. Discrete
+# {-1, 0, 1} confidence — distinct from the float-confidence JSON shard store.
+FACTS_DIR        = os.environ.get("NOVA_FACTS_DIR",        str(_REPO_ROOT / "facts"))
+FACTS_INDEX_FILE = os.environ.get("NOVA_FACTS_INDEX_FILE", str(_REPO_ROOT / "facts_index.db"))
+
 # ── Wiki layer ────────────────────────────────────────────────────────────────
 WIKI_DIR          = os.environ.get("NOVA_WIKI_DIR",     str(_REPO_ROOT / "wiki"))
 WIKI_SCHEMA_FILE  = os.environ.get("NOVA_WIKI_SCHEMA",  str(_REPO_ROOT / "wiki_schema.json"))

@@ -80,43 +80,37 @@ pytest tests/test_forgemaster_write_allowlist.py \
 
 ---
 
-## PR3 — Integration / completeness
+## PR3 — Integration / completeness — Done ✅
 
-Audit category D. May split into 2 PRs if shard_parser wiring grows.
+65/65 pytest pass. 7 new tests across 2 files. 7 source files modified, 1 new module.
 
-### D1 — `shard_parser` SQLite pre-filter wiring (largest item)
+### D1 — `shard_parser` SQLite pre-filter wiring — done
 
-Per the locked decision (interpretation A), `.shard` files are a separate **curated facts corpus** with discrete `{-1, 0, 1}` confidence, indexed by `ShardDB` (SQLite). They live alongside the JSON conversation shards, which keep float confidence and the existing pipeline.
+| Change | Files |
+|---|---|
+| `ShardDB.search(query, confidence=1, limit=10)` — keyword search across topic + content with discrete-confidence filter | shard_parser.py |
+| `ShardDB.rebuild_from_dir(facts_dir)` — wipe + re-populate from `*.shard` files (recursive) | shard_parser.py |
+| New `mcp/facts.py` — `search_facts()` library call + `nova_facts_search` and `nova_facts_rebuild` MCP tools | facts.py (new) |
+| `nova_shard_interact` calls `search_facts()` first; results returned alongside HUGINN shards in a new `facts` field of the response | nova_server.py |
+| `FACTS_DIR` (`facts/`) and `FACTS_INDEX_FILE` (`facts_index.db`) added to `config.py`. `NOVA_FACTS_DIR` / `NOVA_FACTS_INDEX_FILE` env overrides | config.py |
+| `facts/` is user-personal (gitignored), `facts/examples/` IS tracked. Sample `nova_architecture.shard` seeded | .gitignore, facts/examples/nova_architecture.shard |
+| Tests: `test_facts_search.py` — 5 tests (confidence filter, topic+content, empty query, rebuild walks subdirs, safe when corpus absent) | tests/ |
 
-**Architecture:**
+### D2 — Smaller integration fixes — done
 
-```
-nova_shard_interact(message)
-   ├── nova_facts_search(message)   ← NEW pre-filter
-   │     SQLite FTS over ShardDB; returns high-confidence (+1) facts
-   ├── HUGINN.retrieve(message)     ← existing path
-   │     dense embedding over JSON shards
-   └── merge: facts (always included) ∪ HUGINN top-K
-```
+| Change | Files |
+|---|---|
+| Startup `CLAUDE_API_KEY` absence warning lists degraded features (HUGINN re-score, MUNINN rerank, remote summaries). Was silent local-fallback before | nova_server.py |
+| `nidhogg.add_corroborated_by` now uses synthetic `doc:<sha[:16]>` ids and registers an `ExternalDoc` graph entity. Was passing raw filesystem paths into the id graph, polluting it | nidhogg.py |
+| `query_graph_transitive` BFS: `list.pop(0)` (O(n²)) → `collections.deque.popleft` (O(1)) | graph.py |
+| `add_relation` symmetric-edge canonicalization: `contradicts` / `merges_with` / `co_occurs` endpoints sorted before storage so A↔B isn't duplicated as two edges | graph.py |
+| Tests: 2 new in `test_graph.py` — symmetric canonicalization + non-symmetric direction preservation | tests/ |
 
-**Implementation tasks:**
+### Deferred from PR3 → PR4 or beyond
 
-1. Decide `.shard` file root — propose `facts/` at repo root, env `NOVA_FACTS_DIR`. Add to `.gitignore` if user-personal, or keep tracked if curated team-shared (ask).
-2. New `nova_facts_search` MCP tool in `nova_server.py` — wraps `ShardDB.search()` (already in `shard_parser.py`).
-3. SQLite index lives at `facts_index.db`, rebuilt by NÓTT on `SESSION_START` (cheap because it's a separate small corpus).
-4. Modify `nova_shard_interact` (`nova_server.py:282`-ish) to call `nova_facts_search` first, prepend results to the loaded set, then run HUGINN.
-5. Tests: `test_facts_search.py` (FTS happy path, discrete-confidence filter, +1 only by default), `test_shard_interact_facts_pre_filter.py` (integration: facts surface alongside HUGINN hits).
-
-**Open question to resolve before starting D1:** is `facts/` curated team-shared (commit it) or user-personal (gitignore it)? Recommend user-personal initially with an `examples/` subfolder that is tracked.
-
-### D2 — Smaller integration fixes
-
-| Item | File | Notes |
-|---|---|---|
-| Startup `CLAUDE_API_KEY` absence warning | `mcp/nova_server.py` (init) | `logging.warning` listing degraded features (HUGINN, MUNINN, summaries) when key missing. Today: silent local-fallback |
-| `nidhogg.add_corroborated_by` writes shard ids, not paths | `mcp/nidhogg.py:424` | Currently passes a filesystem path as a graph target id, polluting the graph. Need an "ingested-doc → shard id" mapping during `nidhogg_ingest` |
-| `query_graph_transitive` BFS → `deque.popleft` | `mcp/graph.py:131` | Currently `list.pop(0)` = O(n²) |
-| `add_relation` symmetric-edge canonicalization | `mcp/graph.py:69-74` | Sort endpoints for symmetric edge types (`contradicts`, `merges_with`, `co_occurs`) so A↔B isn't stored as two edges |
+These were originally listed under D1 but not strictly required for the pre-filter to work:
+- True SQLite FTS5 (currently keyword AND-LIKE; fine for short queries)
+- NÓTT auto-rebuild on `SESSION_START` (right now `nova_facts_rebuild` is manual)
 
 ---
 

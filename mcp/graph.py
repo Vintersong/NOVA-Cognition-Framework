@@ -8,12 +8,23 @@ from __future__ import annotations
 
 import json
 import os
+from collections import deque
 from datetime import datetime
 
 from filelock import FileLock
 
 from atomic_io import atomic_write_json
 from config import GRAPH_FILE
+
+
+# Relation types whose meaning does not depend on direction. Endpoints are
+# canonicalised (sorted) before storage so A↔B is never duplicated as both
+# {source: A, target: B} and {source: B, target: A}.
+SYMMETRIC_RELATION_TYPES: frozenset[str] = frozenset({
+    "contradicts",
+    "merges_with",
+    "co_occurs",
+})
 
 
 # ═══════════════════════════════════════════════════════════
@@ -54,7 +65,14 @@ def add_shard_to_graph(shard_id: str, shard_data: dict):
 
 
 def add_relation(source_id: str, target_id: str, relation_type: str, notes: str = "", reason: str = ""):
-    """Add a directed relation between two shards. Deduplicates exact matches."""
+    """Add a directed relation between two shards. Deduplicates exact matches.
+
+    For symmetric relation types (e.g. ``contradicts``, ``merges_with``,
+    ``co_occurs``) the endpoints are canonicalised by sorting so A↔B is
+    stored as a single edge instead of two.
+    """
+    if relation_type in SYMMETRIC_RELATION_TYPES and target_id < source_id:
+        source_id, target_id = target_id, source_id
     graph = load_graph()
     relation = {
         "source": source_id,
@@ -125,11 +143,11 @@ def query_graph_transitive(
     graph = load_graph()
     relations = graph.get("relations", [])
     visited: set[str] = {root_id}
-    queue = [(root_id, 0, [root_id])]
+    queue: deque[tuple[str, int, list[str]]] = deque([(root_id, 0, [root_id])])
     results = []
 
     while queue:
-        current, depth, path = queue.pop(0)
+        current, depth, path = queue.popleft()
         if depth >= max_depth:
             continue
 

@@ -48,7 +48,7 @@ from config import (
     SHARD_DIR,
     MERGE_SIMILARITY_THRESHOLD,
 )
-from graph import add_corroborated_by
+from graph import add_corroborated_by, load_graph, save_graph
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
@@ -134,6 +134,22 @@ def _file_hash(path: str) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return "sha256:" + h.hexdigest()
+
+
+def _register_doc_entity(doc_id: str, path: str, source_type: str) -> None:
+    """Register an external doc as a graph entity so corroborated_by edges
+    point at proper ids rather than raw filesystem paths."""
+    graph = load_graph()
+    entities = graph.setdefault("entities", {})
+    if doc_id in entities:
+        return
+    entities[doc_id] = {
+        "type": "ExternalDoc",
+        "path": path,
+        "source_type": source_type,
+        "registered_at": datetime.now().isoformat(),
+    }
+    save_graph(graph)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -419,9 +435,14 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
             analysis=analysis,
         )
         # External doc at merge-candidate similarity confirms the shard's belief.
+        # Use a synthetic doc-id (`doc:<hash[:16]>`) instead of the raw file path
+        # so the graph stays a pure id graph; the file path is stored as the
+        # entity's metadata and the manifest still records the full path.
         if match["merge_candidate"]:
             try:
-                add_corroborated_by(shard_id, path)
+                doc_id = f"doc:{file_hash[:16]}"
+                _register_doc_entity(doc_id, path, source_type)
+                add_corroborated_by(shard_id, doc_id)
             except Exception:
                 pass
         annotated.append({
