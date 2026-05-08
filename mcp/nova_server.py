@@ -311,15 +311,27 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
     if not shard_ids and params.auto_select:
         inferred = True
         index = load_index() or update_index()
-        # ━━ HUGINN — fast first pass ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        huginn_result = await _huginn.retrieve(params.message, index)
-        huginn_confidence = huginn_result.max_confidence
-        retrieval = huginn_result
-        # ━━ MUNINN — deep pass if HUGINN not confident ━━━━━━━━━━━━━━━━━━━━━━
-        if not huginn_result.is_confident(_huginn.confidence_threshold):
-            retrieval = await _muninn.rerank(params.message, huginn_result, index)
-            muninn_used = True
-        shard_ids = retrieval.shard_ids or []
+        # ━━ HUGINN — fast first pass (outer 20s guard so call never hangs) ━━
+        try:
+            huginn_result = await asyncio.wait_for(
+                _huginn.retrieve(params.message, index),
+                timeout=20.0,
+            )
+            huginn_confidence = huginn_result.max_confidence
+            retrieval = huginn_result
+            # ━━ MUNINN — deep pass if HUGINN not confident ━━━━━━━━━━━━━━━━
+            if not huginn_result.is_confident(_huginn.confidence_threshold):
+                try:
+                    retrieval = await asyncio.wait_for(
+                        _muninn.rerank(params.message, huginn_result, index),
+                        timeout=20.0,
+                    )
+                    muninn_used = True
+                except asyncio.TimeoutError:
+                    retrieval = huginn_result
+            shard_ids = retrieval.shard_ids or []
+        except asyncio.TimeoutError:
+            shard_ids = []
         # ━━ NÓTT — lightweight session-start decay (fire-and-forget) ━━━━━━━━
         _hooks.emit(NovaHookEvent.SESSION_START)
 

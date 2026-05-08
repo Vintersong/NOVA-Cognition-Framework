@@ -202,7 +202,11 @@ class Huginn:
                 )
 
                 def _huginn_api_call() -> str:
-                    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+                    import httpx
+                    client = anthropic.Anthropic(
+                        api_key=CLAUDE_API_KEY,
+                        timeout=httpx.Timeout(_RAVEN_API_TIMEOUT, connect=5.0),
+                    )
                     response = client.messages.create(
                         model=HUGINN_MODEL,
                         max_tokens=512,
@@ -355,7 +359,18 @@ class Muninn:
         """
         from config import CLAUDE_API_KEY, MUNINN_MODEL
 
-        reranked = await asyncio.to_thread(self._local_rerank, query, candidates, index, top_n)
+        try:
+            reranked = await asyncio.wait_for(
+                asyncio.to_thread(self._local_rerank, query, candidates, index, top_n),
+                timeout=_RAVEN_API_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("MUNINN: local rerank timed out — passing through HUGINN result")
+            reranked = {
+                "shard_ids": candidates.shard_ids[:top_n],
+                "scores": {sid: candidates.scores.get(sid, 0.5) for sid in candidates.shard_ids[:top_n]},
+                "reasoning": {sid: "local: passthrough (timeout)" for sid in candidates.shard_ids[:top_n]},
+            }
         used_llm = False
         shard_ids = reranked["shard_ids"]
         scores = reranked["scores"]
@@ -400,7 +415,11 @@ class Muninn:
                 )
 
                 def _muninn_api_call() -> str:
-                    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+                    import httpx
+                    client = anthropic.Anthropic(
+                        api_key=CLAUDE_API_KEY,
+                        timeout=httpx.Timeout(_RAVEN_API_TIMEOUT, connect=5.0),
+                    )
                     response = client.messages.create(
                         model=MUNINN_MODEL,
                         max_tokens=1024,
@@ -451,7 +470,15 @@ class Muninn:
         Generate query embedding, cosine-compare against candidate shard embeddings.
         Falls back to passthrough if embeddings unavailable.
         """
-        from nova_embeddings_local import generate_local_embedding
+        from nova_embeddings_local import get_embedding_model_if_ready, generate_local_embedding
+
+        # Non-blocking: skip cosine rerank if model is still loading (prewarm in progress).
+        if get_embedding_model_if_ready() is None:
+            return {
+                "shard_ids": candidates.shard_ids[:top_n],
+                "scores": {sid: candidates.scores.get(sid, 0.5) for sid in candidates.shard_ids[:top_n]},
+                "reasoning": {sid: "local: passthrough (model loading)" for sid in candidates.shard_ids[:top_n]},
+            }
 
         query_embedding = generate_local_embedding(query)
 

@@ -27,6 +27,7 @@ Usage tracking:
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -168,6 +169,17 @@ class Nott:
         self._executor = ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="nott"
         )
+        # On `evolve.restart_requested` reload the server creates a new Nott
+        # without disposing the old one. atexit + close() ensures the threads
+        # don't pile up across reloads.
+        atexit.register(self.close)
+
+    def close(self) -> None:
+        """Shut down the thread pool. Idempotent."""
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
 
     async def run(
         self,

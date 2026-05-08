@@ -283,11 +283,25 @@ class CommitResult:
     reason: str = ""
 
 
+_DEFAULT_COMMIT_ROOTS = ("mcp/", "forgemaster/", "tests/", "docs/")
+
+
+def _allowed_commit_roots() -> tuple[str, ...]:
+    """
+    Positive allowlist of path prefixes ``_auto_commit`` may stage.
+    Defaults to NOVA's source + skills + tests + docs. Override via
+    ``EVOLVE_COMMIT_ROOTS`` (comma-separated).
+    """
+    raw = os.environ.get("EVOLVE_COMMIT_ROOTS", "")
+    roots = [r.strip() for r in raw.split(",") if r.strip()] or list(_DEFAULT_COMMIT_ROOTS)
+    return tuple(r if r.endswith("/") else r + "/" for r in roots)
+
+
 def _auto_commit(dry_run: bool = False) -> CommitResult:
     """
-    Stage non-runtime files, verify tests pass, commit, push.
+    Stage allowlisted paths, verify tests pass, commit, push.
     If mcp/ source changed → write restart_requested flag.
-    Rolls back on test failure.
+    On test failure: rolls back via ``git stash push`` (recoverable, not destructive).
     """
     result = CommitResult()
 
@@ -297,17 +311,16 @@ def _auto_commit(dry_run: bool = False) -> CommitResult:
             ["git", "status", "--porcelain"],
             capture_output=True, text=True, cwd=str(_REPO_ROOT),
         )
+        allowed_roots = _allowed_commit_roots()
         changed_files = [
             line[3:].strip()
             for line in status.stdout.splitlines()
             if line.strip()
-            and not line[3:].strip().startswith((".sdd/", "evolve_cycles.jsonl", "nova_usage.jsonl",
-                                                  "shard_index.json", "shard_graph.json",
-                                                  "nidhogg_manifest.json", "shards/"))
+            and any(line[3:].strip().startswith(root) for root in allowed_roots)
         ]
 
         if not changed_files:
-            result.reason = "no changes to commit"
+            result.reason = "no changes to commit (none under allowlist)"
             return result
 
         if dry_run:
@@ -317,15 +330,18 @@ def _auto_commit(dry_run: bool = False) -> CommitResult:
         # Run tests before committing
         test_result = _run_tests()
         if test_result.ran and test_result.failed > 0:
-            # Discard only the working-tree changes evolve detected.
-            # Prior version used `git checkout -- .` which wiped the entire
-            # working tree — including files evolve never touched.
+            # Stash the changes (recoverable) instead of `git checkout --`
+            # which would silently destroy any parallel edits the user made.
+            stash_label = f"evolve auto-rollback {datetime.now(UTC).isoformat(timespec='seconds')}"
             subprocess.run(
-                ["git", "checkout", "--"] + changed_files,
+                ["git", "stash", "push", "-m", stash_label, "--"] + changed_files,
                 cwd=str(_REPO_ROOT),
                 capture_output=True,
             )
-            result.reason = f"tests failed ({test_result.failed} failures) — rolled back"
+            result.reason = (
+                f"tests failed ({test_result.failed} failures) — "
+                f"changes stashed as: {stash_label!r} (recover with `git stash list`)"
+            )
             return result
 
         # Stage and commit

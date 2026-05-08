@@ -36,3 +36,4 @@ output/
 
 # Claude Code local config — user-specific permissions and allowlists
 **/.claude/settings.local.json
+/.sdd/
