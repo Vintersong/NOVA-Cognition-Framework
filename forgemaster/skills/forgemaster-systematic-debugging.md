@@ -1,3 +1,6 @@
+@@verification: unverified
+@@capabilities: *
+
 # Skill: forgemaster-systematic-debugging
 
 ## When to Load

@@ -1,3 +1,6 @@
+@@verification: unverified
+@@capabilities: *
+
 # Skill: forgemaster-heavyskill
 
 ## When to Load

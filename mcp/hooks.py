@@ -7,7 +7,8 @@ with a clean event-driven registry pattern.
 
 Events:
     SESSION_START    — fired on nova_shard_interact entry
-    PRE_TOOL_USE     — fired before any mutating tool executes (reserved for future use)
+    PRE_TOOL_USE     — fired before any mutating tool executes; wired to the
+                       CapabilityGate in nova_server.py (skill verification layer)
     POST_SPRINT      — fired after nova_shard_update completes
     COUNT_THRESHOLD  — fired when shard count reaches NOTT_COUNT_THRESHOLD
 
@@ -16,6 +17,8 @@ Usage in nova_server.py:
     _hooks.emit(NovaHookEvent.POST_SPRINT)
     _hooks.emit(NovaHookEvent.COUNT_THRESHOLD)
     await _hooks.emit_wait(NovaHookEvent.POST_SPRINT)  # for explicit invocations
+    # PRE_TOOL_USE is dispatched synchronously via CapabilityGate.async_check,
+    # not through the hook registry, because it must be able to raise and block.
 
 Registration (at startup, after singletons are ready):
     _hooks.register(NovaHookEvent.SESSION_START,
@@ -53,7 +56,7 @@ def _on_task_done(task: asyncio.Task[Any]) -> None:
 
 class NovaHookEvent(Enum):
     SESSION_START    = "session_start"
-    PRE_TOOL_USE     = "pre_tool_use"     # reserved — not yet wired
+    PRE_TOOL_USE     = "pre_tool_use"     # wired via CapabilityGate (skill verification layer)
     POST_SPRINT      = "post_sprint"
     COUNT_THRESHOLD  = "count_threshold"
 

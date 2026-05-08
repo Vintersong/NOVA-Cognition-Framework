@@ -1,3 +1,6 @@
+@@verification: unverified
+@@capabilities: *
+
 # Skill: forgemaster-qa-review
 
 ## When to Load

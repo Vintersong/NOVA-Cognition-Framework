@@ -118,6 +118,10 @@ from forgemaster_runtime import ForgemasterRuntime
 from ravens import Huginn, Muninn
 from nott import Nott, NottTrigger
 from hooks import NovaHookRegistry, NovaHookEvent
+from skill_manifest import SkillManifest
+from audit_log import AuditLog
+from capability_gate import CapabilityGate, CapabilityDenied, HITLDenied
+from config import SKILL_AUDIT_LOG_FILE
 
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Gemini"))
 from gemini_mcp import register_gemini_tools
@@ -177,6 +181,36 @@ _permission_context: ToolPermissionContext = ToolPermissionContext.from_iterable
 # Publish to permissions.py so externally-registered tool handlers
 # (nidhogg, evolve, gemini) see the same policy.
 _set_active_permissions(_permission_context)
+
+# === Skill verification layer ===
+# Audit log and capability gate are process-scoped singletons.
+# _active_skill defaults to OPERATOR_DIRECT (tested + wildcard) so that
+# direct MCP calls from Claude Code never fire HITL — only Forgemaster
+# sprint turns operating under a loaded skill manifest use the gate.
+import uuid as _uuid
+_skill_audit_log: AuditLog = AuditLog(SKILL_AUDIT_LOG_FILE)
+_capability_gate: CapabilityGate = CapabilityGate(audit_log=_skill_audit_log)
+_active_skill: SkillManifest = SkillManifest.OPERATOR_DIRECT
+_server_session_id: str = _uuid.uuid4().hex
+
+
+async def _gate_check(tool_name: str, target: str | None = None) -> str | None:
+    """
+    Run the capability gate for *tool_name* against the current active skill.
+
+    Returns None if the call may proceed, or a JSON error string to return
+    directly from the tool handler if the call is blocked or denied.
+    """
+    try:
+        await _capability_gate.async_check(
+            tool_name, _active_skill, _server_session_id, target
+        )
+        return None
+    except CapabilityDenied as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+    except HITLDenied as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+
 
 # === Session usage tracking ===
 _session_usage: UsageSummary = UsageSummary()
@@ -933,6 +967,8 @@ async def nova_shard_archive(params: ShardArchiveInput) -> str:
     """Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion."""
     if _permission_context.blocks("nova_shard_archive"):
         return _permission_error("nova_shard_archive")
+    if (gate_err := await _gate_check("nova_shard_archive", params.shard_id)):
+        return gate_err
     try:
         data, filepath = load_shard(params.shard_id)
     except FileNotFoundError:
@@ -961,6 +997,8 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
     """
     if _permission_context.blocks("nova_shard_forget"):
         return _permission_error("nova_shard_forget")
+    if (gate_err := await _gate_check("nova_shard_forget", params.shard_id)):
+        return gate_err
     try:
         data, filepath = load_shard(params.shard_id)
     except FileNotFoundError:
@@ -999,6 +1037,8 @@ async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
     """
     if _permission_context.blocks("nova_shard_consolidate"):
         return _permission_error("nova_shard_consolidate")
+    if (gate_err := await _gate_check("nova_shard_consolidate")):
+        return gate_err
 
     # Awaited — user explicitly requested this, blocking is acceptable
     report = await _nott.run(NottTrigger.SCHEDULED, dry_run=params.dry_run)
@@ -1202,6 +1242,8 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
     """
     if _permission_context.blocks("nova_forgemaster_sprint"):
         return _permission_error("nova_forgemaster_sprint")
+    if (gate_err := await _gate_check("nova_forgemaster_sprint", params.sprint_id)):
+        return gate_err
 
     shard_id_list: list[str] = (
         [s.strip() for s in params.shard_ids.split(",") if s.strip()]
@@ -1209,7 +1251,12 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
         else []
     )
 
-    runtime = ForgemasterRuntime(_session_store, _permission_context)
+    runtime = ForgemasterRuntime(
+        _session_store,
+        _permission_context,
+        gate=_capability_gate,
+        audit_log=_skill_audit_log,
+    )
     try:
         summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list)
     except Exception as exc:

@@ -1,3 +1,6 @@
+@@verification: unverified
+@@capabilities: *
+
 # Skill: forgemaster-implementation
 
 ## When to Load
