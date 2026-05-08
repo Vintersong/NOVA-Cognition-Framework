@@ -16,7 +16,7 @@ shard_access.jsonl
 shards/
 nova_sessions/
 donors/
-intake/chats/
+intake/
 
 # Output / experiments
 output/
