@@ -1,3 +1,6 @@
+@@verification: unverified
+@@capabilities: *
+
 # Skill: forgemaster-writing-plans
 
 ## When to Load
