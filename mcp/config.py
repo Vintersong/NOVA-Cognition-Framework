@@ -102,3 +102,13 @@ WIKI_SCHEMA_FILE  = os.environ.get("NOVA_WIKI_SCHEMA",  str(_REPO_ROOT / "wiki_s
 WIKI_INDEX_FILE   = os.environ.get("NOVA_WIKI_INDEX",   str(_REPO_ROOT / "wiki_index.json"))
 WIKI_ROUTING_MODEL   = os.environ.get("NOVA_WIKI_ROUTING_MODEL",   "claude-haiku-4-5-20251001")
 WIKI_SYNTHESIS_MODEL = os.environ.get("NOVA_WIKI_SYNTHESIS_MODEL", "claude-sonnet-4-6")
+
+# ── Skill verification layer ──────────────────────────────────────────────────
+# SQLite audit log for HITL lifecycle events (irreversible.request/decision/executed,
+# capability.denied) and post-session biconditional checks.
+SKILL_AUDIT_LOG_FILE = os.environ.get(
+    "NOVA_SKILL_AUDIT_LOG", str(_REPO_ROOT / "skill_audit.db")
+)
+# NOVA_HITL_BROKER: "interactive" (terminal prompt, dev default) | "policy" (always-deny)
+HITL_BROKER    = os.environ.get("NOVA_HITL_BROKER",    "interactive")
+HITL_TIMEOUT_S = int(os.environ.get("NOVA_HITL_TIMEOUT_S", "30"))

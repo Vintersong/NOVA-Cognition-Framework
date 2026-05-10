@@ -27,10 +27,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from config import HUGINN_MODEL, MUNINN_MODEL, GEMINI_MODEL
+from config import HUGINN_MODEL, MUNINN_MODEL, GEMINI_MODEL, SHARD_DIR
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
 from graph import add_corroborated_by
+from skill_manifest import SkillManifest, parse_skill_manifest
+from capability_gate import CapabilityGate, CapabilityDenied, HITLDenied
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +226,14 @@ def _extract_target_file(design_doc: str) -> Optional[str]:
     return None
 
 
+def _snapshot_corpus() -> set[str]:
+    """Return the set of shard JSON filename stems currently on disk."""
+    shard_path = Path(SHARD_DIR)
+    if not shard_path.exists():
+        return set()
+    return {p.stem for p in shard_path.glob("*.json")}
+
+
 _DEFAULT_WRITE_ROOTS = ("output", "intake")
 
 
@@ -309,9 +319,13 @@ class ForgemasterRuntime:
         self,
         session_store: SessionStore,
         permission_context: ToolPermissionContext,
+        gate: Optional[CapabilityGate] = None,
+        audit_log=None,
     ) -> None:
         self._session_store = session_store
         self._permission_context = permission_context
+        self._gate = gate
+        self._audit = audit_log
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -366,18 +380,20 @@ class ForgemasterRuntime:
         role: str,
         skill_path: str,
         prompt: str,
-    ) -> tuple[NovaSession, str]:
+    ) -> tuple[NovaSession, str, SkillManifest]:
         """
         Execute a single agent turn with real LLM dispatch.
 
         1. Read the skill file at *skill_path* relative to the repo root.
-        2. Build a prompt of (skill_content + '---' + prompt).
-        3. Append as a user message to *session*.
-        4. Dispatch to the model assigned to *role* (see _ROLE_TO_MODEL).
-        5. Append the response as an assistant message.
-        6. Emit a JSONL event to FORGEMASTER_EVENT_LOG if configured.
+        2. Parse @@verification / @@capabilities from the skill content.
+        3. Build a prompt of (skill_content + '---' + prompt).
+        4. Append as a user message to *session*.
+        5. Dispatch to the model assigned to *role* (see _ROLE_TO_MODEL).
+        6. Append the response as an assistant message.
+        7. Emit a JSONL event to FORGEMASTER_EVENT_LOG if configured.
 
-        Returns the updated session and the raw response text.
+        Returns the updated session, the raw response text, and the parsed
+        SkillManifest for use by the caller (e.g. capability gate checks).
         """
         resolved = _REPO_ROOT / skill_path
         skill_content: str
@@ -397,6 +413,9 @@ class ForgemasterRuntime:
                 resolved,
             )
             skill_content = f"[skill file not found: {skill_path}]"
+
+        # Parse @@verification / @@capabilities from the skill header block.
+        active_skill = parse_skill_manifest(skill_id=skill_path, content=skill_content)
 
         user_content = f"{skill_content}\n\n---\n\n{prompt}"
         session = session.add_message("user", user_content)
@@ -435,7 +454,7 @@ class ForgemasterRuntime:
             role, session.session_id, model_used, in_tok, out_tok, latency_ms,
         )
 
-        return session, response_text
+        return session, response_text, active_skill
 
     def run_sprint(
         self,
@@ -463,8 +482,11 @@ class ForgemasterRuntime:
 
         session = self.bootstrap(sprint_id, shard_ids or [])
 
+        # Corpus snapshot before any writes — used by biconditional check at end.
+        corpus_before = _snapshot_corpus()
+
         # ── Turn 1: Orchestrator ──────────────────────────────────────────
-        session, orch_out = self.run_turn(
+        session, orch_out, _ = self.run_turn(
             session,
             role="orchestrator",
             skill_path="forgemaster/skills/forgemaster-orchestrator.md",
@@ -477,7 +499,7 @@ class ForgemasterRuntime:
         )
 
         # ── Turn 2: Planner ───────────────────────────────────────────────
-        session, plan_out = self.run_turn(
+        session, plan_out, _ = self.run_turn(
             session,
             role="planner",
             skill_path="forgemaster/skills/forgemaster-writing-plans.md",
@@ -493,7 +515,7 @@ class ForgemasterRuntime:
         )
 
         # ── Turn 3: Implementer ───────────────────────────────────────────
-        session, impl_out = self.run_turn(
+        session, impl_out, impl_skill = self.run_turn(
             session,
             role="implementer",
             skill_path="forgemaster/skills/forgemaster-implementation.md",
@@ -510,44 +532,40 @@ class ForgemasterRuntime:
         )
 
         # Write implementer output to disk if a target file is named in the design doc.
+        # Gate check: the implementer skill must declare fs.write.irrev.
         impl_file_path: Optional[str] = None
         target_rel = _extract_target_file(design_doc)
         if target_rel:
-            try:
-                # HITL Gate intercept for Phase 3
-                from skill_verification import SkillManifest, get_hitl_gate, CapabilityDenied
+            if self._gate:
                 try:
-                    impl_skill_content = (_REPO_ROOT / "forgemaster/skills/forgemaster-implementation.md").read_text(encoding="utf-8")
-                except Exception:
-                    impl_skill_content = ""
-                
-                active_skill = SkillManifest.parse(impl_skill_content)
-                gate = get_hitl_gate()
-                
-                # Check capability gate before irreversible disk write
-                gate.execute_with_gate(
-                    session_id=session.session_id, 
-                    tool_name="fs.write.irrev", 
-                    args={"target_rel": target_rel}, 
-                    active_skill=active_skill, 
-                    is_irreversible=True
-                )
-                
-                code = _strip_code_fences(impl_out)
-                impl_file_path = _write_implementation_file(target_rel, code)
-                logger.info(
-                    "ForgemasterRuntime.run_sprint: wrote implementation to %s",
-                    impl_file_path,
-                )
-            except CapabilityDenied as e:
-                logger.error("ForgemasterRuntime.run_sprint: HITL Gate blocked write: %s", e)
-                impl_file_path = None
-                # Let the review process catch that the file wasn't written.
-            except Exception as exc:
-                logger.error(
-                    "ForgemasterRuntime.run_sprint: failed to write implementation file %s — %s",
-                    target_rel, exc,
-                )
+                    self._gate.check_capability_tag(
+                        "fs.write.irrev",
+                        True,  # is_irreversible
+                        impl_skill,
+                        sprint_id,
+                        target=target_rel,
+                    )
+                except (CapabilityDenied, HITLDenied) as exc:
+                    logger.warning(
+                        "ForgemasterRuntime.run_sprint: file write blocked by gate "
+                        "target=%s skill=%s — %s",
+                        target_rel, impl_skill.skill_id, exc,
+                    )
+                    target_rel = None  # suppress the write
+
+            if target_rel:
+                try:
+                    code = _strip_code_fences(impl_out)
+                    impl_file_path = _write_implementation_file(target_rel, code)
+                    logger.info(
+                        "ForgemasterRuntime.run_sprint: wrote implementation to %s",
+                        impl_file_path,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "ForgemasterRuntime.run_sprint: failed to write implementation file %s — %s",
+                        target_rel, exc,
+                    )
 
         # ── Turn 4: Reviewer ──────────────────────────────────────────────
         # Reviewer sees the on-disk file if written, else the raw implementer output.
@@ -561,7 +579,7 @@ class ForgemasterRuntime:
                     exc,
                 )
 
-        session, review_out = self.run_turn(
+        session, review_out, _ = self.run_turn(
             session,
             role="reviewer",
             skill_path="forgemaster/skills/forgemaster-code-review.md",
@@ -583,6 +601,16 @@ class ForgemasterRuntime:
             "total_tokens": session.usage.total_tokens,
         }
         self._session_store.flush(sprint_id)
+
+        # ── Biconditional post-run audit check ───────────────────────────
+        # Corpus snapshot after all writes; compared against audit log to verify
+        # that every shard change is explained by an executed audit record.
+        corpus_after = _snapshot_corpus()
+        biconditional_result: Optional[dict] = None
+        if self._audit:
+            biconditional_result = self._audit.run_biconditional_check(
+                sprint_id, corpus_before, corpus_after
+            )
 
         # ── Outcome-based reinforcement ───────────────────────────────────
         review_head = review_out.strip().splitlines()[0] if review_out.strip() else ""
@@ -637,6 +665,7 @@ class ForgemasterRuntime:
             "status": "complete",
             "outcome": "pass" if sprint_passed else "fail",
             "corroborated_shards": contributing_shards if sprint_passed else [],
+            "biconditional_check": biconditional_result,
         }
 
     def get_permitted_lanes(

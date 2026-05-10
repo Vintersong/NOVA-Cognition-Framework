@@ -1,5 +1,16 @@
 # NOVA-Cognition-Framework
 
+![MCP](https://img.shields.io/badge/MCP-server-6B47ED?style=flat-square&logo=anthropic&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-Flash-4285F4?style=flat-square&logo=google&logoColor=white)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+![Shard Health](https://github.com/Vintersong/NOVA-Cognition-Framework/actions/workflows/shard-health.yml/badge.svg)
+
+> **Author:** Andrei Moldovean · conceived April 2025 · first public commit March 2026  
+> Original concepts: shard memory architecture, HUGINN/MUNINN retrieval pipeline, NÓTT daemon, confidence decay, shard consolidation, Forgemaster orchestration.
+
+---
+
 A unified repository containing **NOVA** (persistent AI memory) and **Forgemaster** (multi-agent orchestration). NOVA is the memory layer. Forgemaster is the execution layer. They share one repo and one data store.
 
 ---
@@ -334,6 +345,22 @@ Read-only resources exposed alongside the tools:
 | `NIDHOGG_MANIFEST_FILE` | `nidhogg_manifest.json` | Ingested-hash manifest |
 | `NIDHOGG_SIMILARITY_THRESHOLD` | `0.55` | Shard-match threshold for annotation |
 | `FORGEMASTER_EVENT_LOG` | — | Override path for sprint JSONL event log |
+
+---
+
+## Prior Art & Attribution
+
+Original architecture documented before any public commit. These documents establish authorship of the core concepts:
+
+| Document | Date |
+|---|---|
+| NOVA Framework (concept doc) | April 2025 |
+| Executive Summary | April 2025 |
+| NOVA Shard Memory Architecture | April 2025 |
+| Unified Consciousness Model | April 2025 |
+| First public commit | March 2026 |
+
+Original named concepts in this repository: **shard** (memory unit), **HUGINN/MUNINN** (retrieval pipeline), **NÓTT** (maintenance daemon), **confidence decay**, **shard consolidation**, **Forgemaster** (orchestration layer).
 
 ---
 

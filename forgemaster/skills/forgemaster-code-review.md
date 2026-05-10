@@ -1,5 +1,6 @@
 @@verification: unverified
 @@capabilities: *
+
 # Skill: forgemaster-code-review
 
 ## When to Load
