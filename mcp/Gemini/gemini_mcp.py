@@ -38,6 +38,8 @@ class ExecuteTicketInput(BaseModel):
     ticket: str = Field(..., description="Structured task ticket describing what to generate", min_length=10)
     context: Optional[str] = Field(default="", description="Skill file content, NOVA shard context, and any codebase files relevant to this ticket")
     output_file: Optional[str] = Field(default="", description="If provided, save output to this filename in the working directory")
+    skill_path: Optional[str] = Field(default="", description="Repo-relative path to the skill manifest that authorises this call (e.g. forgemaster/skills/forgemaster-implementation.md). When set, the gate parses @@verification and @@capabilities from this file; otherwise the call runs under the operator-direct manifest.")
+    session_id: Optional[str] = Field(default="", description="Sprint or session identifier for audit-log correlation. Defaults to 'gemini_ticket'.")
 
 
 class LoadFileInput(BaseModel):
@@ -45,9 +47,13 @@ class LoadFileInput(BaseModel):
     filepath: str = Field(..., description="Absolute path to a file to load as context")
 
 
-def register_gemini_tools(mcp) -> None:
+def register_gemini_tools(mcp, gate=None, audit_log=None) -> None:
     """Register Gemini worker tools onto an existing FastMCP instance.
-    Called by nova_server.py so these tools are served by the single NOVA server.
+
+    ``gate`` (``CapabilityGate``) and ``audit_log`` (``AuditLog``) are passed
+    by ``nova_server.py`` so the worker shares the single skill-verification
+    layer of the process. When omitted, file writes proceed without gating
+    (useful for direct unit invocation outside the MCP server).
     """
 
     @mcp.tool(
@@ -90,29 +96,78 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
             result = re.sub(r'\n```$', '', result)
 
             if params.output_file:
-                # HITL Capability Gate intercept for Phase 3
-                from skill_verification import SkillManifest, get_hitl_gate, CapabilityDenied
-                active_skill = SkillManifest.parse(params.context) if params.context else SkillManifest(None, set()) # Defaults to unverified
+                # Resolve the active skill manifest from a dedicated file path
+                # (NOT from params.context, which is a mixed shards+code blob
+                # and would never parse correctly as a manifest).
+                from skill_manifest import SkillManifest, parse_skill_manifest
+                from capability_gate import CapabilityDenied, HITLDenied
 
-                try:
-                    gate = get_hitl_gate()
-                    gate.execute_with_gate(
-                        session_id="gemini_ticket", 
-                        tool_name="fs.write.irrev", 
-                        args={"output_file": params.output_file}, 
-                        active_skill=active_skill, 
-                        is_irreversible=True
-                    )
-                except CapabilityDenied as e:
-                    return json.dumps({"status": "error", "message": f"HITL Gate Capability Denied: {e}"})
+                active_skill = SkillManifest.OPERATOR_DIRECT
+                if params.skill_path:
+                    try:
+                        skill_file = (_REPO_ROOT / params.skill_path).resolve()
+                        if skill_file.is_relative_to(_REPO_ROOT) and skill_file.is_file():
+                            active_skill = parse_skill_manifest(
+                                params.skill_path,
+                                skill_file.read_text(encoding="utf-8"),
+                            )
+                    except Exception:
+                        # Fall back to operator-direct; gate decides what proceeds.
+                        active_skill = SkillManifest.OPERATOR_DIRECT
+
+                session_id = params.session_id or "gemini_ticket"
+                request_id = None
+                if gate is not None:
+                    try:
+                        request_id = gate.check_capability_tag(
+                            "fs.write.irrev",
+                            True,  # is_irreversible
+                            active_skill,
+                            session_id,
+                            virtual_tool_name="gemini_execute_ticket",
+                            target=params.output_file,
+                        )
+                    except (CapabilityDenied, HITLDenied) as exc:
+                        return json.dumps({"status": "error", "message": f"Capability gate denied: {exc}"})
 
                 output_path = (_WORKSPACE_DIR / params.output_file).resolve()
                 if not output_path.is_relative_to(_WORKSPACE_DIR.resolve()):
+                    if request_id is not None and audit_log is not None:
+                        try:
+                            audit_log.log_executed(
+                                session_id=session_id,
+                                request_id=request_id,
+                                tool_name="gemini_execute_ticket",
+                                skill_id=active_skill.skill_id,
+                                verification=active_skill.verification.value,
+                                target=params.output_file,
+                                ok=False,
+                            )
+                        except Exception:
+                            pass
                     return json.dumps({"status": "error", "message": "Access denied: output path is outside the allowed workspace directory."})
-                os.makedirs(output_path.parent, exist_ok=True)
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(result)
-                return json.dumps({"status": "success", "saved_to": str(output_path), "code": result})
+
+                write_ok = False
+                try:
+                    os.makedirs(output_path.parent, exist_ok=True)
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(result)
+                    write_ok = True
+                    return json.dumps({"status": "success", "saved_to": str(output_path), "code": result})
+                finally:
+                    if request_id is not None and audit_log is not None:
+                        try:
+                            audit_log.log_executed(
+                                session_id=session_id,
+                                request_id=request_id,
+                                tool_name="gemini_execute_ticket",
+                                skill_id=active_skill.skill_id,
+                                verification=active_skill.verification.value,
+                                target=params.output_file,
+                                ok=write_ok,
+                            )
+                        except Exception:
+                            pass
 
             return json.dumps({"status": "success", "code": result})
 

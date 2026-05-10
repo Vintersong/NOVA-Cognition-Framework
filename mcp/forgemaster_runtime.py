@@ -476,10 +476,6 @@ class ForgemasterRuntime:
 
         Each turn's output is passed forward as context to the next turn.
         """
-        # Phase 4: Snapshot corpus before sprint
-        from skill_verification import snapshot_corpus, run_biconditional_check, BiconditionalFailed
-        corpus_before = snapshot_corpus()
-
         session = self.bootstrap(sprint_id, shard_ids or [])
 
         # Corpus snapshot before any writes — used by biconditional check at end.
@@ -534,11 +530,12 @@ class ForgemasterRuntime:
         # Write implementer output to disk if a target file is named in the design doc.
         # Gate check: the implementer skill must declare fs.write.irrev.
         impl_file_path: Optional[str] = None
+        impl_request_id: Optional[str] = None
         target_rel = _extract_target_file(design_doc)
         if target_rel:
             if self._gate:
                 try:
-                    self._gate.check_capability_tag(
+                    impl_request_id = self._gate.check_capability_tag(
                         "fs.write.irrev",
                         True,  # is_irreversible
                         impl_skill,
@@ -554,9 +551,11 @@ class ForgemasterRuntime:
                     target_rel = None  # suppress the write
 
             if target_rel:
+                write_ok = False
                 try:
                     code = _strip_code_fences(impl_out)
                     impl_file_path = _write_implementation_file(target_rel, code)
+                    write_ok = True
                     logger.info(
                         "ForgemasterRuntime.run_sprint: wrote implementation to %s",
                         impl_file_path,
@@ -566,6 +565,23 @@ class ForgemasterRuntime:
                         "ForgemasterRuntime.run_sprint: failed to write implementation file %s — %s",
                         target_rel, exc,
                     )
+                finally:
+                    if impl_request_id is not None and self._audit is not None:
+                        try:
+                            self._audit.log_executed(
+                                session_id=sprint_id,
+                                request_id=impl_request_id,
+                                tool_name="fs.write.irrev",
+                                skill_id=impl_skill.skill_id,
+                                verification=impl_skill.verification.value,
+                                target=target_rel,
+                                ok=write_ok,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "ForgemasterRuntime.run_sprint: log_executed failed — %s",
+                                exc,
+                            )
 
         # ── Turn 4: Reviewer ──────────────────────────────────────────────
         # Reviewer sees the on-disk file if written, else the raw implementer output.
@@ -605,11 +621,14 @@ class ForgemasterRuntime:
         # ── Biconditional post-run audit check ───────────────────────────
         # Corpus snapshot after all writes; compared against audit log to verify
         # that every shard change is explained by an executed audit record.
+        # files_written reflects the implementer-target relative path (matches
+        # the value logged into the audit record as ``target``).
         corpus_after = _snapshot_corpus()
+        files_written: set[str] = {target_rel} if (target_rel and impl_file_path) else set()
         biconditional_result: Optional[dict] = None
         if self._audit:
             biconditional_result = self._audit.run_biconditional_check(
-                sprint_id, corpus_before, corpus_after
+                sprint_id, corpus_before, corpus_after, files_written=files_written
             )
 
         # ── Outcome-based reinforcement ───────────────────────────────────

@@ -129,7 +129,7 @@ confidence *= (1 - NOVA_DECAY_RATE)  # default 0.05/period, floor 0.1
     ↓
 confidence < NOVA_CONFIDENCE_LOW (0.4)  →  tag: low_confidence
     ↓
-confidence < NOVA_RECENT_DAYS (3d)  →  tag: recent
+last accessed < NOVA_RECENT_DAYS (3d)  →  tag: recent
     ↓
 not accessed > NOVA_STALE_DAYS (14d)  →  tag: stale
 ```
