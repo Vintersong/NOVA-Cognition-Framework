@@ -204,7 +204,7 @@ class AuditLog:
         Verify corpus delta matches executed audit records, partitioned by target type.
 
         Shard check  — D = corpus_after - corpus_before
-                        S_shards = targets from shard-tool records (nova_shard_archive etc.)
+                        S_shards = targets from shard-tool records
                         F1 unaccounted_changes: D - S_shards (gate bypass)
                         F2 phantom_records:     S_shards - D (spurious record)
 
@@ -236,7 +236,10 @@ class AuditLog:
             file_unaccounted = sorted(files_written - file_S)
             file_phantom = sorted(file_S - files_written)
 
-        passed = not unaccounted and not phantom and not file_unaccounted and not file_phantom
+        passed = (
+            not unaccounted and not phantom
+            and not file_unaccounted and not file_phantom
+        )
 
         result = {
             "session_id": session_id,
@@ -258,7 +261,8 @@ class AuditLog:
             )
         else:
             logger.info(
-                "audit_log.biconditional_check PASSED session=%s shard_delta=%d file_delta=%d",
+                "audit_log.biconditional_check PASSED session=%s "
+                "shard_delta=%d file_delta=%d",
                 session_id, len(D), len(file_S),
             )
 

@@ -339,7 +339,8 @@ class CapabilityGate:
                 virtual_tool_name, cap_tag, active_skill.skill_id,
             )
             raise CapabilityDenied(
-                f"Capability '{cap_tag}' not declared in skill '{active_skill.skill_id}'"
+                f"Capability '{cap_tag}' not declared in "
+                f"skill '{active_skill.skill_id}'"
             )
 
         if not is_irreversible:
@@ -347,7 +348,9 @@ class CapabilityGate:
 
         v = active_skill.verification
         if v == VerificationLevel.UNVERIFIED:
-            self._run_hitl(virtual_tool_name, active_skill, session_id, request_id, target)
+            self._run_hitl(
+                virtual_tool_name, active_skill, session_id, request_id, target
+            )
             return
 
         if self._audit:
