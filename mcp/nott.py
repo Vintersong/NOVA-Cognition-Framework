@@ -239,7 +239,48 @@ class Nott:
     # ── Decay pass ───────────────────────────────────────────────────────
 
     def _decay_pass_sync(self, index: dict, dry_run: bool) -> list[dict]:
-        """Synchronous decay — runs in a thread to avoid blocking the event loop."""
+        """Synchronous decay — runs in a thread to avoid blocking the event loop.
+
+        Fast path: vectorise confidence/last_used over the Arrow cache to pick
+        decay candidates, then re-read each via load_shard and mutate only
+        ``meta_tags.confidence`` so every other on-disk field round-trips
+        untouched. Falls back to the per-shard loop when pyarrow is absent.
+        """
+        try:
+            from arrow_cache import ARROW_AVAILABLE, get_arrow_cache
+        except Exception:
+            ARROW_AVAILABLE = False
+            get_arrow_cache = None  # type: ignore[assignment]
+
+        if ARROW_AVAILABLE:
+            try:
+                from config import DECAY_RATE, DECAY_INTERVAL_DAYS
+                cache = get_arrow_cache()
+                candidates = cache.decay_candidates(
+                    now=now_utc(),
+                    decay_rate=DECAY_RATE,
+                    interval_days=DECAY_INTERVAL_DAYS,
+                )
+                decayed: list[dict] = []
+                for shard_id, old_conf, new_conf in candidates:
+                    try:
+                        data, filepath = self._load_shard(shard_id)
+                    except FileNotFoundError:
+                        continue
+                    data.setdefault("meta_tags", {})["confidence"] = round(new_conf, 4)
+                    decayed.append({
+                        "shard_id": shard_id,
+                        "old_confidence": round(old_conf, 4),
+                        "new_confidence": round(new_conf, 4),
+                    })
+                    if not dry_run:
+                        self._save_shard(filepath, data)
+                return decayed
+            except Exception:
+                # Any failure in the Arrow fast path falls through to the
+                # legacy loop below — never let a maintenance cycle abort.
+                pass
+
         decayed = []
         for shard_id, entry in list(index.items()):
             tags = entry.get("tags", [])
@@ -308,7 +349,43 @@ class Nott:
     # ── Merge suggestions pass ───────────────────────────────────────────
 
     def _merge_pass_sync(self, index: dict) -> list[dict]:
-        """Synchronous merge scan — runs in a thread to avoid blocking the event loop."""
+        """Synchronous merge scan — runs in a thread to avoid blocking the event loop.
+
+        Fast path: one ``(k, 384) @ (384, k)`` matmul over the cached embedding
+        matrix instead of the legacy O(N²) per-shard JSON read loop. Returns
+        the same dict shape (shard_a, shard_b, similarity, question_a,
+        question_b) the cluster/merge UI already consumes.
+        """
+        try:
+            from arrow_cache import ARROW_AVAILABLE, get_arrow_cache
+        except Exception:
+            ARROW_AVAILABLE = False
+            get_arrow_cache = None  # type: ignore[assignment]
+
+        if ARROW_AVAILABLE:
+            try:
+                from config import MERGE_SIMILARITY_THRESHOLD
+                enriched_ids = {
+                    sid for sid, entry in index.items()
+                    if "enriched" in entry.get("tags", [])
+                }
+                if enriched_ids:
+                    pairs = get_arrow_cache().merge_candidates(
+                        enriched_ids, MERGE_SIMILARITY_THRESHOLD,
+                    )
+                    return [
+                        {
+                            "shard_a": a,
+                            "shard_b": b,
+                            "similarity": sim,
+                            "question_a": qa,
+                            "question_b": qb,
+                        }
+                        for a, b, sim, qa, qb in pairs
+                    ]
+            except Exception:
+                pass
+
         suggestions = []
         checked: set[tuple[str, str]] = set()
 
