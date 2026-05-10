@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: pytorch-lightning
 description: High-level PyTorch framework with Trainer class, automatic distributed training (DDP/FSDP/DeepSpeed), callbacks system, and minimal boilerplate. Scales from laptop to supercomputer with same code. Use when you want clean training loops with built-in best practices.

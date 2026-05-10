@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: map-systems
 description: "Decompose a game concept into individual systems, map dependencies, prioritize design order, and create the systems index."

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: team-ui
 description: "Orchestrate the UI team: coordinates ux-designer, ui-programmer, and art-director to design, implement, and polish a user interface feature from wireframe to final."

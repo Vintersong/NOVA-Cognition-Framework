@@ -457,6 +457,10 @@ class ForgemasterRuntime:
 
         Each turn's output is passed forward as context to the next turn.
         """
+        # Phase 4: Snapshot corpus before sprint
+        from skill_verification import snapshot_corpus, run_biconditional_check, BiconditionalFailed
+        corpus_before = snapshot_corpus()
+
         session = self.bootstrap(sprint_id, shard_ids or [])
 
         # ── Turn 1: Orchestrator ──────────────────────────────────────────
@@ -510,12 +514,35 @@ class ForgemasterRuntime:
         target_rel = _extract_target_file(design_doc)
         if target_rel:
             try:
+                # HITL Gate intercept for Phase 3
+                from skill_verification import SkillManifest, get_hitl_gate, CapabilityDenied
+                try:
+                    impl_skill_content = (_REPO_ROOT / "forgemaster/skills/forgemaster-implementation.md").read_text(encoding="utf-8")
+                except Exception:
+                    impl_skill_content = ""
+                
+                active_skill = SkillManifest.parse(impl_skill_content)
+                gate = get_hitl_gate()
+                
+                # Check capability gate before irreversible disk write
+                gate.execute_with_gate(
+                    session_id=session.session_id, 
+                    tool_name="fs.write.irrev", 
+                    args={"target_rel": target_rel}, 
+                    active_skill=active_skill, 
+                    is_irreversible=True
+                )
+                
                 code = _strip_code_fences(impl_out)
                 impl_file_path = _write_implementation_file(target_rel, code)
                 logger.info(
                     "ForgemasterRuntime.run_sprint: wrote implementation to %s",
                     impl_file_path,
                 )
+            except CapabilityDenied as e:
+                logger.error("ForgemasterRuntime.run_sprint: HITL Gate blocked write: %s", e)
+                impl_file_path = None
+                # Let the review process catch that the file wasn't written.
             except Exception as exc:
                 logger.error(
                     "ForgemasterRuntime.run_sprint: failed to write implementation file %s — %s",
@@ -585,6 +612,20 @@ class ForgemasterRuntime:
                 "contributing shards flagged for review: %s",
                 sprint_id, contributing_shards,
             )
+
+        # Phase 4: Biconditional post-run check
+        corpus_after = snapshot_corpus()
+        try:
+            run_biconditional_check(sprint_id, corpus_before, corpus_after)
+        except BiconditionalFailed as e:
+            logger.error("ForgemasterRuntime.run_sprint: Biconditional check failed for sprint %s: %s", sprint_id, e)
+            _log_event({
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "sprint_id": sprint_id,
+                "role": "outcome",
+                "event": "biconditional_failed",
+                "error": str(e)
+            })
 
         return {
             "sprint_id": sprint_id,

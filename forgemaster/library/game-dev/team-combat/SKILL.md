@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: team-combat
 description: "Orchestrate the combat team: coordinates game-designer, gameplay-programmer, ai-programmer, technical-artist, sound-designer, and qa-tester to design, implement, and validate a combat feature end-to-end."

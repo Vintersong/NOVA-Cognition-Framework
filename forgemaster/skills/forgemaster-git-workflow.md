@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 # Skill: forgemaster-git-workflow
 
 ## When to Load

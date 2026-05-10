@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: ml-engineer
 description: "Machine learning engineer expert for PyTorch, scikit-learn, model evaluation, and MLOps"

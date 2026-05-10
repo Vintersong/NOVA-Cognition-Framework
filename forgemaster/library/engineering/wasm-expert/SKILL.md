@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: wasm-expert
 description: "WebAssembly expert for WASI, component model, Rust/C compilation, and browser integration"

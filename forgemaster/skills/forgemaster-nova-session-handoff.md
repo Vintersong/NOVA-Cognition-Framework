@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 # Skill: forgemaster-nova-session-handoff
 
 ## When to Load

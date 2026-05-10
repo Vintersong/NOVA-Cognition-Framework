@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: fitness-nutrition
 description: >

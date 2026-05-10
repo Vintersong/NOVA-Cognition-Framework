@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: web-search
 description: Web search and research specialist for finding and synthesizing information

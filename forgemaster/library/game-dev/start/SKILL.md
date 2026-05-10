@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: start
 description: "First-time onboarding — asks where you are, then guides you to the right workflow. No assumptions."

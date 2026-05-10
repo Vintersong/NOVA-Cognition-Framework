@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: hive.context-preservation
 description: Proactively preserve critical information before automatic context pruning destroys it.

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: parallel-cli
 description: Optional vendor skill for Parallel CLI — agent-native web search, extraction, deep research, enrichment, FindAll, and monitoring. Prefer JSON output and non-interactive flows.

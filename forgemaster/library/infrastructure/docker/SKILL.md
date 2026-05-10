@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: docker
 description: Docker expert for containers, Compose, Dockerfiles, and debugging

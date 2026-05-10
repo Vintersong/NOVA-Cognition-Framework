@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: optimizing-attention-flash
 description: Optimizes transformer attention with Flash Attention for 2-4x speedup and 10-20x memory reduction. Use when training/running transformers with long sequences (>512 tokens), encountering GPU memory issues with attention, or need faster inference. Supports PyTorch native SDPA, flash-attn library, H100 FP8, and sliding window attention.

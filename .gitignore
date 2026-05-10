@@ -43,3 +43,4 @@ facts/*
 !facts/examples/
 !facts/examples/**
 facts_index.db
+nova_autoresearch.jsonl

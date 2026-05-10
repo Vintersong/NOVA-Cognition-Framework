@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: nextjs-expert
 description: "Next.js expert for App Router, SSR/SSG, API routes, middleware, and deployment"

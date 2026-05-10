@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: duckduckgo-search
 description: Free web search via DuckDuckGo — text, news, images, videos. No API key needed. Prefer the `ddgs` CLI when installed; use the Python DDGS library only after verifying that `ddgs` is available in the current runtime.

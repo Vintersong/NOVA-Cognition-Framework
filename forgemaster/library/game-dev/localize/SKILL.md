@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: localize
 description: "Run the localization workflow: extract strings, validate localization readiness, check for hardcoded text, and generate translation-ready string tables."

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: linear-tools
 description: "Linear project management expert for issues, cycles, projects, and workflow automation"

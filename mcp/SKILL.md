@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 # NOVA v2 Cognitive Architecture — MCP Skill Definition
 
 ## Identity

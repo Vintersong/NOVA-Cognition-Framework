@@ -90,6 +90,22 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
             result = re.sub(r'\n```$', '', result)
 
             if params.output_file:
+                # HITL Capability Gate intercept for Phase 3
+                from skill_verification import SkillManifest, get_hitl_gate, CapabilityDenied
+                active_skill = SkillManifest.parse(params.context) if params.context else SkillManifest(None, set()) # Defaults to unverified
+
+                try:
+                    gate = get_hitl_gate()
+                    gate.execute_with_gate(
+                        session_id="gemini_ticket", 
+                        tool_name="fs.write.irrev", 
+                        args={"output_file": params.output_file}, 
+                        active_skill=active_skill, 
+                        is_irreversible=True
+                    )
+                except CapabilityDenied as e:
+                    return json.dumps({"status": "error", "message": f"HITL Gate Capability Denied: {e}"})
+
                 output_path = (_WORKSPACE_DIR / params.output_file).resolve()
                 if not output_path.is_relative_to(_WORKSPACE_DIR.resolve()):
                     return json.dumps({"status": "error", "message": "Access denied: output path is outside the allowed workspace directory."})

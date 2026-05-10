@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: hive.note-taking
 description: Maintain structured working notes throughout execution to prevent information loss during context pruning.

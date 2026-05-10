@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: normalize
 description: Normalize design to match your design system and ensure consistency

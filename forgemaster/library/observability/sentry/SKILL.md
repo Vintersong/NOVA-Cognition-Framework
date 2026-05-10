@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: sentry
 description: Sentry error tracking and debugging specialist

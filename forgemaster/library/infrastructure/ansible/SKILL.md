@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: ansible
 description: "Ansible automation expert for playbooks, roles, inventories, and infrastructure management"

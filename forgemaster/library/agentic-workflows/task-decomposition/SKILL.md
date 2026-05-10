@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: hive.task-decomposition
 description: Decompose complex tasks into explicit subtasks before diving in.

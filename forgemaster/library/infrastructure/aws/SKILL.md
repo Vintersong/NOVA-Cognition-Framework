@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: aws
 description: AWS cloud services expert for EC2, S3, Lambda, IAM, and AWS CLI

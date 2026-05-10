@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: release-checklist
 description: "Generates a comprehensive pre-release validation checklist covering build verification, certification requirements, store metadata, and launch readiness."

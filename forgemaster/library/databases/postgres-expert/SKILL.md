@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: postgres-expert
 description: "PostgreSQL expert for query optimization, indexing, extensions, and database administration"

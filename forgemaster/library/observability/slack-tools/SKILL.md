@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: slack-tools
 description: Slack workspace management and automation specialist

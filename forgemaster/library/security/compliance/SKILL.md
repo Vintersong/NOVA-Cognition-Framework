@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: compliance
 description: "Compliance expert for SOC 2, GDPR, HIPAA, PCI-DSS, and security frameworks"

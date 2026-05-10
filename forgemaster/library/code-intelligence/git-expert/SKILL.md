@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: git-expert
 description: Git operations expert for branching, rebasing, conflicts, and workflows

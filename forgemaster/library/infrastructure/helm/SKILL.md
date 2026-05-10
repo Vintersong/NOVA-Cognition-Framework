@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: helm
 description: "Helm chart expert for Kubernetes package management, templating, and dependency management"

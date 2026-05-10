@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: api-tester
 description: API testing expert for curl, REST, GraphQL, authentication, and debugging

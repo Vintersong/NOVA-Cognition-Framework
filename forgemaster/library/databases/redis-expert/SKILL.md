@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: redis-expert
 description: "Redis expert for data structures, caching patterns, Lua scripting, and cluster operations"

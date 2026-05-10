@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: architecture-decision
 description: "Creates an Architecture Decision Record (ADR) documenting a significant technical decision, its context, alternatives considered, and consequences. Every major technical choice should have an ADR."

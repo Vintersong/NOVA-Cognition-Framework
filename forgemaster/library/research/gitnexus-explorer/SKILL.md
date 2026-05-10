@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: gitnexus-explorer
 description: Index a codebase with GitNexus and serve an interactive knowledge graph via web UI + Cloudflare tunnel.

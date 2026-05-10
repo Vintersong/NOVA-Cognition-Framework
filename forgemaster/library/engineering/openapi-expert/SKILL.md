@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: openapi-expert
 description: "OpenAPI/Swagger expert for API specification design, validation, and code generation"

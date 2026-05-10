@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: project-stage-detect
 description: "Automatically analyze project state, detect stage, identify gaps, and recommend next steps based on existing artifacts."

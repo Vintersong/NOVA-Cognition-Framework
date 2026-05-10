@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: reverse-document
 description: "Generate design or architecture documents from existing implementation. Works backwards from code/prototypes to create missing planning docs."

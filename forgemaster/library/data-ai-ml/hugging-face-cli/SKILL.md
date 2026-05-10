@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: hugging-face-cli
 description: Execute Hugging Face Hub operations using the `hf` CLI. Use when the user needs to download models/datasets/spaces, upload files to Hub repositories, create repos, manage local cache, or run compute jobs on HF infrastructure. Covers authentication, file transfers, repository creation, cache operations, and cloud compute.

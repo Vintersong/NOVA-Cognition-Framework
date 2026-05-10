@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 # Skill: forgemaster-parallel-lanes
 
 ## When to Load

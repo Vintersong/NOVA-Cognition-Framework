@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: interview-prep
 description: "Technical interview preparation expert for algorithms, system design, and behavioral questions"

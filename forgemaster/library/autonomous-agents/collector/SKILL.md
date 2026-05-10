@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: collector-hand-skill
 version: "1.0.0"

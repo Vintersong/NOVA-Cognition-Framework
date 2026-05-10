@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: data-pipeline
 description: "Data pipeline expert for ETL, Apache Spark, Airflow, dbt, and data quality"

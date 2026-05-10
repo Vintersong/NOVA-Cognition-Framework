@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: arrange
 description: Improve layout, spacing, and visual rhythm. Fixes monotonous grids, inconsistent spacing, and weak visual hierarchy to create intentional compositions.

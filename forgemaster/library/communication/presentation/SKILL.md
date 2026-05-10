@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: presentation
 description: "Presentation expert for slide structure, storytelling, visual design, and audience engagement"

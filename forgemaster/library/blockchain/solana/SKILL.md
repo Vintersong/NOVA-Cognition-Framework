@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: solana
 description: Query Solana blockchain data with USD pricing — wallet balances, token portfolios with values, transaction details, NFTs, whale detection, and live network stats. Uses Solana RPC + CoinGecko. No API key required.

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: crypto-expert
 description: "Cryptography expert for TLS, symmetric/asymmetric encryption, hashing, and key management"

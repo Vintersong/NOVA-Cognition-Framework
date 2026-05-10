@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: brightdata-web-mcp
 description: Search the web, scrape websites, extract structured data from URLs, and automate browsers using Bright Data's Web MCP. Use when fetching live web content, bypassing blocks/CAPTCHAs, getting product data from Amazon/eBay, social media posts, or when standard requests fail.

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: azure
 description: "Microsoft Azure expert for az CLI, AKS, App Service, and cloud infrastructure"

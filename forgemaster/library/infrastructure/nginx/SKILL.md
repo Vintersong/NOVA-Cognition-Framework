@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: nginx
 description: "Nginx configuration expert for reverse proxy, load balancing, TLS, and performance tuning"

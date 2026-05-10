@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: canvas
 description: Canvas LMS integration — fetch enrolled courses and assignments using API token authentication.
