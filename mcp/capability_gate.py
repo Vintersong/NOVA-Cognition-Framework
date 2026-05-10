@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 import uuid
 from typing import Optional
 
@@ -99,11 +98,11 @@ def resolve_capability(tool_name: str) -> tuple[str, bool]:
 
 class _InteractiveBroker:
     """
-    Blocking terminal prompt.  Times out → deny.
+    Blocking terminal prompt via /dev/tty.  Times out → deny.
 
+    Reads from /dev/tty (the controlling terminal) instead of sys.stdin so it
+    does not compete with the MCP JSON-RPC stdio transport.
     Only suitable for development / interactive operator sessions.
-    The select-based timeout will block the calling thread; callers in async
-    contexts should dispatch via asyncio.to_thread (see CapabilityGate.async_check).
     """
 
     def __init__(self, timeout_s: int = 30) -> None:
@@ -119,17 +118,20 @@ class _InteractiveBroker:
         )
         try:
             import select
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
-            readable, _, _ = select.select([sys.stdin], [], [], self._timeout_s)
+            tty = open("/dev/tty", "r+")
+            tty.write(prompt)
+            tty.flush()
+            readable, _, _ = select.select([tty], [], [], self._timeout_s)
             if readable:
-                answer = sys.stdin.readline().strip().lower()
+                answer = tty.readline().strip().lower()
+                tty.close()
                 return answer in ("y", "yes")
-            sys.stdout.write("\n[HITL] Timeout — denied.\n")
-            sys.stdout.flush()
+            tty.write("\n[HITL] Timeout — denied.\n")
+            tty.flush()
+            tty.close()
             return False
         except Exception:
-            # Non-interactive context (piped stdin, test runner) — deny.
+            # No controlling terminal (piped, headless, test runner) — deny.
             return False
 
 
@@ -301,6 +303,71 @@ class CapabilityGate:
                 target=target,
                 ok=True,
             )
+
+    def check_capability_tag(
+        self,
+        cap_tag: str,
+        is_irreversible: bool,
+        active_skill: SkillManifest,
+        session_id: str,
+        virtual_tool_name: str = "fs.write.irrev",
+        target: Optional[str] = None,
+    ) -> None:
+        """
+        Gate a capability tag directly without routing through a tool name.
+
+        Use this when the action is not a named MCP tool — e.g. file-system
+        writes emitted by forgemaster_runtime.  *virtual_tool_name* is used
+        only for audit log entries.
+
+        Raises CapabilityDenied or HITLDenied on block; returns None on allow.
+        """
+        request_id = str(uuid.uuid4())
+
+        if not active_skill.has_capability(cap_tag):
+            if self._audit:
+                self._audit.log_denied(
+                    session_id=session_id,
+                    request_id=request_id,
+                    tool_name=virtual_tool_name,
+                    skill_id=active_skill.skill_id,
+                    verification=active_skill.verification.value,
+                    reason="undeclared_capability",
+                )
+            logger.warning(
+                "capability_gate: DENIED %s — capability %r not declared in skill %r",
+                virtual_tool_name, cap_tag, active_skill.skill_id,
+            )
+            raise CapabilityDenied(
+                f"Capability '{cap_tag}' not declared in "
+                f"skill '{active_skill.skill_id}'"
+            )
+
+        if not is_irreversible:
+            return
+
+        v = active_skill.verification
+        if v == VerificationLevel.UNVERIFIED:
+            self._run_hitl(
+                virtual_tool_name, active_skill, session_id, request_id, target
+            )
+            return
+
+        if self._audit:
+            self._audit.log_request(
+                session_id=session_id, request_id=request_id,
+                tool_name=virtual_tool_name, skill_id=active_skill.skill_id,
+                verification=v.value, target=target,
+            )
+            self._audit.log_executed(
+                session_id=session_id, request_id=request_id,
+                tool_name=virtual_tool_name, skill_id=active_skill.skill_id,
+                verification=v.value, target=target, ok=True,
+            )
+        logger.info(
+            "capability_gate: %s approved via %s manifest (cap=%s target=%s)",
+            virtual_tool_name, v.value, cap_tag, target,
+        )
 
     # ── Async path (nova_server tool handlers) ────────────────────────────
 

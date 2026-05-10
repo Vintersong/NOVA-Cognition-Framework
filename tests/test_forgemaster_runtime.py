@@ -42,7 +42,7 @@ def test_run_turn_dispatch_failure_surfaces_error(tmp_path: Path, monkeypatch: p
     session = rt.bootstrap("s1", [])
     monkeypatch.setattr(runtime, "_dispatch", lambda role, prompt: (_ for _ in ()).throw(RuntimeError("boom")))
 
-    updated, response = rt.run_turn(
+    updated, response, _ = rt.run_turn(
         session=session,
         role="planner",
         skill_path="missing-skill.md",
