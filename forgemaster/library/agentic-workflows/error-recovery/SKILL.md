@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: hive.error-recovery
 description: Follow a structured recovery protocol when tool calls fail instead of blindly retrying or giving up.

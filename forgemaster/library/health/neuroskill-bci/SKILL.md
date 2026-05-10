@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: neuroskill-bci
 description: >

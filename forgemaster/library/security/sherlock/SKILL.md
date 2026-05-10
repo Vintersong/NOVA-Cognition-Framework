@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: sherlock
 description: OSINT username search across 400+ social networks. Hunt down social media accounts by username.

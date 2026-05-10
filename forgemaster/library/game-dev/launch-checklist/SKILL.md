@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: launch-checklist
 description: "Complete launch readiness validation covering every department: code, content, store, marketing, community, infrastructure, legal, and go/no-go sign-offs."

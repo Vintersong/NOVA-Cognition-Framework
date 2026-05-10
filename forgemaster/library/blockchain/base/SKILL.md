@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: base
 description: Query Base (Ethereum L2) blockchain data with USD pricing — wallet balances, token info, transaction details, gas analysis, contract inspection, whale detection, and live network stats. Uses Base RPC + CoinGecko. No API key required.

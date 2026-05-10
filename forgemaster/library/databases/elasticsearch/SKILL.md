@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: elasticsearch
 description: "Elasticsearch expert for queries, mappings, aggregations, index management, and cluster operations"

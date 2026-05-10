@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: gcp
 description: "Google Cloud Platform expert for gcloud CLI, GKE, Cloud Run, and managed services"

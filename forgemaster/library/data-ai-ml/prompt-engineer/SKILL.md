@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: prompt-engineer
 description: "Prompt engineering expert for chain-of-thought, few-shot learning, evaluation, and LLM optimization"

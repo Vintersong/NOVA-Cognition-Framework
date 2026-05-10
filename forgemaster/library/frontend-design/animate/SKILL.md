@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: animate
 description: Review a feature and enhance it with purposeful animations, micro-interactions, and motion effects that improve usability and delight.

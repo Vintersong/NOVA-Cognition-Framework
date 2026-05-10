@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: data-analyst
 description: Data analysis expert for statistics, visualization, pandas, and exploration

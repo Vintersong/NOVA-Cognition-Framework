@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: regex-expert
 description: Regular expression expert for crafting, debugging, and explaining patterns

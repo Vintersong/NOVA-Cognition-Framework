@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: graphql-expert
 description: "GraphQL expert for schema design, resolvers, subscriptions, and performance optimization"

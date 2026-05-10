@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: pdf-reader
 description: PDF content extraction and analysis specialist

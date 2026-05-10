@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: one-three-one-rule
 description: >

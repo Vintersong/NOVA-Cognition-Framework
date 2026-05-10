@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: docker-management
 description: Manage Docker containers, images, volumes, networks, and Compose stacks — lifecycle ops, debugging, cleanup, and Dockerfile optimization.

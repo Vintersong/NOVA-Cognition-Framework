@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: bug-report
 description: "Creates a structured bug report from a description, or analyzes code to identify potential bugs. Ensures every bug report has full reproduction steps, severity assessment, and context."

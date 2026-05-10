@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: rust-expert
 description: "Rust programming expert for ownership, lifetimes, async/await, traits, and unsafe code"

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: sql-analyst
 description: SQL query expert for optimization, schema design, and data analysis

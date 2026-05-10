@@ -49,6 +49,7 @@ Before decomposing tickets, consult `forgemaster/SKILL_LIBRARY.md` to identify w
 | Verification | `forgemaster/skills/forgemaster-verification.md` |
 | Git / PR | `forgemaster/skills/forgemaster-git-workflow.md` |
 | Session handoff | `forgemaster/skills/forgemaster-nova-session-handoff.md` |
+| Complex reasoning hook | `forgemaster/skills/forgemaster-heavyskill.md` |
 
 **Extended domains** — consult `SKILL_LIBRARY.md` when the task involves:
 - A specific language or framework (Python, React, Rust, etc.)
@@ -100,6 +101,8 @@ Before dispatching any ticket to gemini-flash, assign a confidence score (0.0 - 
 | 0.85 - 1.0 | Fully specified, bounded, unambiguous | Dispatch to gemini-flash |
 | 0.65 - 0.84 | Mostly clear but minor ambiguity | Dispatch to gemini-flash with note |
 | Below 0.65 | Significant ambiguity or cross-cutting concern | Escalate to claude-sonnet |
+
+For `architecture` tickets with confidence < 0.75, evaluate the HeavySkill activation predicate before dispatching. Load `forgemaster/skills/forgemaster-heavyskill.md` if it triggers.
 
 Pass the confidence score when calling `gemini_execute_ticket`. The Gemini worker will auto-escalate if the score is below its threshold (default 0.65).
 

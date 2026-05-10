@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: meme-generation
 description: Generate real meme images by picking a template and overlaying text with Pillow. Produces actual .png meme files.

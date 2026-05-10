@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: notion
 description: Notion workspace management and content creation specialist

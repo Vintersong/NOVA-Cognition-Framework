@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: project-manager
 description: "Project management expert for Agile, estimation, risk management, and stakeholder communication"

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: golang-expert
 description: "Go programming expert for goroutines, channels, interfaces, modules, and concurrency patterns"

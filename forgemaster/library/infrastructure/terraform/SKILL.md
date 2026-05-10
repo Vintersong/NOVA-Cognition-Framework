@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: terraform
 description: Terraform IaC expert for providers, modules, state management, and planning

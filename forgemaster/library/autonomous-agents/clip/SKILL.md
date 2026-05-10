@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: clip-hand-skill
 version: "2.0.0"

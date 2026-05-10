@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: prometheus
 description: "Prometheus monitoring expert for PromQL, alerting rules, Grafana dashboards, and observability"

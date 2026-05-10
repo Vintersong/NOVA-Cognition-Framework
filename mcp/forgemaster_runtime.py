@@ -476,6 +476,10 @@ class ForgemasterRuntime:
 
         Each turn's output is passed forward as context to the next turn.
         """
+        # Phase 4: Snapshot corpus before sprint
+        from skill_verification import snapshot_corpus, run_biconditional_check, BiconditionalFailed
+        corpus_before = snapshot_corpus()
+
         session = self.bootstrap(sprint_id, shard_ids or [])
 
         # Corpus snapshot before any writes — used by biconditional check at end.
@@ -636,6 +640,20 @@ class ForgemasterRuntime:
                 "contributing shards flagged for review: %s",
                 sprint_id, contributing_shards,
             )
+
+        # Phase 4: Biconditional post-run check
+        corpus_after = snapshot_corpus()
+        try:
+            run_biconditional_check(sprint_id, corpus_before, corpus_after)
+        except BiconditionalFailed as e:
+            logger.error("ForgemasterRuntime.run_sprint: Biconditional check failed for sprint %s: %s", sprint_id, e)
+            _log_event({
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "sprint_id": sprint_id,
+                "role": "outcome",
+                "event": "biconditional_failed",
+                "error": str(e)
+            })
 
         return {
             "sprint_id": sprint_id,

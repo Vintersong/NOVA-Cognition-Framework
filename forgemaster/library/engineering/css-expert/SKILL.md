@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: css-expert
 description: "CSS expert for flexbox, grid, animations, responsive design, and modern layout techniques"

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: trader-hand-skill
 version: "1.0.0"

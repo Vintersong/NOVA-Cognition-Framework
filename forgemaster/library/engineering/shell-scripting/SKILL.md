@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: shell-scripting
 description: "Shell scripting expert for Bash, POSIX compliance, error handling, and automation"

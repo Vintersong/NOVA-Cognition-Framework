@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: technical-writer
 description: "Technical writing expert for API docs, READMEs, ADRs, and developer documentation"

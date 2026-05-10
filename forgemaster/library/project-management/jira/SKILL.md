@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: jira
 description: Jira project management expert for issues, sprints, workflows, and reporting

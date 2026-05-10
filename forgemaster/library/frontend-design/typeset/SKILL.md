@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: typeset
 description: Improve typography by fixing font choices, hierarchy, sizing, weight consistency, and readability. Makes text feel intentional and polished.

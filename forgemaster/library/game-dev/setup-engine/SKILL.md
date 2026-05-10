@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: setup-engine
 description: "Configure the project's game engine and version. Pins the engine in CLAUDE.md, detects knowledge gaps, and populates engine reference docs via WebSearch when the version is beyond the LLM's training data."

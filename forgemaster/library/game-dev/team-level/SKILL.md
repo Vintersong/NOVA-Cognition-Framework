@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: team-level
 description: "Orchestrate level design team: level-designer + narrative-director + world-builder + art-director + systems-designer + qa-tester for complete area/level creation."

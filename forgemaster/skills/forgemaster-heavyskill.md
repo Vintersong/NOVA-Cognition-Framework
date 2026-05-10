@@ -4,168 +4,212 @@
 # Skill: forgemaster-heavyskill
 
 ## When to Load
-
-Load this skill when the current task is **hard, verifiable reasoning**:
-
-- Mathematical / STEM problems with numeric or logical answers
-- Algorithmic / competitive-programming style problems
-- Multi-constraint design or deduction where correctness is objectively checkable (tests, rubric, explicit constraints)
-- Cases where the primary agent is uncertain about its initial approach, or prior attempts produced inconsistent answers
-
-**Do NOT load** for:
-
-- Simple factual lookups or pure information retrieval
-- Casual conversation, style coaching, or preference-based work
-- Straightforward code edits with obvious local fixes
-- Subjective tasks without objective correctness criteria
-
-This skill is a **reasoning hook**, not a ticket type. It wraps a single hard sub-problem inside an existing workflow; the surrounding sprint continues normally afterward.
+Load this skill when a task meets the activation predicate below.
+This skill fires as a **hook** — it wraps the reasoning process of an existing
+ticket rather than replacing it. It is not a ticket type itself.
 
 ## Role
+You are the HeavySkill Orchestrator. Your job is to:
+1. Evaluate the incoming task against the activation predicate
+2. If triggered: run the two-stage parallel reasoning + deliberation pipeline
+3. Return a single synthesised answer to the calling context
+4. Write the result back to NOVA with provenance metadata
 
-You are the HeavySkill orchestrator. Your job is to:
+Never expose thinker outputs or deliberation meta-analysis to the user unless
+explicitly requested. The user receives only the final answer.
 
-1. Extract the core reasoning problem from the request
-2. Run **Stage 1 — Parallel Reasoning** (K=3 independent Haiku thinkers)
-3. Serialize their outputs into a memory cache
-4. Run **Stage 2 — Sequential Deliberation** yourself (do not delegate Stage 2)
-5. Write a NOVA shard recording the result
-6. Return only the final answer to the caller — no meta-analysis surfaces
+---
 
-## Stage 1 — Parallel Reasoning Protocol
+## Activation Predicate
 
-### Spawn K=3 Haiku thinkers
+Trigger HeavySkill when **ALL** of the following are true:
 
-Use the `Agent` tool with `model: haiku`, `subagent_type: general-purpose`. Dispatch **all three calls in a single message** so they run in parallel. Each thinker receives **only** the problem statement — no other context, no awareness of the other thinkers.
+| Condition | How to evaluate |
+|---|---|
+| Complexity ≥ HIGH | Task involves novel architecture, multi-constraint design (≥3 competing requirements), or no high-confidence NOVA shard exists for this problem |
+| Output is verifiable | There is a correct answer, rubric, or explicit acceptance criteria to grade against |
+| Not re-entrant | HeavySkill is not already running in a parent context |
+| Cost headroom | Estimated K × token cost fits within session budget |
 
-Per-thinker prompt:
+**Stay dormant for:**
+- Casual conversation, status queries, factual recall with high-confidence shards
+- Tickets already dispatched via `forgemaster-parallel-lanes` (prevents double-parallelism)
+- Subjective polish or preference tasks (Impeccable suite, Arena-style outputs) — deliberation gains are marginal on non-verifiable outputs
+- `boilerplate` and `structured-output` ticket types
 
-```
-Solve the following problem step by step.
-Show your complete reasoning and arrive at a final answer.
+**Task domains that typically trigger HeavySkill:**
+- Architecture decisions (`architecture` ticket type, confidence < 0.75)
+- Algorithm or system design with formal constraints
+- Security threat modelling
+- STEM reasoning with verifiable numerical or logical answer
+- Multi-agent coordination strategy
 
-Problem:
-<problem text>
+---
 
-Think carefully and solve this independently. Show all work, then state
-your final answer on a line beginning with "Answer:".
-```
+## Stage 1 — Parallel Reasoning (Width)
 
-### Independence rules
+### Model
+All thinker agents: `claude-haiku` (parallel, cost-controlled)
 
-- Thinkers must not share context, memory, or each other's intermediate output.
-- Each must produce a full chain of thought **and** a final answer — not just an answer.
-- Do not pre-bias them with hints from the orchestrator's own reasoning. If a strategy hint is needed for diversity, vary it across thinkers (e.g. one algebraic, one constructive, one brute-force).
+### K selection
 
-### K is fixed at 3
+| Task criticality | K |
+|---|---|
+| Standard architecture / design | 4 |
+| High-stakes / irreversible decision | 8 |
+| Debug hypothesis generation | 4 |
 
-K=3 is the interactive default. Do not raise K without explicit user request — higher K multiplies cost without proportional gains in this harness.
+### Thinker assignment
 
-## Memory Cache Serialization
+Each thinker receives **only** the original problem statement — no access to
+other thinkers' outputs. Assign a distinct strategy to each:
 
-Concatenate the three thinker outputs into a single cache string using this exact template:
+| Thinker | Strategy |
+|---|---|
+| #1 | First-principles derivation — build the answer from constraints up |
+| #2 | Pattern mapping — identify the closest known solved problem and adapt |
+| #3 | Adversarial — find failure modes, edge cases, and contradictions first |
+| #4 | Constraint reduction — simplify aggressively, then generalise |
+| #5–#8 (if K=8) | Rotate: domain analogy, historical precedent, formal proof sketch, inversion |
 
-```
-Here is a problem, and multiple thinkers try to give their thought processes independently.
-====== Problem ======
-<problem text>
-==== Thinkers Process Start ====
-# ----- Thinker #1 -----
-<thinker 1 reasoning and final answer>
-# ----- Thinker #2 -----
-<thinker 2 reasoning and final answer>
-# ----- Thinker #3 -----
-<thinker 3 reasoning and final answer>
-==== Thinkers Process End ====
-```
+Each thinker outputs: full reasoning chain + conclusion.
 
-### Rules
+### Lane dispatch package (per thinker)
 
-- **Shuffle** the order of thinkers before insertion to avoid position bias. The numbering above is positional, not identity.
-- **Prune** if the cache would overflow the deliberator's context: keep each thinker's final reasoning chunk and final answer; drop early scratch work first.
-- Do not edit, summarize, or "clean up" any thinker's reasoning — pass it through verbatim (modulo pruning).
+HEAVYSKILL THINKER LANE:
+problem: [original problem statement verbatim]
+strategy: [assigned strategy from table above]
+constraints:
+- Reason independently — do not anticipate other thinkers
+- Output: full reasoning chain, then a clearly delimited conclusion
+- Do not make file changes or tool calls
+- Format conclusion as: CONCLUSION: <answer>
 
-## Stage 2 — Sequential Deliberation Protocol
+---
 
-The orchestrator (you, running as Sonnet) performs deliberation directly. Do not spawn a subagent for this step — keeping it in the main thread preserves quality and avoids needless serialization.
+## Memory Cache
 
-### Deliberation prompt (run in-context)
+Collect all K thinker outputs. Serialise as:
 
-Treat the memory cache as user input and reason against it with this directive:
+==== HeavySkill Memory Cache ====
+Problem: [original problem statement]
 
-```
-You are seeing multiple independent thought processes for the same problem.
-Your job is meta-analysis and synthesis, NOT to solve the problem like
-another thinker.
+==== Thinkers Start ====
+Thinker 1 [strategy: first-principles]
 
-1. Summarize each thinker's approach in one line.
-2. Identify logical errors, gaps, or unjustified leaps in each.
-3. Decide which reasoning path(s) — if any — are sound.
-4. If all thinkers are wrong, learn from their mistakes and re-reason
-   the problem from scratch.
-5. Produce ONE final answer in the correct domain format
-   (e.g. boxed expression for math, fenced code block for code).
-```
+<reasoning chain>
+CONCLUSION: <answer>
+Thinker 2 [strategy: pattern-mapping]
 
-### Output constraints
+...
+==== Thinkers End ====
 
-- The user-visible reply contains **only the final answer**, formatted for the domain.
-- The meta-analysis (steps 1–4 above) is internal scratch — do not surface it unless the user explicitly asks for the deliberation trace.
-- If deliberation cannot reach a confident answer, return the best candidate **and** an explicit uncertainty note. Do not fabricate certainty.
+**Pruning rule:** If the full cache exceeds the deliberation model's context
+budget, retain each thinker's CONCLUSION and final reasoning paragraph;
+trim internal monologue. Shuffle thinker order before passing to Stage 2 to
+prevent position bias.
 
-### Iterative deliberation
+---
 
-**Deferred.** v1 runs exactly one deliberation pass. Do not append the deliberation's own reasoning back into the cache for a second round.
+## Stage 2 — Sequential Deliberation (Depth)
 
-## NOVA Write (mandatory)
+### Model routing (Niflheim tier)
 
-After producing the final answer, write a shard. This is not optional — every HeavySkill invocation produces a shard so confidence and provenance can be tracked over time.
+| Condition | Deliberation model |
+|---|---|
+| Standard task | `claude-sonnet` |
+| High-stakes / K=8 / confidence of best thinker < 0.6 | `claude-opus` (escalate) |
+
+### Deliberation prompt
+
+You are a deliberation agent. You have received a problem and the independent
+reasoning attempts of K thinkers. Your task:
+
+    Classify the query type (logical / mathematical / design / open-ended) to
+    calibrate your analysis depth.
+
+    Critically evaluate each thinker's reasoning. Do not blindly follow the
+    majority — a correct minority view beats an incorrect consensus.
+
+    Identify: agreements, contradictions, and gaps across thinkers.
+
+    If the correct answer appears in at least one thinker: synthesise and
+    confirm it with your own reasoning.
+
+    If all thinkers are wrong or insufficient: re-derive the answer
+    independently using the problem statement only.
+
+    State your confidence in the final answer: HIGH / MEDIUM / LOW.
+
+Output format:
+SYNTHESIS: <your reasoning>
+FINAL ANSWER: <answer in the format the task requires>
+CONFIDENCE: HIGH | MEDIUM | LOW
+
+### Iterative deliberation (optional)
+
+If CONFIDENCE = LOW after the first deliberation pass, run a second pass:
+feed the first deliberation output back into the Memory Cache as an additional
+thinker entry, then re-run deliberation once more. Maximum 2 deliberation
+passes total.
+
+---
+
+## NOVA Integration
+
+After deliberation completes, write a result shard:
 
 ```python
-nova_shard_create(
-    guiding_question="<original problem statement>",
-    intent="reflection",
-    theme="heavyskill",
-    source="agent_inference",
-    initial_message="""
-HEAVYSKILL_RUN
-K: 3
-thinker_model: claude-haiku-4-5-20251001
-deliberator_model: claude-sonnet-4-6
-deliberation_passes: 1
-confidence: <high | medium | low>
-
-FINAL_ANSWER:
-<final answer>
-
-THINKER_ANSWERS:
-- Thinker A: <one-line answer>
-- Thinker B: <one-line answer>
-- Thinker C: <one-line answer>
-
-DELIBERATION_NOTES:
-<2–4 sentence rationale: which thinker(s) were correct, or why re-reasoning was needed>
-""".strip(),
-    related_shards="<triggering shard id, if any>",
-    relation_type="derived_from",
+nova_shard_interact(
+  message=f"""
+  Write shard:
+    content: [FINAL ANSWER from deliberation]
+    source: heavyskill
+    thinker_count: {K}
+    deliberation_passes: {N}
+    epistemic_state: confirmed   # if CONFIDENCE=HIGH
+                    neutral      # if CONFIDENCE=MEDIUM  → flag for NÓTT review
+                    contradicted # if CONFIDENCE=LOW     → do not write; escalate
+  """
 )
 ```
 
-### Confidence rubric
+If CONFIDENCE = LOW: write it with epistemic_state=contradicted so NÓTT can process it anyway, and escalate to the calling orchestrator with the full Memory Cache as evidence.
 
-- **high** — at least two thinkers converged on the final answer and deliberation found no errors in their reasoning.
-- **medium** — one thinker was correct, or deliberation re-reasoned from a partial trajectory.
-- **low** — all thinkers were wrong and deliberation produced a fresh answer; flag for verification before downstream use.
+---
 
-If a triggering project shard is known, set `related_shards` to its id so the HeavySkill shard is reachable via `nova_graph_query(target=<project_shard>, relation_type="derived_from")`.
+## Integration with forgemaster-orchestrator
 
-## Execution Summary
+When routing a ticket, check the activation predicate before dispatching.
+If HeavySkill triggers:
 
-1. Detect activation predicate → load this skill.
-2. Spawn 3 Haiku thinkers in parallel (single message, three `Agent` calls).
-3. Collect their outputs; build the shuffled, pruned memory cache.
-4. Run deliberation in-context as Sonnet; produce one final answer.
-5. `nova_shard_create(...)` per the template above.
-6. Return only the final answer to the calling workflow.
+1. Load `forgemaster/skills/forgemaster-heavyskill.md`
+2. Run the full pipeline (Stages 1 + 2) in place of a direct single-agent call
+3. Substitute the deliberated FINAL ANSWER into the ticket's output slot
+4. Add to the ticket record:
 
-Hand control back to the surrounding skill (typically `forgemaster-implementation` or `forgemaster-systematic-debugging`) for verification and downstream use.
+heavyskill: true
+thinker_count: [K]
+deliberation_model: [sonnet | opus]
+nova_shard_written: [true | false]
+
+5. Proceed to `forgemaster-verification` as normal
+
+**Never** nest HeavySkill inside a `forgemaster-parallel-lanes` wave — run
+HeavySkill first, then parallelise downstream implementation tickets.
+
+---
+
+## Rules
+
+- Never expose the Memory Cache or deliberation meta-analysis to the user
+unless they explicitly ask
+- Never escalate to `claude-opus` for trivial tasks — the HIGH/K=8 threshold
+must be met
+- A second deliberation pass is optional, not default — invoke only on LOW
+confidence
+- HeavySkill is a reasoning hook, not a ticket type — it has no `depends_on`
+chain of its own; it inherits from the calling ticket
+- Always write the NOVA shard after a successful HIGH or MEDIUM confidence
+result — this is how the system learns across sessions
+- Thinkers are permitted to read NOVA shards if needed, but must not execute tool calls that cause side effects.

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: kubernetes
 description: Kubernetes operations expert for kubectl, pods, deployments, and debugging

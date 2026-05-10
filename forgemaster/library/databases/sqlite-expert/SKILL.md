@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: sqlite-expert
 description: "SQLite expert for WAL mode, query optimization, embedded patterns, and advanced features"

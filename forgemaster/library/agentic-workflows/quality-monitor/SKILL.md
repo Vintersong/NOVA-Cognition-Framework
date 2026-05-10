@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: hive.quality-monitor
 description: Periodically self-assess output quality to catch degradation before the judge does.

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: sysadmin
 description: System administration expert for Linux, macOS, Windows, services, and monitoring

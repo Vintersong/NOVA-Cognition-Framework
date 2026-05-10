@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: adapt
 description: Adapt designs to work across different screen sizes, devices, contexts, or platforms. Ensures consistent experience across varied environments.

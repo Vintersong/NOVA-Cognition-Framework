@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: scrapling
 description: Web scraping with Scrapling - HTTP fetching, stealth browser automation, Cloudflare bypass, and spider crawling via CLI and Python.

@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: honcho
 description: Configure and use Honcho memory with Hermes -- cross-session user modeling, multi-profile peer isolation, observation config, and dialectic reasoning. Use when setting up Honcho, troubleshooting memory, managing profiles with Honcho peers, or tuning observation and recall settings.

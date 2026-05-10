@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: browser-automation
 version: "1.0.0"

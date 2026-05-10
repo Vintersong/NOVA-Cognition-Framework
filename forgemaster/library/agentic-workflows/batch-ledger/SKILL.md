@@ -1,3 +1,5 @@
+@@verification: unverified
+@@capabilities: *
 ---
 name: hive.batch-ledger
 description: Track per-item status when processing collections to prevent skipped or duplicated items.
