@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,7 @@ class AuditLog:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._lock = threading.Lock()
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -66,16 +68,23 @@ class AuditLog:
         )
         self._conn.commit()
 
+    _ALLOWED_COLS = frozenset(
+        {"id", "session_id", "request_id", "type", "tool_name",
+         "target", "skill_id", "verification", "ok", "ts"}
+    )
+
     def _insert(self, **row: object) -> None:
         row.setdefault("id", str(uuid.uuid4()))
         row.setdefault("ts", datetime.now(timezone.utc).isoformat())
-        cols = ", ".join(str(k) for k in row)
-        placeholders = ", ".join("?" * len(row))
-        self._conn.execute(
-            f"INSERT INTO audit_log ({cols}) VALUES ({placeholders})",
-            list(row.values()),
-        )
-        self._conn.commit()
+        filtered = {k: v for k, v in row.items() if k in self._ALLOWED_COLS}
+        cols = ", ".join(filtered.keys())
+        placeholders = ", ".join("?" * len(filtered))
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO audit_log ({cols}) VALUES ({placeholders})",
+                list(filtered.values()),
+            )
+            self._conn.commit()
 
     # ── HITL lifecycle writers ────────────────────────────────────────────────
 
@@ -179,52 +188,78 @@ class AuditLog:
             for row in cur.fetchall()
         ]
 
+    # Tools whose targets are shard IDs (vs file paths from forgemaster writes).
+    _SHARD_TOOLS = frozenset(
+        {"nova_shard_archive", "nova_shard_forget", "nova_shard_consolidate"}
+    )
+
     def run_biconditional_check(
         self,
         session_id: str,
         corpus_before: set[str],
         corpus_after: set[str],
+        files_written: "set[str] | None" = None,
     ) -> dict:
         """
-        Verify corpus delta matches the set of executed audit records.
+        Verify corpus delta matches executed audit records, partitioned by target type.
 
-        D = corpus_after - corpus_before
-        S = { record.target for executed records with ok=1 }
+        Shard check  — D = corpus_after - corpus_before
+                        S_shards = targets from shard-tool records (nova_shard_archive etc.)
+                        F1 unaccounted_changes: D - S_shards (gate bypass)
+                        F2 phantom_records:     S_shards - D (spurious record)
 
-        Returns a result dict with keys:
-          passed, corpus_delta, audit_records,
-          unaccounted_changes (D-S), phantom_records (S-D)
+        File check   — only run when *files_written* is supplied by the caller.
+                        S_files = targets from non-shard-tool records (fs.write.irrev)
+                        Compares against the actual files written this sprint.
+
+        Keeping these categories separate avoids false positives from the
+        prior design where shard IDs and file paths were compared in one set.
         """
         D = corpus_after - corpus_before
         records = self.get_executed_records(session_id)
-        S = {r["target"] for r in records if r["target"]}
 
-        unaccounted = sorted(D - S)
-        phantom = sorted(S - D)
-        passed = not unaccounted and not phantom
+        shard_S = {
+            r["target"] for r in records
+            if r["target"] and r["tool_name"] in self._SHARD_TOOLS
+        }
+        file_S = {
+            r["target"] for r in records
+            if r["target"] and r["tool_name"] not in self._SHARD_TOOLS
+        }
+
+        unaccounted = sorted(D - shard_S)
+        phantom = sorted(shard_S - D)
+
+        file_unaccounted: list[str] = []
+        file_phantom: list[str] = []
+        if files_written is not None:
+            file_unaccounted = sorted(files_written - file_S)
+            file_phantom = sorted(file_S - files_written)
+
+        passed = not unaccounted and not phantom and not file_unaccounted and not file_phantom
 
         result = {
             "session_id": session_id,
             "passed": passed,
             "corpus_delta": sorted(D),
-            "audit_records": sorted(S),
+            "shard_audit_records": sorted(shard_S),
+            "file_audit_records": sorted(file_S),
             "unaccounted_changes": unaccounted,
             "phantom_records": phantom,
+            "file_unaccounted": file_unaccounted,
+            "file_phantom": file_phantom,
         }
 
         if not passed:
             logger.warning(
                 "audit_log.biconditional_check FAILED session=%s "
-                "unaccounted=%s phantom=%s",
-                session_id,
-                unaccounted,
-                phantom,
+                "unaccounted=%s phantom=%s file_unaccounted=%s file_phantom=%s",
+                session_id, unaccounted, phantom, file_unaccounted, file_phantom,
             )
         else:
             logger.info(
-                "audit_log.biconditional_check PASSED session=%s delta=%d",
-                session_id,
-                len(D),
+                "audit_log.biconditional_check PASSED session=%s shard_delta=%d file_delta=%d",
+                session_id, len(D), len(file_S),
             )
 
         return result

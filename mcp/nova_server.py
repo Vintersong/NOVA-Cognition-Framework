@@ -341,6 +341,15 @@ _hooks.register(NovaHookEvent.COUNT_THRESHOLD,
                 lambda **_kw: _nott.run(NottTrigger.COUNT_THRESHOLD))
 
 
+async def _refresh_server_session_id(**_kw: object) -> None:
+    """Rotate the audit-log session ID at each Claude Code session boundary."""
+    global _server_session_id
+    _server_session_id = _uuid.uuid4().hex
+
+
+_hooks.register(NovaHookEvent.SESSION_START, _refresh_server_session_id)
+
+
 # ═══════════════════════════════════════════════════════════
 # MCP TOOLS
 # ═══════════════════════════════════════════════════════════

@@ -534,8 +534,9 @@ class ForgemasterRuntime:
         if target_rel:
             if self._gate:
                 try:
-                    self._gate.check(
-                        "nova_shard_forget",  # proxy for fs.write.irrev capability tag
+                    self._gate.check_capability_tag(
+                        "fs.write.irrev",
+                        True,  # is_irreversible
                         impl_skill,
                         sprint_id,
                         target=target_rel,
