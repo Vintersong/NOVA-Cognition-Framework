@@ -74,6 +74,14 @@ def save_shard(filepath: str, data: dict):
     lock_path = filepath + ".lock"
     with FileLock(lock_path, timeout=5):
         atomic_write_json(filepath, data)
+    # Invalidate the Arrow cache so the next MUNINN rerank / NÓTT pass sees the
+    # write. No-op when pyarrow isn't installed (ARROW_AVAILABLE = False).
+    try:
+        from arrow_cache import ARROW_AVAILABLE, get_arrow_cache
+        if ARROW_AVAILABLE:
+            get_arrow_cache().invalidate(data.get("shard_id"))
+    except Exception as exc:
+        _record_error("save_shard_invalidate_arrow", exc)
 
 
 def update_shard_usage(data: dict):

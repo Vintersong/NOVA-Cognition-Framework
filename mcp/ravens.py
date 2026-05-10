@@ -490,6 +490,28 @@ class Muninn:
                 "reasoning": {sid: "passthrough (no embedding available)" for sid in candidates.shard_ids[:top_n]},
             }
 
+        # Arrow fast path: one cached load + vectorised cosine over a contiguous
+        # (k, 384) numpy view. Falls through to the legacy per-shard JSON loop
+        # if pyarrow isn't installed or the cache hasn't been built yet.
+        try:
+            from arrow_cache import ARROW_AVAILABLE, get_arrow_cache
+        except Exception:
+            ARROW_AVAILABLE = False
+            get_arrow_cache = None  # type: ignore[assignment]
+
+        if ARROW_AVAILABLE:
+            try:
+                result = get_arrow_cache().rerank_by_cosine(
+                    query_embedding,
+                    candidates.shard_ids,
+                    candidates.scores,
+                    top_n,
+                )
+                if result["shard_ids"]:
+                    return result
+            except Exception as exc:
+                _record_error("muninn_local_rerank_arrow", exc)
+
         rescored = []
         for shard_id in candidates.shard_ids:
             shard_path = Path(self.shard_dir) / (shard_id + ".json")

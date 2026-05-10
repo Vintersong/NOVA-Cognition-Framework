@@ -11,6 +11,7 @@ summary_index.md
 nova_usage.jsonl
 nova_autoresearch.jsonl
 shard_access.jsonl
+skill_audit.db
 
 # Shard data — personal, never commit
 shards/
