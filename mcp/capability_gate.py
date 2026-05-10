@@ -181,13 +181,17 @@ class CapabilityGate:
         active_skill: SkillManifest,
         session_id: str,
         target: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[str]:
         """
         Enforce capability and HITL policy for *tool_name*.
 
         Raises CapabilityDenied  — capability not declared in @@capabilities.
         Raises HITLDenied        — operator rejected the HITL prompt.
-        Returns None             — call is allowed to proceed.
+        Returns request_id (str) — call is allowed to proceed; the caller MUST
+                                   invoke ``audit.log_executed(request_id=…, ok=…)``
+                                   after the underlying operation completes so the
+                                   audit record reflects the real outcome.
+        Returns None             — reversible call; no executed-event needed.
         """
         cap_tag, is_irreversible = resolve_capability(tool_name)
         request_id = str(uuid.uuid4())
@@ -216,16 +220,17 @@ class CapabilityGate:
 
         # 2. Reversible calls always proceed without HITL.
         if not is_irreversible:
-            return
+            return None
 
         # 3. Irreversible — apply HITL policy based on verification level.
         v = active_skill.verification
 
         if v == VerificationLevel.UNVERIFIED:
             self._run_hitl(tool_name, active_skill, session_id, request_id, target)
-            return
+            return request_id
 
-        # declared or tested + capability in scope → log and proceed (no per-call HITL).
+        # declared or tested + capability in scope → log the request and let
+        # the caller mark executed once the underlying operation completes.
         if self._audit:
             self._audit.log_request(
                 session_id=session_id,
@@ -235,15 +240,6 @@ class CapabilityGate:
                 verification=v.value,
                 target=target,
             )
-            self._audit.log_executed(
-                session_id=session_id,
-                request_id=request_id,
-                tool_name=tool_name,
-                skill_id=active_skill.skill_id,
-                verification=v.value,
-                target=target,
-                ok=True,
-            )
         logger.info(
             "capability_gate: %s approved via %s manifest (cap=%s target=%s)",
             tool_name,
@@ -251,6 +247,7 @@ class CapabilityGate:
             cap_tag,
             target,
         )
+        return request_id
 
     def _run_hitl(
         self,
@@ -292,17 +289,9 @@ class CapabilityGate:
                 f"HITL broker denied '{tool_name}' for unverified skill "
                 f"'{active_skill.skill_id}'"
             )
-
-        if self._audit:
-            self._audit.log_executed(
-                session_id=session_id,
-                request_id=request_id,
-                tool_name=tool_name,
-                skill_id=active_skill.skill_id,
-                verification=active_skill.verification.value,
-                target=target,
-                ok=True,
-            )
+        # NOTE: log_executed is deferred to the caller so the audit record
+        # reflects the actual outcome of the operation, not just the gate
+        # approval.
 
     def check_capability_tag(
         self,
@@ -312,7 +301,7 @@ class CapabilityGate:
         session_id: str,
         virtual_tool_name: str = "fs.write.irrev",
         target: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[str]:
         """
         Gate a capability tag directly without routing through a tool name.
 
@@ -320,7 +309,11 @@ class CapabilityGate:
         writes emitted by forgemaster_runtime.  *virtual_tool_name* is used
         only for audit log entries.
 
-        Raises CapabilityDenied or HITLDenied on block; returns None on allow.
+        Raises CapabilityDenied or HITLDenied on block.
+        Returns request_id (str) — caller MUST call
+        ``audit.log_executed(request_id=…, ok=…)`` after the operation
+        completes so the audit reflects the real outcome.
+        Returns None for reversible calls.
         """
         request_id = str(uuid.uuid4())
 
@@ -344,14 +337,14 @@ class CapabilityGate:
             )
 
         if not is_irreversible:
-            return
+            return None
 
         v = active_skill.verification
         if v == VerificationLevel.UNVERIFIED:
             self._run_hitl(
                 virtual_tool_name, active_skill, session_id, request_id, target
             )
-            return
+            return request_id
 
         if self._audit:
             self._audit.log_request(
@@ -359,15 +352,11 @@ class CapabilityGate:
                 tool_name=virtual_tool_name, skill_id=active_skill.skill_id,
                 verification=v.value, target=target,
             )
-            self._audit.log_executed(
-                session_id=session_id, request_id=request_id,
-                tool_name=virtual_tool_name, skill_id=active_skill.skill_id,
-                verification=v.value, target=target, ok=True,
-            )
         logger.info(
             "capability_gate: %s approved via %s manifest (cap=%s target=%s)",
             virtual_tool_name, v.value, cap_tag, target,
         )
+        return request_id
 
     # ── Async path (nova_server tool handlers) ────────────────────────────
 
@@ -377,7 +366,7 @@ class CapabilityGate:
         active_skill: SkillManifest,
         session_id: str,
         target: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[str]:
         """
         Async wrapper for check().
 
@@ -385,5 +374,10 @@ class CapabilityGate:
         via asyncio.to_thread so it does not stall the MCP server event loop.
         Non-blocking paths (declared/tested, capability denied) remain synchronous
         inside the thread and return immediately.
+
+        Returns the same request_id as ``check()``; caller is responsible for
+        invoking ``audit.log_executed(...)`` post-operation.
         """
-        await asyncio.to_thread(self.check, tool_name, active_skill, session_id, target)
+        return await asyncio.to_thread(
+            self.check, tool_name, active_skill, session_id, target
+        )

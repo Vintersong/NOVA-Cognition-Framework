@@ -194,22 +194,49 @@ _active_skill: SkillManifest = SkillManifest.OPERATOR_DIRECT
 _server_session_id: str = _uuid.uuid4().hex
 
 
-async def _gate_check(tool_name: str, target: str | None = None) -> str | None:
+async def _gate_check(tool_name: str, target: str | None = None) -> tuple[str | None, str | None]:
     """
     Run the capability gate for *tool_name* against the current active skill.
 
-    Returns None if the call may proceed, or a JSON error string to return
-    directly from the tool handler if the call is blocked or denied.
+    Returns ``(err, request_id)``:
+      - On allow: ``(None, request_id_or_None)``. The handler must call
+        :func:`_log_executed` after the operation completes so the audit
+        record reflects the real outcome.
+      - On block: ``(json_error_string, None)`` — the handler should return
+        the error string directly.
     """
     try:
-        await _capability_gate.async_check(
+        request_id = await _capability_gate.async_check(
             tool_name, _active_skill, _server_session_id, target
         )
-        return None
+        return None, request_id
     except CapabilityDenied as exc:
-        return json.dumps({"error": str(exc)}, indent=2)
+        return json.dumps({"error": str(exc)}, indent=2), None
     except HITLDenied as exc:
-        return json.dumps({"error": str(exc)}, indent=2)
+        return json.dumps({"error": str(exc)}, indent=2), None
+
+
+def _log_executed(
+    request_id: str | None,
+    tool_name: str,
+    target: str | None,
+    ok: bool,
+) -> None:
+    """Record an irreversible.executed event for a previously-gated call."""
+    if request_id is None:
+        return
+    try:
+        _skill_audit_log.log_executed(
+            session_id=_server_session_id,
+            request_id=request_id,
+            tool_name=tool_name,
+            skill_id=_active_skill.skill_id,
+            verification=_active_skill.verification.value,
+            target=target,
+            ok=ok,
+        )
+    except Exception as exc:  # pragma: no cover — audit log must never crash handlers
+        _logger.warning("nova_server._log_executed failed for %s: %s", tool_name, exc)
 
 
 # === Session usage tracking ===
@@ -227,7 +254,7 @@ _nott: Nott              # bound after utility functions are defined
 _hooks: NovaHookRegistry # bound after nott is initialized
 
 mcp = FastMCP("nova_mcp_v2")
-register_gemini_tools(mcp)
+register_gemini_tools(mcp, gate=_capability_gate, audit_log=_skill_audit_log)
 register_nidhogg_tools(mcp)
 register_evolve_tools(mcp)
 register_wiki_tools(mcp)
@@ -976,23 +1003,29 @@ async def nova_shard_archive(params: ShardArchiveInput) -> str:
     """Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion."""
     if _permission_context.blocks("nova_shard_archive"):
         return _permission_error("nova_shard_archive")
-    if (gate_err := await _gate_check("nova_shard_archive", params.shard_id)):
+    gate_err, request_id = await _gate_check("nova_shard_archive", params.shard_id)
+    if gate_err:
         return gate_err
+    op_ok = False
     try:
-        data, filepath = load_shard(params.shard_id)
-    except FileNotFoundError:
-        return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
+        try:
+            data, filepath = load_shard(params.shard_id)
+        except FileNotFoundError:
+            return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
 
-    data.setdefault("meta_tags", {})["intent"] = "archived"
-    data["meta_tags"]["archived_at"] = datetime.now().isoformat()
-    save_shard(filepath, data)
-    patch_index_entry(params.shard_id, data)
+        data.setdefault("meta_tags", {})["intent"] = "archived"
+        data["meta_tags"]["archived_at"] = datetime.now().isoformat()
+        save_shard(filepath, data)
+        patch_index_entry(params.shard_id, data)
+        op_ok = True
 
-    return json.dumps({
-        "status": "archived",
-        "shard_id": params.shard_id,
-        "guiding_question": data.get("guiding_question", "")
-    }, indent=2)
+        return json.dumps({
+            "status": "archived",
+            "shard_id": params.shard_id,
+            "guiding_question": data.get("guiding_question", "")
+        }, indent=2)
+    finally:
+        _log_executed(request_id, "nova_shard_archive", params.shard_id, op_ok)
 
 
 @mcp.tool(name="nova_shard_forget")
@@ -1006,28 +1039,34 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
     """
     if _permission_context.blocks("nova_shard_forget"):
         return _permission_error("nova_shard_forget")
-    if (gate_err := await _gate_check("nova_shard_forget", params.shard_id)):
+    gate_err, request_id = await _gate_check("nova_shard_forget", params.shard_id)
+    if gate_err:
         return gate_err
+    op_ok = False
     try:
-        data, filepath = load_shard(params.shard_id)
-    except FileNotFoundError:
-        return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
+        try:
+            data, filepath = load_shard(params.shard_id)
+        except FileNotFoundError:
+            return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
 
-    data.setdefault("meta_tags", {})["intent"] = "forgotten"
-    data["meta_tags"]["forgotten_at"] = datetime.now().isoformat()
-    data["meta_tags"]["forget_reason"] = params.reason
-    data["meta_tags"]["confidence"] = 0.0
-    save_shard(filepath, data)
-    patch_index_entry(params.shard_id, data)
+        data.setdefault("meta_tags", {})["intent"] = "forgotten"
+        data["meta_tags"]["forgotten_at"] = datetime.now().isoformat()
+        data["meta_tags"]["forget_reason"] = params.reason
+        data["meta_tags"]["confidence"] = 0.0
+        save_shard(filepath, data)
+        patch_index_entry(params.shard_id, data)
 
-    log_operation("nova_shard_forget", [params.shard_id], {"reason": params.reason})
+        log_operation("nova_shard_forget", [params.shard_id], {"reason": params.reason})
+        op_ok = True
 
-    return json.dumps({
-        "status": "forgotten",
-        "shard_id": params.shard_id,
-        "reason": params.reason,
-        "note": "Shard preserved on disk for audit. Excluded from all search and interact operations."
-    }, indent=2)
+        return json.dumps({
+            "status": "forgotten",
+            "shard_id": params.shard_id,
+            "reason": params.reason,
+            "note": "Shard preserved on disk for audit. Excluded from all search and interact operations."
+        }, indent=2)
+    finally:
+        _log_executed(request_id, "nova_shard_forget", params.shard_id, op_ok)
 
 
 @mcp.tool(name="nova_shard_consolidate")
@@ -1046,21 +1085,26 @@ async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
     """
     if _permission_context.blocks("nova_shard_consolidate"):
         return _permission_error("nova_shard_consolidate")
-    if (gate_err := await _gate_check("nova_shard_consolidate")):
+    gate_err, request_id = await _gate_check("nova_shard_consolidate")
+    if gate_err:
         return gate_err
+    op_ok = False
+    try:
+        # Awaited — user explicitly requested this, blocking is acceptable
+        report = await _nott.run(NottTrigger.SCHEDULED, dry_run=params.dry_run)
 
-    # Awaited — user explicitly requested this, blocking is acceptable
-    report = await _nott.run(NottTrigger.SCHEDULED, dry_run=params.dry_run)
+        log_operation("nova_shard_consolidate", [], {
+            "trigger": "manual",
+            "decayed": len(report.decayed_shards),
+            "compacted": len(report.compacted_shards),
+            "merge_suggestions": len(report.merge_suggestions),
+            "dry_run": params.dry_run,
+        })
+        op_ok = True
 
-    log_operation("nova_shard_consolidate", [], {
-        "trigger": "manual",
-        "decayed": len(report.decayed_shards),
-        "compacted": len(report.compacted_shards),
-        "merge_suggestions": len(report.merge_suggestions),
-        "dry_run": params.dry_run,
-    })
-
-    return json.dumps(report.to_dict(), indent=2)
+        return json.dumps(report.to_dict(), indent=2)
+    finally:
+        _log_executed(request_id, "nova_shard_consolidate", None, op_ok)
 
 
 @mcp.tool(name="nova_graph_query")
@@ -1251,7 +1295,8 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
     """
     if _permission_context.blocks("nova_forgemaster_sprint"):
         return _permission_error("nova_forgemaster_sprint")
-    if (gate_err := await _gate_check("nova_forgemaster_sprint", params.sprint_id)):
+    gate_err, request_id = await _gate_check("nova_forgemaster_sprint", params.sprint_id)
+    if gate_err:
         return gate_err
 
     shard_id_list: list[str] = (
@@ -1266,13 +1311,18 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
         gate=_capability_gate,
         audit_log=_skill_audit_log,
     )
+    op_ok = False
     try:
-        summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list)
-    except Exception as exc:
-        return json.dumps({"error": str(exc)}, indent=2)
+        try:
+            summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)}, indent=2)
 
-    log_operation("nova_forgemaster_sprint", shard_id_list, {"sprint_id": params.sprint_id})
-    return json.dumps(summary, indent=2)
+        log_operation("nova_forgemaster_sprint", shard_id_list, {"sprint_id": params.sprint_id})
+        op_ok = True
+        return json.dumps(summary, indent=2)
+    finally:
+        _log_executed(request_id, "nova_forgemaster_sprint", params.sprint_id, op_ok)
 
 
 
