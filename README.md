@@ -135,7 +135,7 @@ python mcp/nova_server.py
 ```
 NOVA-Cognition-Framework/
   mcp/
-    nova_server.py           ← ACTIVE MCP server (registers all 30 tools)
+    nova_server.py           ← ACTIVE MCP server (registers all 31 tools)
     config.py                ← all env vars and defaults (single source of truth)
     schemas.py               ← Pydantic input models for core + wiki tools
     models.py                ← shared dataclasses (UsageSummary)
@@ -181,6 +181,8 @@ NOVA-Cognition-Framework/
     skills/                  ← core orchestration skills (10 files)
     library/                 ← domain skill library (208 files, 15 categories)
     agents/                  ← agent persona definitions (326 files, 18 divisions)
+  facts/                     ← curated .shard files for SQLite pre-filter
+  tests/                     ← test suite (adversarial, clustering, quarantine, recall, state-gating)
   docs/                      ← reference and roadmap documents
   Donors/                    ← reference implementations
   .env                       ← API keys (never commit)
@@ -189,9 +191,9 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (30)
+## NOVA MCP Tools (31)
 
-### Core shard + graph + session (18)
+### Core shard + graph + session (19)
 
 | Tool | Description |
 |---|---|
@@ -203,6 +205,7 @@ NOVA-Cognition-Framework/
 | `nova_shard_summary` | Browse rows plus a short synopsis per shard |
 | `nova_shard_list` | Full raw dump (legacy; prefer index/summary) |
 | `nova_shard_get` | Read full shard — no side effects |
+| `nova_shard_get_full` | Cold-path full-body fetch — returns summary + conversation body |
 | `nova_shard_merge` | Merge shards into meta-shard, updates graph |
 | `nova_shard_archive` | Soft-archive — excluded from search, preserved on disk |
 | `nova_shard_forget` | Hard exclude with provenance log |
@@ -214,7 +217,7 @@ NOVA-Cognition-Framework/
 | `nova_session_list` | List all persisted session IDs |
 | `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
 
-Relation types: `influences`, `depends_on`, `contradicts`, `extends`, `references`, `merged_from`.
+Relation types: `influences`, `depends_on`, `contradicts`, `extends`, `references`, `merged_from`, `supersedes`, `corroborated_by`.
 
 ### Wiki (6)
 
@@ -339,7 +342,7 @@ Read-only resources exposed alongside the tools:
 | `NOVA_WIKI_DIR` | `wiki` | Wiki pages directory |
 | `NOVA_WIKI_SCHEMA` | `wiki_schema.json` | Wiki schema file |
 | `NOVA_WIKI_INDEX` | `wiki_index.json` | Wiki embedding index |
-| `NOVA_WIKI_ROUTING_MODEL` | `claude-haiku-3-5` | Wiki ingest routing model |
+| `NOVA_WIKI_ROUTING_MODEL` | `claude-haiku-4-5-20251001` | Wiki ingest routing model |
 | `NOVA_WIKI_SYNTHESIS_MODEL` | `claude-sonnet-4-6` | Wiki synthesis model |
 | `NIDHOGG_INTAKE_DIR` | `intake` | Nidhogg drop zone |
 | `NIDHOGG_MANIFEST_FILE` | `nidhogg_manifest.json` | Ingested-hash manifest |
