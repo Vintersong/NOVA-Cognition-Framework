@@ -224,9 +224,10 @@ def stratified_split(
 def per_class_metrics(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int = 3) -> dict:
     """Per-class precision/recall/F1 plus macro-F1 and confusion matrix."""
     confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
-    for t, p in zip(y_true.astype(np.int64), y_pred.astype(np.int64)):
-        if 0 <= t < num_classes and 0 <= p < num_classes:
-            confusion[t, p] += 1
+    yt = y_true.astype(np.int64)
+    yp = y_pred.astype(np.int64)
+    mask = (yt >= 0) & (yt < num_classes) & (yp >= 0) & (yp < num_classes)
+    np.add.at(confusion, (yt[mask], yp[mask]), 1)
 
     per_class = {}
     f1s = []
@@ -329,19 +330,19 @@ def train_model(
 
 
 def predict(model: "TernaryNet", X: np.ndarray) -> np.ndarray:  # noqa: F821
-    """Argmax prediction on numpy input. Handles BatchNorm's n=1 edge case."""
+    """Argmax prediction on numpy input."""
+    if not TORCH_AVAILABLE:
+        raise RuntimeError("torch is not installed — install requirements.txt")
     model.eval()
     with torch.no_grad():
         x_t = torch.from_numpy(X.astype(np.float32))
-        if len(x_t) == 1:
-            # BatchNorm1d with a single sample in eval mode is fine; just guard.
-            logits = model(x_t)
-        else:
-            logits = model(x_t)
+        logits = model(x_t)
         return logits.argmax(dim=1).cpu().numpy().astype(np.int64)
 
 
 def predict_proba(model: "TernaryNet", X: np.ndarray) -> np.ndarray:  # noqa: F821
+    if not TORCH_AVAILABLE:
+        raise RuntimeError("torch is not installed — install requirements.txt")
     model.eval()
     with torch.no_grad():
         x_t = torch.from_numpy(X.astype(np.float32))
@@ -357,13 +358,20 @@ def evaluate(model: "TernaryNet", X: np.ndarray, y: np.ndarray) -> dict:  # noqa
 
 
 def save_checkpoint(model: "TernaryNet", meta: dict, path: str | Path) -> None:  # noqa: F821
+    if not TORCH_AVAILABLE:
+        raise RuntimeError("torch is not installed — install requirements.txt")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "meta": meta}, str(path))
 
 
 def load_checkpoint(path: str | Path) -> tuple["TernaryNet", dict]:  # noqa: F821
-    obj: Any = torch.load(str(path), map_location="cpu", weights_only=False)
+    if not TORCH_AVAILABLE:
+        raise RuntimeError("torch is not installed — install requirements.txt")
+    # weights_only=True is safe here: the checkpoint stores only a state_dict
+    # (tensors) and a meta dict of JSON-style primitives. No custom classes
+    # need unpickling, so we reject the deserialization-RCE surface.
+    obj: Any = torch.load(str(path), map_location="cpu", weights_only=True)
     meta = obj["meta"]
     model = TernaryNet(
         input_dim=int(meta.get("input_dim", INPUT_DIM_DEFAULT)),

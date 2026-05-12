@@ -100,11 +100,19 @@ def build_input_text(
 
 
 def strip_vocab(text: str, words: Iterable[str]) -> str:
-    """Case-insensitive whole-word removal. Used for leakage ablation only."""
-    for w in words:
-        pattern = re.compile(rf"\b{re.escape(w)}\b", flags=re.IGNORECASE)
-        text = pattern.sub(" ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    """Case-insensitive whole-word removal. Used for leakage ablation only.
+
+    Builds a single combined alternation regex so the pass is one sweep
+    over the text rather than O(len(words)) sweeps.
+    """
+    word_list = [w for w in words if w]
+    if not word_list:
+        return text
+    pattern = re.compile(
+        rf"\b(?:{'|'.join(re.escape(w) for w in word_list)})\b",
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", pattern.sub(" ", text)).strip()
 
 
 # ═══════════════════════════════════════════════════════════
