@@ -476,6 +476,10 @@ class ForgemasterRuntime:
 
         Each turn's output is passed forward as context to the next turn.
         """
+        # Phase 4: Snapshot corpus before sprint
+        from skill_verification import snapshot_corpus, run_biconditional_check, BiconditionalFailed
+        corpus_before = snapshot_corpus()
+
         session = self.bootstrap(sprint_id, shard_ids or [])
 
         # Corpus snapshot before any writes — used by biconditional check at end.
