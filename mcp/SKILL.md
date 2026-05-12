@@ -32,9 +32,9 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (30 total)
+## Tools (35 total)
 
-### Core shard + graph + session (18)
+### Core shard + graph + session (21)
 
 | Tool | Purpose |
 |---|---|
@@ -42,10 +42,13 @@ Principle Library (reasoning methodology)
 | `nova_shard_create` | Create shard. Triggers enrichment hook. Registers in graph. |
 | `nova_shard_update` | Append to shard. Triggers enrichment hook. Auto-compacts at 30 turns. |
 | `nova_shard_search` | Search with confidence weighting. High-confidence shards rank higher. |
+| `nova_shard_query_state` | Inspect computed shard state (confidence, tags, decay) without loading body. |
+| `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault. |
 | `nova_shard_index` | Browse shards using compact metadata rows only. Default orienting tool. |
 | `nova_shard_summary` | Browse shards with compact metadata plus short synopsis. |
 | `nova_shard_list` | Full raw dump. Use only when a complete export is required. |
 | `nova_shard_get` | Read full shard content. No side effects. |
+| `nova_shard_get_full` | Cold-path full-body fetch. Returns summary plus conversation body. |
 | `nova_shard_merge` | Merge shards into meta-shard. Auto-wires graph relations. |
 | `nova_shard_archive` | Soft-archive. Excluded from search. Content preserved. |
 | `nova_shard_forget` | Hard exclude with provenance log. Intentional exclusion. |
@@ -68,6 +71,10 @@ Principle Library (reasoning methodology)
 ### Evolution (1)
 
 `nova_evolve`
+
+### Facts (2)
+
+`nova_facts_search`, `nova_facts_rebuild` — SQLite-backed `.shard` facts corpus. **Note:** these are currently outside the `_ALL_TOOL_NAMES` permission whitelist; see `docs/AUDIT-2026-05-12-followup.md`.
 
 ### Gemini (2)
 

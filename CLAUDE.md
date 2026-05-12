@@ -52,9 +52,9 @@ NOVA-Cognition-Framework/
     AGENTS.md                ← orchestration config and model routing
     SKILL_LIBRARY.md         ← index of all skills across 15 domains
     STANDARDS.md             ← authoring standard for all forgemaster content
-    skills/                  ← core orchestration skills (10 files)
-    library/                 ← domain skill library (208 files, 15 categories)
-    agents/                  ← agent persona definitions (326 files, 18 divisions)
+    skills/                  ← core orchestration skills (12 files)
+    library/                 ← domain skill library (324 files, 25 categories)
+    agents/                  ← agent persona definitions (221 personas + 99 reference files, 18 divisions)
   docs/                      ← reference and roadmap documents
   Donors/                    ← reference implementations (hermes-agent, OpenHarness)
   .env                       ← API keys (never commit)
@@ -62,9 +62,9 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (31 total)
+## NOVA MCP Tools (35 total)
 
-### Core shard ops (`nova_server.py`, 19)
+### Core shard ops (`nova_server.py`, 21)
 
 | Tool | Purpose |
 |---|---|
@@ -72,6 +72,8 @@ NOVA-Cognition-Framework/
 | `nova_shard_create` | Create new shard with guiding question |
 | `nova_shard_update` | Append conversation turn to existing shard |
 | `nova_shard_search` | Search by keyword with confidence weighting |
+| `nova_shard_query_state` | Inspect computed shard state (confidence, tags, decay) without loading body |
+| `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault |
 | `nova_shard_index` | Rebuild or inspect the shard index |
 | `nova_shard_summary` | Summarise shard contents |
 | `nova_shard_list` | List all shards sorted by confidence |
@@ -113,6 +115,15 @@ NOVA-Cognition-Framework/
 |---|---|
 | `nova_evolve` | Self-improvement loop over shards/prompts |
 
+### Facts (`facts.py`, 2)
+
+| Tool | Purpose |
+|---|---|
+| `nova_facts_search` | Search the SQLite-backed `.shard` facts corpus |
+| `nova_facts_rebuild` | Rebuild the facts index from shard sources |
+
+> **Note:** `nova_facts_search` and `nova_facts_rebuild` are currently absent from the `_ALL_TOOL_NAMES` permission whitelist in `nova_server.py`. They bypass the permission gate until that is fixed — see `docs/AUDIT-2026-05-12-followup.md`.
+
 ### Gemini (`Gemini/gemini_mcp.py`, 2)
 
 | Tool | Purpose |
@@ -139,8 +150,9 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-qa-review` | Stage 3 structural QA |
 | `forgemaster-nova-session-handoff` | Persisting state across sessions |
 | `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
+| `forgemaster-emotional-state-routing` | Routing hook: escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
-For all other domains see `forgemaster/SKILL_LIBRARY.md` (15 categories, 208 skills).
+For all other domains see `forgemaster/SKILL_LIBRARY.md` (25 categories, 324 skills).
 
 ---
 
