@@ -169,6 +169,28 @@ def test_predict_no_nan():
     assert set(np.unique(preds).tolist()).issubset({0, 1, 2})
 
 
+def test_checkpoint_roundtrip_weights_only(tmp_path):
+    """save_checkpoint -> load_checkpoint preserves predictions under weights_only=True."""
+    from ternary_net import load_checkpoint, save_checkpoint
+
+    X, y = _make_synthetic_dataset(n_per_class=15, dim=16, seed=3)
+    tr, va, _ = stratified_split(y, 0.2, 0.2, seed=3)
+    cfg = TrainConfig(hidden_dim=16, epochs=3, seed=3)
+    model, _ = train_model(X[tr], y[tr], X[va], y[va], cfg)
+
+    ckpt = tmp_path / "ckpt.pt"
+    meta = {"input_dim": 16, "hidden_dim": 16, "num_classes": 3,
+            "seed": 3, "note": "weights_only round-trip"}
+    save_checkpoint(model, meta=meta, path=ckpt)
+
+    reloaded, meta_out = load_checkpoint(ckpt)
+    assert meta_out["hidden_dim"] == 16
+    assert meta_out["note"] == "weights_only round-trip"
+    p_before = predict(model, X)
+    p_after = predict(reloaded, X)
+    assert np.array_equal(p_before, p_after)
+
+
 # ═══════════════════════════════════════════════════════════
 # LABEL DERIVATION + GRAPH REFINEMENT
 # ═══════════════════════════════════════════════════════════
@@ -262,6 +284,18 @@ def test_strip_vocab_removes_targets():
     assert "disproven" not in stripped.lower()
     assert "confirmed" not in stripped.lower()
     assert "claim" in stripped  # untouched content survives
+
+
+def test_strip_vocab_handles_empty_word_list():
+    text = "untouched content"
+    assert strip_vocab(text, []) == text
+
+
+def test_strip_vocab_whole_word_only():
+    """'confirmed' inside 'unconfirmedly' must NOT be stripped."""
+    text = "The status was unconfirmedly noted."
+    out = strip_vocab(text, ("confirmed",))
+    assert "unconfirmedly" in out
 
 
 # ═══════════════════════════════════════════════════════════
