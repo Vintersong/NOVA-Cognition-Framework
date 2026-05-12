@@ -76,6 +76,7 @@ class NottReport:
     decay_on_read_results: list[dict] = field(default_factory=list)
     cluster_results: dict = field(default_factory=dict)
     adversarial_results: dict = field(default_factory=dict)
+    valence_arousal_results: list[dict] = field(default_factory=list)
     graph_entities_synced: int = 0
     total_shards: int = 0
     duration_ms: float = 0.0
@@ -92,10 +93,11 @@ class NottReport:
         cluster_note = f", clustered {cl.get('shards_assigned', 0)} shards into {cl.get('clusters_found', 0)} clusters" if cl.get("recomputed") else ""
         adv = self.adversarial_results
         adv_note = f", adversarial found {adv.get('contradictions_found', 0)} contradictions in {adv.get('shards_reviewed', 0)} shards" if adv and not adv.get("skipped") else ""
+        va_note = f", scored valence/arousal for {len(self.valence_arousal_results)} shards" if self.valence_arousal_results else ""
         return (
             f"Decayed {len(self.decayed_shards)} shards, "
             f"compacted {len(self.compacted_shards)}, "
-            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}{cluster_note}{adv_note}."
+            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}{cluster_note}{adv_note}{va_note}."
         )
 
     def to_dict(self) -> dict:
@@ -110,6 +112,7 @@ class NottReport:
             "decay_on_read_results": self.decay_on_read_results,
             "cluster_results": self.cluster_results,
             "adversarial_results": self.adversarial_results,
+            "valence_arousal_results": self.valence_arousal_results,
             "graph_entities_synced": self.graph_entities_synced,
             "total_shards": self.total_shards,
             "duration_ms": round(self.duration_ms, 1),
@@ -221,6 +224,7 @@ class Nott:
             report.decay_on_read_results = await self._decay_on_read_pass(index, dry_run)
             report.cluster_results = await self._cluster_pass(index, dry_run)
             report.adversarial_results = await self._adversarial_pass(index, dry_run)
+            report.valence_arousal_results = await self._valence_arousal_pass(index, dry_run)
 
         # Rebuild index after mutations (skip on dry_run)
         if not dry_run and trigger in (NottTrigger.POST_SPRINT, NottTrigger.SCHEDULED):
@@ -337,6 +341,14 @@ class Nott:
                 compacted.append(shard_id)
                 if not dry_run:
                     self._save_shard(filepath, data)
+                    # Lazy migration: convert to YAML+MD format after compaction.
+                    # Only converts .json shards — already-.md shards are a no-op.
+                    if filepath.endswith(".json"):
+                        try:
+                            from shard_format import convert_shard_file
+                            convert_shard_file(filepath, delete_json=True)
+                        except Exception:
+                            pass  # never abort compaction on migration failure
 
         return compacted
 
@@ -365,6 +377,8 @@ class Nott:
         if ARROW_AVAILABLE:
             try:
                 from config import MERGE_SIMILARITY_THRESHOLD
+                from graph import add_corroborated_by
+                from maintenance import apply_confidence_corroboration
                 enriched_ids = {
                     sid for sid, entry in index.items()
                     if "enriched" in entry.get("tags", [])
@@ -373,16 +387,29 @@ class Nott:
                     pairs = get_arrow_cache().merge_candidates(
                         enriched_ids, MERGE_SIMILARITY_THRESHOLD,
                     )
-                    return [
-                        {
+                    results = []
+                    for a, b, sim, qa, qb in pairs:
+                        results.append({
                             "shard_a": a,
                             "shard_b": b,
                             "similarity": sim,
                             "question_a": qa,
                             "question_b": qb,
-                        }
-                        for a, b, sim, qa, qb in pairs
-                    ]
+                        })
+                        # Exact duplicates (sim=1.0): auto-write corroborated_by
+                        # and boost confidence on both shards. These are the same
+                        # content written twice — strongest possible corroboration.
+                        if sim >= 1.0:
+                            try:
+                                add_corroborated_by(a, b)
+                                add_corroborated_by(b, a)
+                                for sid in (a, b):
+                                    data, fp = self._load_shard(sid)
+                                    apply_confidence_corroboration(data)
+                                    self._save_shard(fp, data)
+                            except Exception:
+                                pass
+                    return results
             except Exception:
                 pass
 
@@ -626,6 +653,138 @@ class Nott:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor, self._adversarial_pass_sync, index, dry_run
+        )
+
+    # ── Valence/Arousal pass ─────────────────────────────────────────────
+
+    def _valence_arousal_pass_sync(self, index: dict, dry_run: bool) -> list[dict]:
+        """Score affective dimensions (valence + arousal) for unscored shards via Haiku.
+
+        Skips shards that already have meta_tags.valence set (not None).
+        Batches 15 shards per Haiku call to minimise API cost.
+        Writes valence + arousal back to shard JSON and SQLite.
+
+        Valence: 0=very negative/painful, 5=neutral, 9=very positive/joyful
+        Arousal: 0=dormant/reflective/calm, 5=moderate, 9=urgent/exciting/high-activation
+        """
+        from config import CLAUDE_API_KEY
+
+        if not CLAUDE_API_KEY:
+            return []
+
+        # Collect unscored shards (valence not set in meta_tags)
+        unscored = []
+        for shard_id, entry in index.items():
+            if "forgotten" in entry.get("tags", []) or "archived" in entry.get("tags", []):
+                continue
+            meta = entry.get("meta", {})
+            if meta.get("valence") is None:
+                unscored.append((shard_id, entry))
+
+        if not unscored:
+            return []
+
+        import re
+        import httpx
+        import anthropic
+        from nova_shard_db import get_nova_shard_db, encode_state, _epistemic_from_confidence
+
+        BATCH = 15
+        results = []
+        client = anthropic.Anthropic(
+            api_key=CLAUDE_API_KEY,
+            timeout=httpx.Timeout(20.0, connect=5.0),
+        )
+
+        for i in range(0, len(unscored), BATCH):
+            batch = unscored[i:i + BATCH]
+            summaries = [
+                {
+                    "id": sid,
+                    "question": entry.get("guiding_question", "")[:120],
+                    "summary": entry.get("context_summary", "")[:200],
+                    "theme": entry.get("meta", {}).get("theme", ""),
+                    "confidence": round(entry.get("confidence", 1.0), 2),
+                }
+                for sid, entry in batch
+            ]
+            prompt = (
+                "Score valence and arousal for each memory shard.\n\n"
+                "Valence (0–9): emotional tone of the content itself.\n"
+                "  0=very negative/painful/grief, 5=neutral/factual, 9=very positive/joyful/exciting\n\n"
+                "Arousal (0–9): activation level / urgency of the topic.\n"
+                "  0=dormant/calm/archival, 5=moderate engagement, 9=urgent/high-activation/crisis\n\n"
+                "Return ONLY XML tags, one per shard:\n"
+                '<va id="<shard_id>" v="<0-9>" a="<0-9>">one-line reason</va>\n\n'
+                f"Shards:\n{json.dumps(summaries, indent=2)}"
+            )
+
+            try:
+                response = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = response.content[0].text.strip()
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "NÓTT valence_arousal_pass batch %d failed: %s", i // BATCH, exc
+                )
+                continue
+
+            # Parse <va id="..." v="N" a="N">...</va>
+            for match in re.finditer(
+                r'<va\s+id=["\']([^"\']+)["\']\s+v=["\'](\d)["\']'
+                r'\s+a=["\'](\d)["\'][^>]*>([^<]*)</va>',
+                raw,
+            ):
+                sid, v_str, a_str, reason = match.groups()
+                valence = max(0, min(9, int(v_str)))
+                arousal = max(0, min(9, int(a_str)))
+
+                try:
+                    data, filepath = self._load_shard(sid)
+                except FileNotFoundError:
+                    continue
+
+                meta = data.setdefault("meta_tags", {})
+                meta["valence"] = valence
+                meta["arousal"] = arousal
+
+                if not dry_run:
+                    self._save_shard(filepath, data)
+                    # Sync updated state vector to SQLite
+                    try:
+                        confidence = float(meta.get("confidence", 1.0))
+                        epistemic = _epistemic_from_confidence(confidence)
+                        db = get_nova_shard_db()
+                        db.conn.execute(
+                            "UPDATE shards SET valence=?, arousal=?, state=? WHERE id=?",
+                            (
+                                valence,
+                                arousal,
+                                encode_state(confidence, valence, arousal, epistemic),
+                                sid,
+                            ),
+                        )
+                        db.conn.commit()
+                    except Exception:
+                        pass
+
+                results.append({
+                    "shard_id": sid,
+                    "valence": valence,
+                    "arousal": arousal,
+                    "reason": reason.strip(),
+                })
+
+        return results
+
+    async def _valence_arousal_pass(self, index: dict, dry_run: bool) -> list[dict]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._valence_arousal_pass_sync, index, dry_run
         )
 
     # ── Graph sync ───────────────────────────────────────────────────────

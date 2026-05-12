@@ -25,6 +25,7 @@ Internal orchestration and execution skills. Always loaded first.
 | QA Review | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-qa-review.md` | Stage 3 structural QA: thresholds, anti-patterns, JIRA comments |
 | Session Handoff | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-nova-session-handoff.md` | Persist state across sessions |
 | HeavySkill | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-heavyskill.md` | Hard verifiable reasoning: K=3 parallel Haiku thinkers + Sonnet deliberation |
+| Emotional State Routing | `NOVA-Cognition-Framework/forgemaster/skills/forgemaster-emotional-state-routing.md` | Routing hook — escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
 ---
 

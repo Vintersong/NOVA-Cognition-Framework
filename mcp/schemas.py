@@ -112,6 +112,35 @@ class ShardGetFullInput(BaseModel):
     shard_id: str = Field(..., min_length=1)
 
 
+# ── Obsidian export tool ──────────────────────────────────────────────────────
+
+class ObsidianExportInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    out_dir: str = Field(default="", description="Override output directory (default: NOVA_OBSIDIAN_DIR or output/obsidian_vault/)")
+    dry_run: bool = Field(default=False, description="Count what would be exported without writing files")
+
+
+# ── State query tool ─────────────────────────────────────────────────────────
+
+class ShardStateQueryInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    epistemic: Optional[int] = Field(
+        default=None,
+        description="Filter by epistemic state: 0=contradicted, 1=neutral, 2=confirmed",
+        ge=0, le=2,
+    )
+    valence_min: Optional[int] = Field(
+        default=None,
+        description="Minimum valence (0-9). 0=most negative, 9=most positive.",
+        ge=0, le=9,
+    )
+    limit: int = Field(default=20, ge=1, le=100)
+    keyword: str = Field(default="", description="Optional keyword filter on guiding_question/theme/intent")
+    stats_only: bool = Field(default=False, description="Return state distribution stats instead of rows")
+
+
 # ── Graph tools ───────────────────────────────────────────────────────────────
 
 class GraphQueryInput(BaseModel):

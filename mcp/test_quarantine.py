@@ -7,7 +7,7 @@ Run: cd mcp && python -m pytest test_quarantine.py test_recall.py -v
 import json
 import tempfile
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -40,11 +40,11 @@ def _make_index_entry(shard_id, confidence=1.0, quarantine_until=None, source="a
 
 
 def _future(hours=48):
-    return (datetime.now() + timedelta(hours=hours)).isoformat()
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
 def _past(hours=1):
-    return (datetime.now() - timedelta(hours=hours)).isoformat()
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -189,21 +189,15 @@ def test_active_quarantine_untouched():
 
 
 def test_dry_run_does_not_write():
-    """dry_run=True runs the pass but does not mutate shards."""
-    original_q = _future(1)
-    # Make it appear expired by setting it to 1 hour ago — but we're doing dry run
-    shards = {"s1": _shard("s1", quarantine_until=_past(1))}
+    """dry_run=True runs the pass but does not call save_shard."""
+    expired = _past(1)
+    shards = {"s1": _shard("s1", quarantine_until=expired)}
     nott, store = _build_nott(shards, graph_relations=[])
 
-    # Capture original state
-    original_conf = store["s1"]["meta_tags"]["confidence"]
+    save_calls = []
+    nott._save_shard = lambda fp, data: save_calls.append(fp)
 
-    asyncio.run(nott._quarantine_pass(nott._load_index(), dry_run=True))
+    results = asyncio.run(nott._quarantine_pass(nott._load_index(), dry_run=True))
 
-    # dry_run: shard_store should NOT have been updated
-    # (save_shard is a no-op in our mock, so we check the in-memory dict wasn't touched)
-    # The pass modifies the in-memory data dict but dry_run skips save_shard.
-    # In our mock, save_shard writes to the dict — so we verify the pass returns results
-    # but note: this test confirms the pass ran without error.
-    # A real dry_run test would need a mock that tracks save calls.
-    pass  # dry_run path verified by absence of exception
+    assert save_calls == [], f"dry_run must not call save_shard, got {save_calls}"
+    assert results, "dry_run should still report what would have changed"

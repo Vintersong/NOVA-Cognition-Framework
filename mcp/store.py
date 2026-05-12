@@ -60,20 +60,26 @@ def get_unique_filename(base: str) -> str:
 
 
 def load_shard(shard_id: str) -> tuple[dict, str]:
-    shard_dir_resolved = Path(SHARD_DIR).resolve()
-    filepath = (shard_dir_resolved / (shard_id + ".json")).resolve()
-    if not filepath.is_relative_to(shard_dir_resolved):
-        raise ValueError(f"Invalid shard_id: '{shard_id}' resolves outside shard directory.")
-    if not filepath.exists():
-        raise FileNotFoundError(f"Shard '{shard_id}' not found.")
-    with open(filepath, "r", encoding="utf-8") as f:
-        return json.load(f), str(filepath)
+    from shard_format import load_shard_file
+    return load_shard_file(shard_id, SHARD_DIR)
 
 
 def save_shard(filepath: str, data: dict):
+    from shard_format import md_path_for, shard_to_md, is_md_shard
+
+    # If the shard has already been migrated to .md, write .md instead of .json.
+    if not is_md_shard(filepath):
+        md = md_path_for(filepath)
+        if md.exists():
+            filepath = str(md)
+
     lock_path = filepath + ".lock"
-    with FileLock(lock_path, timeout=5):
-        atomic_write_json(filepath, data)
+    if is_md_shard(filepath):
+        with FileLock(lock_path, timeout=5):
+            Path(filepath).write_text(shard_to_md(data), encoding="utf-8")
+    else:
+        with FileLock(lock_path, timeout=5):
+            atomic_write_json(filepath, data)
     # Invalidate the Arrow cache so the next MUNINN rerank / NÓTT pass sees the
     # write. No-op when pyarrow isn't installed (ARROW_AVAILABLE = False).
     try:
@@ -82,6 +88,14 @@ def save_shard(filepath: str, data: dict):
             get_arrow_cache().invalidate(data.get("shard_id"))
     except Exception as exc:
         _record_error("save_shard_invalidate_arrow", exc)
+
+    # Keep SQLite secondary index in sync — best-effort, never blocks the write.
+    try:
+        from nova_shard_db import get_nova_shard_db
+        mtime_ns = int(Path(filepath).stat().st_mtime_ns) if os.path.exists(filepath) else 0
+        get_nova_shard_db().upsert_from_shard(data, mtime_ns)
+    except Exception as exc:
+        _record_error("save_shard_sync_sqlite", exc)
 
 
 def update_shard_usage(data: dict):
@@ -169,18 +183,29 @@ def update_index() -> dict:
     if not os.path.exists(SHARD_DIR):
         return index
 
+    from shard_format import load_shard_file
+
+    # Collect all shard IDs from both .md and .json files.
+    # When both exist for the same ID, prefer .md (it's the migrated format).
+    seen: dict[str, str] = {}  # shard_id -> filename
     for fname in sorted(os.listdir(SHARD_DIR)):
-        if not fname.endswith(".json"):
-            continue
+        if fname.endswith(".md"):
+            sid = fname[:-3]
+            seen[sid] = fname  # .md wins unconditionally
+        elif fname.endswith(".json") and not fname.endswith(".lock"):
+            sid = fname[:-5]
+            if sid not in seen:
+                seen[sid] = fname
+
+    for sid, fname in seen.items():
         fpath = os.path.join(SHARD_DIR, fname)
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                shard = json.load(f)
+            shard, _ = load_shard_file(sid, SHARD_DIR)
         except Exception as exc:
             _record_error("update_index", exc)
             continue
 
-        shard_id = shard.get("shard_id", fname.replace(".json", ""))
+        shard_id = shard.get("shard_id", sid)
         context_summary = shard.get("context", {}).get("summary", "")
         # Mirror context.summary into meta.summary so adversarial.py and recall.py
         # filters that read entry["meta"]["summary"] aren't silent no-ops.
@@ -516,6 +541,9 @@ def generate_haiku_summary_batch(shards: list[dict], batch_size: int = 5) -> dic
         return {}
 
     import anthropic
+    import httpx
+
+    _SUMMARY_API_TIMEOUT = float(os.environ.get("NOVA_SUMMARY_API_TIMEOUT", "12"))
 
     sample = list(shards)
     random.shuffle(sample)
@@ -527,14 +555,22 @@ def generate_haiku_summary_batch(shards: list[dict], batch_size: int = 5) -> dic
         f"Shards:\n{json.dumps(batch, indent=2)}"
     )
 
-    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-    response = client.messages.create(
-        model=HUGINN_MODEL,
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = response.content[0].text.strip()
-    parsed = json.loads(raw)
+    try:
+        client = anthropic.Anthropic(
+            api_key=CLAUDE_API_KEY,
+            timeout=httpx.Timeout(_SUMMARY_API_TIMEOUT, connect=5.0),
+        )
+        response = client.messages.create(
+            model=HUGINN_MODEL,
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        parsed = json.loads(raw)
+    except Exception as exc:
+        logger.warning("generate_haiku_summary_batch failed: %s", exc)
+        return {}
+
     return {
         item["shard_id"]: _truncate_text(item.get("summary", ""), 80)
         for item in parsed

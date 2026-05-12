@@ -214,9 +214,12 @@ class Huginn:
                     )
                     return response.content[0].text.strip()
 
+                # asyncio timeout is _RAVEN_API_TIMEOUT + 3 so httpx (set to
+                # _RAVEN_API_TIMEOUT) always fires first and exits the thread
+                # cleanly — avoids the asyncio cancel / hung-thread race.
                 raw = await asyncio.wait_for(
                     asyncio.to_thread(_huginn_api_call),
-                    timeout=_RAVEN_API_TIMEOUT,
+                    timeout=_RAVEN_API_TIMEOUT + 3.0,
                 )
                 llm_scores, llm_reasoning = _parse_score_xml(raw)
                 if llm_scores:
@@ -427,9 +430,12 @@ class Muninn:
                     )
                     return response.content[0].text.strip()
 
+                # asyncio timeout is _RAVEN_API_TIMEOUT + 3 so httpx (set to
+                # _RAVEN_API_TIMEOUT) always fires first and exits the thread
+                # cleanly — avoids the asyncio cancel / hung-thread race.
                 raw = await asyncio.wait_for(
                     asyncio.to_thread(_muninn_api_call),
-                    timeout=_RAVEN_API_TIMEOUT,
+                    timeout=_RAVEN_API_TIMEOUT + 3.0,
                 )
                 llm_scores, llm_reasoning = _parse_score_xml(raw)
                 if llm_scores:

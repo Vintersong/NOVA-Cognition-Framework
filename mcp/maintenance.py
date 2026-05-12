@@ -23,6 +23,10 @@ from config import (
     DECAY_INTERVAL_DAYS,
     MERGE_SIMILARITY_THRESHOLD,
 )
+
+# Confidence may ONLY rise via corroborated_by edges — never via repeat retrieval
+# or any other path. All callers must go through apply_confidence_corroboration().
+CORROBORATION_DELTA = float(os.environ.get("NOVA_CORROBORATION_DELTA", "0.1"))
 from timeutils import parse_iso, now_utc
 
 
@@ -62,6 +66,22 @@ def apply_confidence_decay(shard_data: dict) -> float:
         return new_confidence
 
     return current_confidence
+
+
+def apply_confidence_corroboration(shard_data: dict, delta: float | None = None) -> float:
+    """Raise confidence by delta after a corroborated_by edge is written.
+
+    This is the ONLY sanctioned path for increasing confidence. All other
+    code paths only decay or hold confidence steady.
+
+    Returns the new confidence value.
+    """
+    meta = shard_data.setdefault("meta_tags", {})
+    current = float(meta.get("confidence", 1.0))
+    bump = delta if delta is not None else CORROBORATION_DELTA
+    new_conf = round(min(1.0, current + bump), 4)
+    meta["confidence"] = new_conf
+    return new_conf
 
 
 def confidence_weighted_score(base_score: float, confidence: float) -> float:

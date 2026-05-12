@@ -15,7 +15,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -26,6 +26,7 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
 from config import SHARD_DIR, QUARANTINE_HOURS
 from store import save_shard, patch_index_entry
 from graph import add_shard_to_graph
+from timeutils import now_utc
 from usage import log_operation
 
 
@@ -51,7 +52,7 @@ def _build_shard(tool_name: str, tool_input: dict) -> dict:
         description = f"Wrote {file_path}: {snippet!r}"
 
     shard_id = f"hook_extract_{uuid.uuid4().hex[:12]}"
-    now = datetime.now()
+    now = now_utc()
     quarantine_until = (now + timedelta(hours=QUARANTINE_HOURS)).isoformat()
 
     return {

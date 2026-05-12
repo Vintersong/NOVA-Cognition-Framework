@@ -89,7 +89,7 @@ from schemas import (
     ShardListInput, ShardIndexInput, ShardMergeInput, ShardArchiveInput, ShardForgetInput, ShardGetInput,
     ShardConsolidateInput, ShardGetFullInput, GraphQueryInput, GraphRelationInput,
     SessionFlushInput, SessionLoadInput, SessionListInput,
-    ForgemasterSprintInput,
+    ForgemasterSprintInput, ShardStateQueryInput, ObsidianExportInput,
 )
 from store import (
     sanitize_filename, get_unique_filename,
@@ -106,6 +106,7 @@ from graph import (
 )
 from maintenance import (
     get_confidence, apply_confidence_decay, confidence_weighted_score,
+    apply_confidence_corroboration,
     maybe_compact_shard, cosine_similarity, find_merge_candidates,
 )
 from usage import log_operation
@@ -270,6 +271,8 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_shard_create",
     "nova_shard_update",
     "nova_shard_search",
+    "nova_shard_query_state",
+    "nova_obsidian_export",
     "nova_shard_index",
     "nova_shard_summary",
     "nova_shard_list",
@@ -342,6 +345,14 @@ def _pre_compact_stub(_data: dict, _shard_id: str) -> None:
     return None
 
 
+def _update_graph_entity_confidence(shard_id: str, data: dict) -> None:
+    """Update graph entity confidence — runs in executor to keep event loop free."""
+    graph = load_graph()
+    if shard_id in graph.get("entities", {}):
+        graph["entities"][shard_id]["confidence"] = data.get("meta_tags", {}).get("confidence", 1.0)
+        save_graph(graph)
+
+
 _nott = Nott(
     shard_dir=SHARD_DIR,
     graph_file=GRAPH_FILE,
@@ -360,12 +371,42 @@ _nott = Nott(
 
 # ── Hook registry — event-driven dispatch (replaces bespoke create_task calls) ──
 _hooks = NovaHookRegistry()
-_hooks.register(NovaHookEvent.SESSION_START,
-                lambda **_kw: _nott.run(NottTrigger.SESSION_START))
-_hooks.register(NovaHookEvent.POST_SPRINT,
-                lambda **_kw: _nott.run(NottTrigger.POST_SPRINT))
-_hooks.register(NovaHookEvent.COUNT_THRESHOLD,
-                lambda **_kw: _nott.run(NottTrigger.COUNT_THRESHOLD))
+
+import threading as _threading
+
+_nott_lock = _threading.Lock()
+
+
+def _nott_in_thread(trigger: NottTrigger) -> None:
+    """Run a NÓTT cycle in an isolated thread with its own event loop.
+
+    Only one NÓTT cycle runs at a time — concurrent triggers are dropped.
+    This prevents multiple threads hammering the shard directory simultaneously
+    (each full update_index() scans 580+ files; 4 concurrent = 2000+ file reads).
+    The next tool call will re-trigger if needed.
+    """
+    def _run() -> None:
+        if not _nott_lock.acquire(blocking=False):
+            return  # another cycle is already running — skip
+        try:
+            asyncio.run(_nott.run(trigger))
+        finally:
+            _nott_lock.release()
+    _threading.Thread(target=_run, daemon=True).start()
+
+
+async def _nott_session_start(**_kw: object) -> None:
+    _nott_in_thread(NottTrigger.SESSION_START)
+
+async def _nott_post_sprint(**_kw: object) -> None:
+    _nott_in_thread(NottTrigger.POST_SPRINT)
+
+async def _nott_count_threshold(**_kw: object) -> None:
+    _nott_in_thread(NottTrigger.COUNT_THRESHOLD)
+
+_hooks.register(NovaHookEvent.SESSION_START,    _nott_session_start)
+_hooks.register(NovaHookEvent.POST_SPRINT,      _nott_post_sprint)
+_hooks.register(NovaHookEvent.COUNT_THRESHOLD,  _nott_count_threshold)
 
 
 async def _refresh_server_session_id(**_kw: object) -> None:
@@ -397,7 +438,10 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
     facts_hits: list[dict] = []
     if not shard_ids and params.auto_select:
         inferred = True
-        index = load_index() or update_index()
+        loop_interact = asyncio.get_running_loop()
+        index = await loop_interact.run_in_executor(
+            None, lambda: load_index() or update_index()
+        )
         # ━━ FACTS — SQLite keyword pre-filter (cheap, always tried) ━━━━━━━━
         try:
             facts_hits = search_facts(params.message, confidence=1, limit=5)
@@ -437,13 +481,14 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
     loaded = []
     errors = []
 
+    _loop_for_load = asyncio.get_running_loop()
     for sid in shard_ids:
         try:
-            data, filepath = load_shard(sid)
+            data, filepath = await _loop_for_load.run_in_executor(None, load_shard, sid)
             update_shard_usage(data)
             # Confidence rises only via corroborated_by edges, not on retrieval.
             meta = data.setdefault("meta_tags", {})
-            save_shard(filepath, data)
+            await _loop_for_load.run_in_executor(None, save_shard, filepath, data)
 
             fragments = extract_fragments(data, sid, max_turns=MAX_FRAGMENTS)
 
@@ -512,9 +557,10 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     shard_id = filename.replace(".json", "")
 
     from datetime import timedelta
+    from timeutils import now_utc
     quarantine_until = None
     if params.source == "session_extracted":
-        quarantine_until = (datetime.now() + timedelta(hours=QUARANTINE_HOURS)).isoformat()
+        quarantine_until = (now_utc() + timedelta(hours=QUARANTINE_HOURS)).isoformat()
 
     shard_data = {
         "shard_id": shard_id,
@@ -551,9 +597,10 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     # waits for both the foreground save and the background enrich to finish
     # before mutating.
     shard_lock = _get_shard_lock(shard_id)
+    loop = asyncio.get_running_loop()
     async with shard_lock:
-        save_shard(filepath, shard_data)
-        patch_index_entry(shard_id, shard_data)
+        await loop.run_in_executor(None, save_shard, filepath, shard_data)
+        await loop.run_in_executor(None, patch_index_entry, shard_id, shard_data)
 
     # Register in knowledge graph
     add_shard_to_graph(shard_id, shard_data)
@@ -584,16 +631,26 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     loop = asyncio.get_running_loop()
 
     async def _background_enrich_and_persist() -> None:
+        # Enrich outside the lock — pure computation, no disk I/O.
+        await loop.run_in_executor(None, enrich_shard, shard_id, shard_data)
         async with shard_lock:
-            await loop.run_in_executor(None, enrich_shard, shard_id, shard_data)
             await loop.run_in_executor(None, save_shard, filepath, shard_data)
             await loop.run_in_executor(None, patch_index_entry, shard_id, shard_data)
 
     asyncio.create_task(_background_enrich_and_persist())
 
-    # Summary generation may call Haiku API — fire-and-forget to avoid blocking response.
-    # run_in_executor already schedules in the background; not awaiting makes it fire-and-forget.
-    loop.run_in_executor(None, refresh_summary_index_entry, shard_id, shard_data, True)  # noqa: RUF006
+    # Summary generation may call Haiku API — wrapped in a task with a hard ceiling
+    # so a stalled API call never holds a thread-pool slot and blocks future tool calls.
+    async def _background_summary() -> None:
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, refresh_summary_index_entry, shard_id, shard_data, True),
+                timeout=20.0,
+            )
+        except Exception:
+            pass  # summary generation is best-effort
+
+    asyncio.create_task(_background_summary())
 
     # NÓTT — count-threshold check includes merge candidate scan (fire-and-forget)
     index = load_index()
@@ -620,10 +677,11 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     # the same shard sees the prior call's background enrich+save before it
     # reads from disk. Without this, call 2 reads stale state and call 1's
     # background save later overwrites call 2's appended turn.
+    loop = asyncio.get_running_loop()
     shard_lock = _get_shard_lock(params.shard_id)
     async with shard_lock:
         try:
-            data, filepath = load_shard(params.shard_id)
+            data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
         except FileNotFoundError:
             return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
 
@@ -634,21 +692,17 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
         })
         update_shard_usage(data)
 
-        # Persist the new turn immediately so no data is lost if enrichment stalls.
+        # All I/O runs in executors so the event loop never blocks, even if
+        # SQLite or the index file is contended by NÓTT background threads.
         data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
-        save_shard(filepath, data)
-        patch_index_entry(params.shard_id, data)
+        await loop.run_in_executor(None, save_shard, filepath, data)
+        await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
-    # NÓTT owns compaction — fire-and-forget post-sprint cycle
-    # (replaces inline maybe_compact_shard call). Emitted outside the lock so
-    # NÓTT's pass doesn't block on the same lock the next caller is waiting on.
+    # NÓTT fire-and-forget (runs in isolated thread, never blocks the event loop)
     _hooks.emit(NovaHookEvent.POST_SPRINT)
 
-    # Update graph entity confidence
-    graph = load_graph()
-    if params.shard_id in graph.get("entities", {}):
-        graph["entities"][params.shard_id]["confidence"] = data["meta_tags"].get("confidence", 1.0)
-        save_graph(graph)
+    # Graph entity confidence update — also off the event loop
+    await loop.run_in_executor(None, lambda: _update_graph_entity_confidence(params.shard_id, data))
 
     # Enrichment runs in background — MiniLM embed + save, never blocks reply.
     # Previously awaited here; competed with NÓTT for the default thread pool
@@ -656,16 +710,25 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     loop = asyncio.get_running_loop()
 
     async def _background_enrich_and_persist() -> None:
+        # Enrich outside the lock — pure computation, no disk I/O.
+        # Only save+patch need the lock to prevent concurrent write conflicts.
+        await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
         async with shard_lock:
-            await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
             await loop.run_in_executor(None, save_shard, filepath, data)
             await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
     asyncio.create_task(_background_enrich_and_persist())
 
-    # Summary generation may call Haiku API — fire-and-forget to avoid blocking response.
-    # run_in_executor already schedules in the background; not awaiting makes it fire-and-forget.
-    loop.run_in_executor(None, refresh_summary_index_entry, params.shard_id, data, True)
+    async def _background_summary_update() -> None:
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, refresh_summary_index_entry, params.shard_id, data, True),
+                timeout=20.0,
+            )
+        except Exception:
+            pass
+
+    asyncio.create_task(_background_summary_update())
 
     log_operation("nova_shard_update", [params.shard_id])
 
@@ -678,24 +741,20 @@ async def nova_shard_update(params: ShardUpdateInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_shard_search")
-async def nova_shard_search(params: ShardSearchInput) -> str:
-    """Search shards with confidence weighting. High-confidence shards rank higher for same relevance score."""
-    if _permission_context.blocks("nova_shard_search"):
-        return _permission_error("nova_shard_search")
+def _local_keyword_search(query: str, include_low_confidence: bool) -> tuple[dict, list]:
+    """Keyword scoring over the shard index — runs in executor to keep event loop free."""
     index = load_index() or update_index()
+    query_tokens = set(query.lower().split())
     results = []
-    query_tokens = set(params.query.lower().split())
 
     for shard_id, entry in index.items():
         tags = entry.get("tags", [])
         if "archived" in tags or "forgotten" in tags:
             continue
-        if not params.include_low_confidence and "low_confidence" in tags:
+        if not include_low_confidence and "low_confidence" in tags:
             continue
 
         confidence = entry.get("confidence", 1.0)
-
         searchable = " ".join([
             entry.get("guiding_question", ""),
             entry.get("context_summary", ""),
@@ -722,6 +781,20 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
             })
 
     results.sort(key=lambda x: x["weighted_score"], reverse=True)
+    return index, results
+
+
+@mcp.tool(name="nova_shard_search")
+async def nova_shard_search(params: ShardSearchInput) -> str:
+    """Search shards with confidence weighting. High-confidence shards rank higher for same relevance score."""
+    if _permission_context.blocks("nova_shard_search"):
+        return _permission_error("nova_shard_search")
+
+    # All sync work (index load + scoring) in executor — never blocks the event loop.
+    loop = asyncio.get_running_loop()
+    index, results = await loop.run_in_executor(
+        None, _local_keyword_search, params.query, params.include_low_confidence
+    )
 
     # Ravens metadata — best-effort with a tight timeout so search never blocks.
     huginn_confidence = 0.0
@@ -767,6 +840,132 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
         "huginn_confidence": round(huginn_confidence, 4),
         "muninn_used": muninn_fired,
         "huginn_ranking": huginn_ranking,
+    }, indent=2)
+
+
+@mcp.tool(name="nova_shard_query_state")
+async def nova_shard_query_state(params: ShardStateQueryInput) -> str:
+    """Query the SQLite shard index by epistemic state vector.
+
+    Uses the structured integer encoding (confidence × valence × arousal × epistemic)
+    for fast single-predicate range queries — no full index scan.
+
+    Examples:
+      - stats_only=true              → state distribution across all shards
+      - min_confidence=0.85, epistemic=2  → confirmed high-confidence shards
+      - epistemic=0                  → all contradicted shards
+      - valence_min=7                → positively-valenced shards
+      - keyword="quarantine"         → filter by guiding_question/theme/intent
+    """
+    if _permission_context.blocks("nova_shard_query_state"):
+        return _permission_error("nova_shard_query_state")
+
+    from nova_shard_db import get_nova_shard_db, decode_state
+
+    db = get_nova_shard_db()
+
+    if params.stats_only:
+        stats = db.stats()
+        return json.dumps({"stats": stats}, indent=2)
+
+    if params.keyword:
+        rows = db.search(params.keyword, limit=params.limit)
+        # Apply confidence filter on top of keyword results
+        rows = [
+            r for r in rows
+            if params.min_confidence <= r["confidence"] <= params.max_confidence
+            and (params.epistemic is None or r["epistemic"] == params.epistemic)
+            and (params.valence_min is None or r["valence"] >= params.valence_min)
+        ]
+    else:
+        rows = db.query_state_range(
+            min_confidence=params.min_confidence,
+            max_confidence=params.max_confidence,
+            epistemic=params.epistemic,
+            valence_min=params.valence_min,
+            limit=params.limit,
+        )
+
+    results = [
+        {
+            "shard_id": r["id"],
+            "guiding_question": r["guiding_question"],
+            "confidence": r["confidence"],
+            "state": decode_state(r["state"]),
+            "provenance": r["provenance"],
+            "theme": r["theme"],
+            "quarantine_until": r["quarantine_until"],
+        }
+        for r in rows
+    ]
+
+    log_operation("nova_shard_query_state", [], {
+        "min_confidence": params.min_confidence,
+        "max_confidence": params.max_confidence,
+        "epistemic": params.epistemic,
+        "returned": len(results),
+    })
+
+    return json.dumps({
+        "returned": len(results),
+        "filters": {
+            "min_confidence": params.min_confidence,
+            "max_confidence": params.max_confidence,
+            "epistemic": params.epistemic,
+            "valence_min": params.valence_min,
+            "keyword": params.keyword,
+        },
+        "results": results,
+    }, indent=2)
+
+
+@mcp.tool(name="nova_obsidian_export")
+async def nova_obsidian_export(params: ObsidianExportInput) -> str:
+    """Export all shards to an Obsidian vault as Markdown files with YAML frontmatter
+    and [[wikilink]] edges derived from the knowledge graph.
+
+    Output dir: NOVA_OBSIDIAN_DIR env var (default: output/obsidian_vault/).
+    Skips archived and forgotten shards. Writes _NOVA_INDEX.md at the vault root.
+    """
+    if _permission_context.blocks("nova_obsidian_export"):
+        return _permission_error("nova_obsidian_export")
+
+    from obsidian_export import export_shards, OBSIDIAN_DIR
+
+    index = load_index() or update_index()
+    graph = load_graph()
+    out_dir = params.out_dir.strip() or OBSIDIAN_DIR
+
+    if params.dry_run:
+        skippable = sum(
+            1 for e in index.values()
+            if "forgotten" in e.get("tags", []) or "archived" in e.get("tags", [])
+        )
+        return json.dumps({
+            "dry_run": True,
+            "would_export": len(index) - skippable,
+            "would_skip": skippable,
+            "out_dir": out_dir,
+        }, indent=2)
+
+    result = await asyncio.get_running_loop().run_in_executor(
+        None,
+        lambda: export_shards(index, load_shard, graph, out_dir),
+    )
+
+    log_operation("nova_obsidian_export", [], {
+        "exported": result["exported"],
+        "skipped": result["skipped"],
+        "errors": len(result["errors"]),
+        "out_dir": out_dir,
+    })
+
+    return json.dumps({
+        "exported": result["exported"],
+        "skipped": result["skipped"],
+        "errors": result["errors"][:10],
+        "out_dir": out_dir,
+        "index_note": str(out_dir) + "/_NOVA_INDEX.md",
     }, indent=2)
 
 
@@ -1069,42 +1268,74 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
         _log_executed(request_id, "nova_shard_forget", params.shard_id, op_ok)
 
 
+_last_consolidation_report: dict | None = None
+
+
 @mcp.tool(name="nova_shard_consolidate")
 async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
     """
-    Run the full maintenance cycle via NÓTT (Goddess of Night):
-    1. Apply confidence decay to all shards not accessed in DECAY_INTERVAL_DAYS
-    2. Auto-compact any shards exceeding COMPACT_THRESHOLD turns
-    3. Surface merge suggestions for high-similarity pairs
-    4. Sync knowledge graph entity confidence values
-    5. Return a summary of what changed.
+    Trigger a full NÓTT maintenance cycle (fire-and-forget).
+    Returns immediately — NÓTT runs entirely in the background.
 
-    This tool is for explicit manual invocation. Automated NÓTT cycles
-    also run non-blocking on nova_shard_update (POST_SPRINT) and
-    nova_shard_interact (SESSION_START).
+    Call with dry_run=true to get the last completed report without
+    triggering a new cycle.
+
+    NÓTT also runs automatically:
+      - SESSION_START (decay only) on every nova_shard_interact
+      - POST_SPRINT (decay + compact + merge + graph) on every nova_shard_update
+      - COUNT_THRESHOLD when shard count exceeds the threshold
+    You rarely need to call this manually.
     """
     if _permission_context.blocks("nova_shard_consolidate"):
         return _permission_error("nova_shard_consolidate")
     gate_err, request_id = await _gate_check("nova_shard_consolidate")
     if gate_err:
         return gate_err
-    op_ok = False
-    try:
-        # Awaited — user explicitly requested this, blocking is acceptable
-        report = await _nott.run(NottTrigger.SCHEDULED, dry_run=params.dry_run)
 
-        log_operation("nova_shard_consolidate", [], {
-            "trigger": "manual",
-            "decayed": len(report.decayed_shards),
-            "compacted": len(report.compacted_shards),
-            "merge_suggestions": len(report.merge_suggestions),
-            "dry_run": params.dry_run,
-        })
-        op_ok = True
+    global _last_consolidation_report
 
-        return json.dumps(report.to_dict(), indent=2)
-    finally:
-        _log_executed(request_id, "nova_shard_consolidate", None, op_ok)
+    # dry_run=True → return last completed report (no new cycle)
+    if params.dry_run:
+        _log_executed(request_id, "nova_shard_consolidate", None, True)
+        if _last_consolidation_report:
+            return json.dumps({
+                "status": "last_report",
+                **_last_consolidation_report,
+            }, indent=2)
+        return json.dumps({"status": "no_report_yet", "hint": "Call with dry_run=false to trigger a cycle."}, indent=2)
+
+    # Fire-and-forget: run NÓTT in a dedicated thread with its own event loop.
+    # asyncio.create_task shares the main loop — synchronous ops inside nott.run()
+    # (_graph_sync, _update_index) would block all other tool calls.
+    # A separate thread + asyncio.run() is fully isolated.
+    import threading
+
+    def _nott_thread() -> None:
+        global _last_consolidation_report
+        if not _nott_lock.acquire(blocking=False):
+            _last_consolidation_report = {"status": "skipped", "reason": "Another NÓTT cycle is already running."}
+            return
+        try:
+            report = asyncio.run(_nott.run(NottTrigger.SCHEDULED, dry_run=False))
+            _last_consolidation_report = report.to_dict()
+            log_operation("nova_shard_consolidate", [], {
+                "trigger": "manual",
+                "decayed": len(report.decayed_shards),
+                "compacted": len(report.compacted_shards),
+                "merge_suggestions": len(report.merge_suggestions),
+            })
+        except Exception as exc:
+            _last_consolidation_report = {"status": "error", "error": str(exc)}
+        finally:
+            _nott_lock.release()
+
+    threading.Thread(target=_nott_thread, daemon=True).start()
+    _log_executed(request_id, "nova_shard_consolidate", None, True)
+
+    return json.dumps({
+        "status": "scheduled",
+        "message": "NÓTT maintenance cycle started in background. Call with dry_run=true to check the last completed report.",
+    }, indent=2)
 
 
 @mcp.tool(name="nova_graph_query")
@@ -1192,13 +1423,30 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
         return _permission_error("nova_graph_relate")
     add_relation(params.source_id, params.target_id, params.relation_type, params.notes, params.reason)
 
-    return json.dumps({
+    confidence_bumped = None
+    if params.relation_type == "corroborated_by":
+        # corroborated_by is the ONLY sanctioned path for raising confidence.
+        # source_id is the shard being confirmed; bump its confidence.
+        try:
+            data, filepath = load_shard(params.source_id)
+            new_conf = apply_confidence_corroboration(data)
+            save_shard(filepath, data)
+            patch_index_entry(params.source_id, data)
+            confidence_bumped = round(new_conf, 4)
+        except Exception:
+            pass
+
+    result = {
         "status": "relation_added",
         "source": params.source_id,
         "target": params.target_id,
         "type": params.relation_type,
-        "notes": params.notes
-    }, indent=2)
+        "notes": params.notes,
+    }
+    if confidence_bumped is not None:
+        result["confidence_after_corroboration"] = confidence_bumped
+
+    return json.dumps(result, indent=2)
 
 
 # ═══════════════════════════════════════════════════════════
