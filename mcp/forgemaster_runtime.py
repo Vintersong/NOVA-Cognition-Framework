@@ -478,12 +478,12 @@ class ForgemasterRuntime:
         """
         # Phase 4: Snapshot corpus before sprint
         from skill_verification import snapshot_corpus, run_biconditional_check, BiconditionalFailed
-        corpus_before = snapshot_corpus()
+        corpus_before_sv = snapshot_corpus()   # dict{filename: mtime} for skill_verification check
 
         session = self.bootstrap(sprint_id, shard_ids or [])
 
-        # Corpus snapshot before any writes — used by biconditional check at end.
-        corpus_before = _snapshot_corpus()
+        # Corpus snapshot before any writes — used by AuditLog biconditional check at end.
+        corpus_before = _snapshot_corpus()     # set[str] of shard stems for audit check
 
         # ── Turn 1: Orchestrator ──────────────────────────────────────────
         session, orch_out, _ = self.run_turn(
@@ -664,10 +664,10 @@ class ForgemasterRuntime:
                 sprint_id, contributing_shards,
             )
 
-        # Phase 4: Biconditional post-run check
-        corpus_after = snapshot_corpus()
+        # Phase 4: Biconditional post-run check (skill_verification path, uses mtime dicts)
+        corpus_after_sv = snapshot_corpus()
         try:
-            run_biconditional_check(sprint_id, corpus_before, corpus_after)
+            run_biconditional_check(sprint_id, corpus_before_sv, corpus_after_sv)
         except BiconditionalFailed as e:
             logger.error("ForgemasterRuntime.run_sprint: Biconditional check failed for sprint %s: %s", sprint_id, e)
             _log_event({

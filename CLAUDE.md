@@ -10,34 +10,87 @@ NOVA is a persistent memory MCP server that stores conversations as JSON shards 
 ## Directory Structure
 
 ```
-NOVA-Cognition-Framework/
+NOVA-Whitepaper/
   mcp/
+    # Core server
     nova_server.py           ← ACTIVE MCP server (registers all tool modules)
     config.py                ← all env vars and constants (single source of truth)
     schemas.py               ← Pydantic input models
     models.py                ← shared dataclasses (e.g. UsageSummary)
-    store.py                 ← shard I/O and index management
-    graph.py                 ← knowledge graph ops
+    requirements.txt         ← Python dependencies
+    SKILL.md                 ← NOVA skill instructions
+    ONBOARDING.md            ← fresh-install flow (triggered when no shards exist)
+
+    # Shard I/O & persistence
+    store.py                 ← shard JSON read/write and index management
+    nova_shard_db.py         ← SQLite-backed shard index (nova_shard_index.db)
+    shard_format.py          ← shard serialisation helpers
+    shard_parser.py          ← shard parsing (used by facts.py)
+    atomic_io.py             ← atomic file write primitives
+
+    # Knowledge graph
+    graph.py                 ← inter-shard knowledge graph ops
+
+    # Maintenance & lifecycle
     maintenance.py           ← confidence decay, compaction, merge
-    permissions.py           ← env-driven tool gating
-    hooks.py                 ← event-driven hook registry (session/tool events)
-    usage.py                 ← JSONL operation logging
+    nott.py                  ← NOTT daemon: decay, compact, merge, graph sync
+
+    # Retrieval & ranking
+    ravens.py                ← HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank)
+    recall.py                ← recall utilities (complements ravens.py)
+    nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings
+    clustering.py            ← shard clustering utilities
+    arrow_cache.py           ← Arrow-format embedding cache
+
+    # Permissions, gating & audit
+    permissions.py           ← env-driven tool gating (_ALL_TOOL_NAMES whitelist)
+    capability_gate.py       ← runtime capability gating (imported by nova_server.py)
+    audit_log.py             ← per-tool audit trail (imported by nova_server.py)
+    access_log.py            ← shard access logging
+
+    # Session & sprint
     session_store.py         ← session persistence
     forgemaster_runtime.py   ← sprint orchestration
-    ravens.py                ← HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank)
-    nott.py                  ← NOTT daemon: decay, compact, merge, graph sync
-    nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings
+    usage.py                 ← JSONL operation logging
+    timeutils.py             ← shared time/date helpers
+
+    # Hook system (event-driven, registered via hooks.py)
+    hooks.py                 ← hook registry (session/tool events)
+    nova_hook_extract.py     ← hook: entity extraction on shard write
+    nova_hook_precompact.py  ← hook: pre-compaction preparation
+    nova_hook_recall.py      ← hook: post-recall side effects
+    nova_hook_stop.py        ← hook: session-stop cleanup
+
+    # Skill system
+    skill_manifest.py        ← skill manifest parsing (imported by nova_server.py)
+    skill_verification.py    ← skill schema verification
+
+    # MCP tool modules
     evolve.py                ← nova_evolve tool (self-improvement loop)
     nidhogg.py               ← nidhogg_ingest/scan/status tools
+    facts.py                 ← nova_facts_search / nova_facts_rebuild tools
     wiki.py                  ← wiki storage backend
     wiki_ingest.py           ← wiki ingestion pipeline
     wiki_tools.py            ← nova_wiki_* MCP tools
+    obsidian_export.py       ← Obsidian vault export logic
     build_summary_index.py   ← summary index builder
+
+    # Experimental
+    ternary_net.py           ← ternary epistemic memory encoder (2026-05-14)
+    adversarial.py           ← adversarial shard testing module
+
+    # Tests
     test_nova.py             ← integration smoke tests
-    SKILL.md                 ← NOVA skill instructions
-    ONBOARDING.md            ← fresh-install flow (triggered when no shards exist)
+    test_adversarial.py      ← adversarial module tests
+    test_clustering.py       ← clustering tests
+    test_recall.py           ← recall pipeline tests
+    test_quarantine.py       ← quarantine/isolation tests
+    test_state_gating.py     ← capability gate tests
+
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
+      output_event_bus.lua   ← Lua event bus for Gemini output routing
+
   utilities/
     chatgpt_to_nova.py       ← ChatGPT export migration
     shard_index.py           ← rebuild shard index manually
@@ -45,6 +98,16 @@ NOVA-Cognition-Framework/
     autoresearch.py          ← automated research loop
     shard_compact.py         ← manual compaction helper
     theme_analyzer.py        ← theme distribution analysis
+    backfill_source_summary.py ← backfill source_summary field on shards
+    build_nova_shard_db.py   ← one-shot SQLite shard DB builder
+    check_tool_docs.py       ← verify tool docstrings against schema
+    convert_shards_to_md.py  ← export shards as plain markdown
+    export_obsidian.py       ← standalone Obsidian export script
+    export_ternary_dataset.py ← export training data for ternary_net
+    train_ternary_net.py     ← train the ternary epistemic encoder
+    usage_rollup.py          ← aggregate nova_usage.jsonl into summaries
+    test_shards.py           ← shard integrity test suite
+
   shards/                    ← live shard data — never modify directly
   nova_sessions/             ← flushed MCP session state
   output/                    ← built artifacts (games, experiments)
@@ -52,9 +115,9 @@ NOVA-Cognition-Framework/
     AGENTS.md                ← orchestration config and model routing
     SKILL_LIBRARY.md         ← index of all skills across 15 domains
     STANDARDS.md             ← authoring standard for all forgemaster content
-    skills/                  ← core orchestration skills (10 files)
-    library/                 ← domain skill library (208 files, 15 categories)
-    agents/                  ← agent persona definitions (326 files, 18 divisions)
+    skills/                  ← core orchestration skills (12 files)
+    library/                 ← domain skill library (324 files, 25 categories)
+    agents/                  ← agent persona definitions (221 personas + 99 reference files, 18 divisions)
   docs/                      ← reference and roadmap documents
   Donors/                    ← reference implementations (hermes-agent, OpenHarness)
   .env                       ← API keys (never commit)
@@ -62,9 +125,9 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (31 total)
+## NOVA MCP Tools (35 total)
 
-### Core shard ops (`nova_server.py`, 19)
+### Core shard ops (`nova_server.py`, 21)
 
 | Tool | Purpose |
 |---|---|
@@ -72,6 +135,8 @@ NOVA-Cognition-Framework/
 | `nova_shard_create` | Create new shard with guiding question |
 | `nova_shard_update` | Append conversation turn to existing shard |
 | `nova_shard_search` | Search by keyword with confidence weighting |
+| `nova_shard_query_state` | Inspect computed shard state (confidence, tags, decay) without loading body |
+| `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault |
 | `nova_shard_index` | Rebuild or inspect the shard index |
 | `nova_shard_summary` | Summarise shard contents |
 | `nova_shard_list` | List all shards sorted by confidence |
@@ -113,6 +178,15 @@ NOVA-Cognition-Framework/
 |---|---|
 | `nova_evolve` | Self-improvement loop over shards/prompts |
 
+### Facts (`facts.py`, 2)
+
+| Tool | Purpose |
+|---|---|
+| `nova_facts_search` | Search the SQLite-backed `.shard` facts corpus |
+| `nova_facts_rebuild` | Rebuild the facts index from shard sources |
+
+> **Note:** `nova_facts_search` and `nova_facts_rebuild` are currently absent from the `_ALL_TOOL_NAMES` permission whitelist in `nova_server.py`. They bypass the permission gate until that is fixed — see `docs/AUDIT-2026-05-12-followup.md`.
+
 ### Gemini (`Gemini/gemini_mcp.py`, 2)
 
 | Tool | Purpose |
@@ -139,8 +213,9 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-qa-review` | Stage 3 structural QA |
 | `forgemaster-nova-session-handoff` | Persisting state across sessions |
 | `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
+| `forgemaster-emotional-state-routing` | Routing hook: escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
-For all other domains see `forgemaster/SKILL_LIBRARY.md` (15 categories, 208 skills).
+For all other domains see `forgemaster/SKILL_LIBRARY.md` (25 categories, 324 skills).
 
 ---
 

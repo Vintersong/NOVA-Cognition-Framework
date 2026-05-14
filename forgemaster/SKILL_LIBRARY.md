@@ -316,6 +316,100 @@ Skills for agents that operate external systems autonomously.
 
 ---
 
+## 16. Autonomous AI Agents (LLM-native)
+
+LLM-native agent frameworks and managed-context tooling. Distinct from §13 (Autonomous Agents / Hands), which is for external-system automation.
+
+Browse: `forgemaster/library/autonomous-ai-agents/` — includes `blackbox`, `honcho`, plus a `DESCRIPTION.md` introducing the category.
+
+---
+
+## 17. Blockchain
+
+On-chain integration and SDK skills.
+
+Browse: `forgemaster/library/blockchain/` — includes `base`, `solana`.
+
+---
+
+## 18. Creative
+
+Creative-content toolchains (3D, image, meme).
+
+Browse: `forgemaster/library/creative/` — includes `blender-mcp`, `meme-generation`.
+
+---
+
+## 19. DevOps
+
+CLI tooling and container-management skills that complement §5 Infrastructure & DevOps.
+
+Browse: `forgemaster/library/devops/` — includes `cli`, `docker-management`.
+
+---
+
+## 20. Email
+
+Programmatic email automation.
+
+Browse: `forgemaster/library/email/` — includes `agentmail`.
+
+---
+
+## 21. Health
+
+Health, fitness, and BCI-adjacent skills.
+
+Browse: `forgemaster/library/health/` — includes `fitness-nutrition`, `neuroskill-bci`, plus a `DESCRIPTION.md`.
+
+---
+
+## 22. MCP
+
+Building and integrating Model Context Protocol servers.
+
+Browse: `forgemaster/library/mcp/` — includes `fastmcp`, plus a `DESCRIPTION.md`.
+
+---
+
+## 23. Migration
+
+Migration playbooks for legacy → modern stacks.
+
+Browse: `forgemaster/library/migration/` — includes `openclaw-migration`, plus a `DESCRIPTION.md`.
+
+---
+
+## 24. MLOps
+
+Production-ML tooling: training, inference, vector stores, instrumentation. Largest unmapped category.
+
+Browse: `forgemaster/library/mlops/` — includes `accelerate`, `chroma`, `faiss`, `flash-attention`, `hermes-atropos-environments`, `huggingface-tokenizers`, `instructor`, `lambda-labs`, `llava`, `nemo-curator`, `pinecone`, `pytorch-lightning`, `qdrant`, `saelens`, `simpo`, `slime`, `tensorrt-llm`, `torchtitan`.
+
+---
+
+## 25. Optional Skills
+
+**Empty placeholder directory.** No skills present. Flagged for cleanup in `docs/AUDIT-2026-05-12.md`.
+
+---
+
+## 26. Productivity
+
+Personal-productivity and knowledge-management skills.
+
+Browse: `forgemaster/library/productivity/` — includes `canvas`, `memento-flashcards`, `siyuan`, `telephony`.
+
+---
+
+## 27. Research
+
+Research workflows and domain intelligence.
+
+Browse: `forgemaster/library/research/` — includes `bioinformatics`, `domain-intel`, `drug-discovery`, `duckduckgo-search`, `gitnexus-explorer`, `parallel-cli`, `qmd`, `scrapling`.
+
+---
+
 ## Quick Routing Guide
 
 | You need to... | Load from category |
