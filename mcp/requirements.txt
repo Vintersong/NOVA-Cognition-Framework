@@ -11,3 +11,7 @@ numpy>=1.23.0                 # vectorised cosine / decay math (also pulled in b
 # Model clients — required by ravens.py, Gemini/gemini_mcp.py, utilities/autoresearch.py
 anthropic>=0.30.0       # HUGINN + MUNINN retrieval lanes
 google-genai>=0.3.0     # Gemini Flash implementation lane + autoresearch
+
+# Ternary epistemic memory PoC — mcp/ternary_net.py + utilities/{export,train}_ternary_net.py
+# Optional: tests skip gracefully when torch is absent.
+torch>=2.1,<2.5         # CPU wheel is sufficient for the PoC
