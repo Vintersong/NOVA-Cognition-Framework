@@ -185,8 +185,6 @@ NOVA-Whitepaper/
 | `nova_facts_search` | Search the SQLite-backed `.shard` facts corpus |
 | `nova_facts_rebuild` | Rebuild the facts index from shard sources |
 
-> **Note:** `nova_facts_search` and `nova_facts_rebuild` are currently absent from the `_ALL_TOOL_NAMES` permission whitelist in `nova_server.py`. They bypass the permission gate until that is fixed — see `docs/AUDIT-2026-05-12-followup.md`.
-
 ### Gemini (`Gemini/gemini_mcp.py`, 2)
 
 | Tool | Purpose |

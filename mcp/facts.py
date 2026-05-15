@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from config import FACTS_DIR, FACTS_INDEX_FILE
 from shard_parser import ShardDB
+from tool_registry import nova_tool
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ def search_facts(query: str, confidence: int | None = 1, limit: int = 10) -> lis
 def register_facts_tools(mcp: Any) -> None:
     """Register `nova_facts_search` and `nova_facts_rebuild` on the MCP server."""
 
-    @mcp.tool(name="nova_facts_search")
+    @nova_tool(mcp, name="nova_facts_search")
     async def nova_facts_search(params: FactsSearchInput) -> str:
         """Keyword search over the curated facts corpus (`.shard` files).
         Returns high-confidence facts as a HUGINN pre-filter."""
@@ -71,7 +72,7 @@ def register_facts_tools(mcp: Any) -> None:
             "results": results,
         }, indent=2)
 
-    @mcp.tool(name="nova_facts_rebuild")
+    @nova_tool(mcp, name="nova_facts_rebuild")
     async def nova_facts_rebuild(params: FactsRebuildInput) -> str:
         """Re-scan FACTS_DIR and rebuild the SQLite index. Idempotent."""
         try:

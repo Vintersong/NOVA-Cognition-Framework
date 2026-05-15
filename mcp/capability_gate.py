@@ -26,6 +26,7 @@ import uuid
 from typing import Optional
 
 from skill_manifest import SkillManifest, VerificationLevel
+from tool_registry import capability_map as _registry_capability_map
 
 logger = logging.getLogger(__name__)
 
@@ -39,59 +40,27 @@ class HITLDenied(Exception):
 
 
 # ── Capability map ────────────────────────────────────────────────────────────
-# Maps tool_name → (capability_tag, is_irreversible).
-#
-# Reversible: shard writes with rollback, in-memory state, reads.
-# Irreversible: permanent deletes, external network calls, ODIN state updates,
-#               external model spawns.
+# Derived from `mcp/tool_registry.py:_REGISTRY` — the canonical source. The
+# resolve_capability path hard-fails on unknown tools rather than granting a
+# default capability, so a forgotten registry entry can never silently bypass
+# the gate.
 
-_CAPABILITY_MAP: dict[str, tuple[str, bool]] = {
-    # Read ops — reversible
-    "nova_shard_interact":     ("fs.read",        False),
-    "nova_shard_search":       ("fs.read",        False),
-    "nova_shard_get":          ("fs.read",        False),
-    "nova_shard_get_full":     ("fs.read",        False),
-    "nova_shard_index":        ("fs.read",        False),
-    "nova_shard_summary":      ("fs.read",        False),
-    "nova_shard_list":         ("fs.read",        False),
-    "nova_graph_query":        ("fs.read",        False),
-    "nova_session_list":       ("fs.read",        False),
-    "nova_wiki_schema":        ("fs.read",        False),
-    "nova_wiki_query":         ("fs.read",        False),
-    "nova_wiki_get":           ("fs.read",        False),
-    "nova_wiki_list":          ("fs.read",        False),
-    "nidhogg_status":          ("fs.read",        False),
-    # Reversible writes — transaction buffer
-    "nova_shard_create":       ("fs.write.rev",   False),
-    "nova_shard_update":       ("fs.write.rev",   False),
-    "nova_shard_merge":        ("fs.write.rev",   False),
-    "nova_graph_relate":       ("fs.write.rev",   False),
-    "nova_session_flush":      ("fs.write.rev",   False),
-    "nova_session_load":       ("fs.write.rev",   False),
-    "nova_wiki_ingest":        ("fs.write.rev",   False),
-    "nova_wiki_lint":          ("fs.write.rev",   False),
-    # Irreversible writes
-    "nova_shard_archive":      ("fs.write.irrev", True),
-    "nova_shard_forget":       ("fs.write.irrev", True),
-    "nova_shard_consolidate":  ("fs.write.irrev", True),
-    # Memory writes (ODIN state)
-    "nova_evolve":             ("memory.write",   True),
-    # External / network
-    "nidhogg_ingest":          ("net.egress",     True),
-    "nidhogg_scan":            ("net.egress",     False),
-    # Model invocation
-    "gemini_execute_ticket":   ("spawn.proc",     True),
-    "gemini_load_file":        ("spawn.proc",     False),
-    "nova_forgemaster_sprint": ("spawn.proc",     True),
-}
-
-# Fallback for any tool not in the map (externally-registered or future tools).
-_DEFAULT_CAPABILITY = ("tool.invoke", False)
+_CAPABILITY_MAP: dict[str, tuple[str, bool]] = _registry_capability_map()
 
 
 def resolve_capability(tool_name: str) -> tuple[str, bool]:
-    """Return *(capability_tag, is_irreversible)* for *tool_name*."""
-    return _CAPABILITY_MAP.get(tool_name, _DEFAULT_CAPABILITY)
+    """Return *(capability_tag, is_irreversible)* for *tool_name*.
+
+    Raises ``CapabilityDenied`` if *tool_name* is not declared in
+    ``mcp/tool_registry.py``. There is no default-capability fallback.
+    """
+    try:
+        return _CAPABILITY_MAP[tool_name]
+    except KeyError:
+        raise CapabilityDenied(
+            f"Tool '{tool_name}' is not declared in mcp/tool_registry.py. "
+            f"Refusing to grant a default capability."
+        )
 
 
 # ── HITL brokers ──────────────────────────────────────────────────────────────
@@ -145,7 +114,7 @@ class _InteractiveBroker:
         # msvcrt polling keeps everything in the calling thread — no daemon
         # thread is left blocked after a timeout, so no stale reader can
         # consume a future operator approval.
-        import msvcrt
+        import msvcrt  # Windows-only stdlib; conditional branch (os.name == "nt")
         import time
 
         try:
@@ -159,8 +128,8 @@ class _InteractiveBroker:
         chars: list[str] = []
 
         while time.monotonic() < deadline:
-            if msvcrt.kbhit():
-                ch = msvcrt.getwche()   # echoes the character
+            if msvcrt.kbhit():  # type: ignore[attr-defined]
+                ch = msvcrt.getwche()  # type: ignore[attr-defined]  # echoes the character
                 if ch in ("\r", "\n"):
                     break
                 chars.append(ch)
@@ -169,8 +138,8 @@ class _InteractiveBroker:
         else:
             # Timeout — drain buffered keystrokes so they don't bleed into
             # the next prompt, then deny.
-            while msvcrt.kbhit():
-                msvcrt.getwch()
+            while msvcrt.kbhit():  # type: ignore[attr-defined]
+                msvcrt.getwch()  # type: ignore[attr-defined]
             try:
                 with open("CONOUT$", "w") as cout:
                     cout.write("\n[HITL] Timeout — denied.\n")
