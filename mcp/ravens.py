@@ -457,6 +457,57 @@ class Muninn:
             max_confidence=max(scores.values()) if scores else 0.0,
             operator="MUNINN",
         )
+
+        # ── Spreading activation — optional third pass ────────────────────────
+        # Propagates MUNINN scores through the knowledge graph to surface
+        # related shards not in the original HUGINN candidate set.
+        # Skipped gracefully when the graph is sparse or unavailable.
+        try:
+            from graph import load_graph
+            from clustering import detect_communities
+            from spreading_activation import spreading_activation as _spread
+            from config import NOVA_ACTIVATION_MIN_EDGES
+
+            _graph = load_graph()
+            if len(_graph.get("relations", [])) >= NOVA_ACTIVATION_MIN_EDGES:
+                _cluster_map = detect_communities(_graph)
+                _activation = _spread(
+                    seeds=result.scores,
+                    graph=_graph,
+                    cluster_map=_cluster_map,
+                )
+                if _activation:
+                    # Merge: 0.7 × original MUNINN score + 0.3 × activation score
+                    _all_ids = set(result.shard_ids) | set(_activation)
+                    _merged = {
+                        sid: round(
+                            0.7 * result.scores.get(sid, 0.0)
+                            + 0.3 * _activation.get(sid, 0.0),
+                            4,
+                        )
+                        for sid in _all_ids
+                    }
+                    _sorted = sorted(
+                        _merged, key=_merged.__getitem__, reverse=True
+                    )[:top_n]
+                    _reasoning = dict(result.reasoning)
+                    for sid in _sorted:
+                        act_val = _activation.get(sid, 0.0)
+                        if act_val > 0:
+                            suffix = f" +act={round(act_val, 4)}"
+                            _reasoning[sid] = _reasoning.get(sid, "activation") + suffix
+                    result = RetrievalResult(
+                        shard_ids=_sorted,
+                        scores={sid: _merged[sid] for sid in _sorted},
+                        reasoning=_reasoning,
+                        used_llm=result.used_llm,
+                        max_confidence=max(_merged[s] for s in _sorted) if _sorted else 0.0,
+                        operator="MUNINN",
+                    )
+        except Exception as exc:
+            _record_error("muninn_spreading_activation", exc)
+        # ── End spreading activation ──────────────────────────────────────────
+
         self._log(query, candidates, result)
         return result
 
