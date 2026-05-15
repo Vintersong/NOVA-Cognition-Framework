@@ -97,8 +97,9 @@ _REGISTRY: dict[str, ToolSpec] = dict([
     _spec("nova_session_flush",     "fs.write.rev",   "session"),
     _spec("nova_session_load",      "fs.write.rev",   "session"),
     _spec("nova_session_list",      "fs.read",        "session"),
-    # ── Forgemaster (1) ──────────────────────────────────────────────────
+    # ── Forgemaster (2) ──────────────────────────────────────────────────
     _spec("nova_forgemaster_sprint", "spawn.proc",    "forgemaster", irreversible=True),
+    _spec("nova_cache_prewarm",      "net.egress",    "forgemaster"),
     # ── Wiki (6) ─────────────────────────────────────────────────────────
     _spec("nova_wiki_schema",       "fs.read",        "wiki"),
     _spec("nova_wiki_ingest",       "fs.write.rev",   "wiki"),

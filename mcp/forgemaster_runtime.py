@@ -126,12 +126,21 @@ def _provider_for(model: str) -> str:
     return "unknown"
 
 
-def _call_anthropic(model: str, prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, int]:
+def _call_anthropic(
+    model: str,
+    prompt: str,
+    max_tokens: int = 4096,
+    cached_system: str = "",
+) -> tuple[str, int, int, int]:
     """
     Call an Anthropic model with a single user message.
 
     Returns (text, input_tokens, output_tokens, latency_ms).
     Reads CLAUDE_API_KEY at call time so .env changes are picked up without restart.
+
+    If cached_system is provided it is sent as the system prompt with
+    cache_control so subsequent calls with the same string get cache reads
+    instead of writes (pair with nova_cache_prewarm).
     """
     import anthropic
     from dotenv import load_dotenv
@@ -143,11 +152,20 @@ def _call_anthropic(model: str, prompt: str, max_tokens: int = 4096) -> tuple[st
 
     t0 = time.time()
     client = anthropic.Anthropic(api_key=key)
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
+
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if cached_system:
+        kwargs["system"] = [{
+            "type": "text",
+            "text": cached_system,
+            "cache_control": {"type": "ephemeral"},
+        }]
+
+    response = client.messages.create(**kwargs)
     text = response.content[0].text if response.content else ""
     in_tok = getattr(response.usage, "input_tokens", 0)
     out_tok = getattr(response.usage, "output_tokens", 0)
@@ -181,17 +199,24 @@ def _call_gemini(prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, in
     return text, in_tok, out_tok, latency_ms
 
 
-def _dispatch(role: str, prompt: str) -> tuple[str, str, int, int, int]:
+def _dispatch(
+    role: str,
+    prompt: str,
+    cached_system: str = "",
+) -> tuple[str, str, int, int, int]:
     """
     Dispatch a prompt to the model assigned to *role*.
 
     Returns (text, model_used, input_tokens, output_tokens, latency_ms).
     Raises on unknown role or missing provider config.
+
+    cached_system is forwarded to _call_anthropic for Anthropic lanes so
+    repeated sprint turns benefit from prompt-cache reads.
     """
     model = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
     provider = _provider_for(model)
     if provider == "anthropic":
-        text, in_tok, out_tok, lat = _call_anthropic(model, prompt)
+        text, in_tok, out_tok, lat = _call_anthropic(model, prompt, cached_system=cached_system)
     elif provider == "google":
         text, in_tok, out_tok, lat = _call_gemini(prompt)
     else:
@@ -384,6 +409,7 @@ class ForgemasterRuntime:
         role: str,
         skill_path: str,
         prompt: str,
+        cached_system: str = "",
     ) -> tuple[NovaSession, str, SkillManifest]:
         """
         Execute a single agent turn with real LLM dispatch.
@@ -427,7 +453,7 @@ class ForgemasterRuntime:
         # Real dispatch.
         dispatch_error: Optional[str] = None
         try:
-            response_text, model_used, in_tok, out_tok, latency_ms = _dispatch(role, user_content)
+            response_text, model_used, in_tok, out_tok, latency_ms = _dispatch(role, user_content, cached_system=cached_system)
         except Exception as exc:
             logger.error("ForgemasterRuntime.run_turn: dispatch failed for %s — %s", role, exc)
             dispatch_error = str(exc)
@@ -465,6 +491,7 @@ class ForgemasterRuntime:
         sprint_id: str,
         design_doc: str,
         shard_ids: list[str] | None = None,
+        cached_system: str = "",
     ) -> dict:
         """
         Execute the full Forgemaster sprint lifecycle with real LLM dispatch:
@@ -479,6 +506,10 @@ class ForgemasterRuntime:
         7. return sprint summary including the path of any file written
 
         Each turn's output is passed forward as context to the next turn.
+
+        cached_system: system prompt string returned by nova_cache_prewarm. When
+        provided, every Anthropic turn sends it with cache_control so the API
+        serves reads (~0.1× cost) instead of writes after the first turn.
         """
         session = self.bootstrap(sprint_id, shard_ids or [])
 
@@ -496,6 +527,7 @@ class ForgemasterRuntime:
                 "Decompose this into typed tickets per the skill above. "
                 "List each ticket with its type, target file(s), and acceptance criteria."
             ),
+            cached_system=cached_system,
         )
 
         # ── Turn 2: Planner ───────────────────────────────────────────────
@@ -512,6 +544,7 @@ class ForgemasterRuntime:
                 "unambiguous spec for it. Include: exact file path, exact CLI surface, "
                 "all flag names, exact output format, and acceptance criteria."
             ),
+            cached_system=cached_system,
         )
 
         # ── Turn 3: Implementer ───────────────────────────────────────────
@@ -529,6 +562,9 @@ class ForgemasterRuntime:
                 "No markdown fences. No explanation. No prose. "
                 "Begin with the first line of the file and stop at the last."
             ),
+            # Gemini handles the implementer lane — cached_system is Anthropic-only
+            # but run_turn guards it inside _dispatch so it's safe to pass through.
+            cached_system=cached_system,
         )
 
         # Write implementer output to disk if a target file is named in the design doc.
@@ -612,6 +648,7 @@ class ForgemasterRuntime:
                 "State PASS or FAIL on the first line. "
                 "Then list specific issues, each with a file/line reference where applicable."
             ),
+            cached_system=cached_system,
         )
 
         # ── Flush session to disk ─────────────────────────────────────────

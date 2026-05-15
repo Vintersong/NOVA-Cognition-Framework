@@ -90,6 +90,7 @@ from schemas import (
     ShardConsolidateInput, ShardGetFullInput, GraphQueryInput, GraphRelationInput,
     SessionFlushInput, SessionLoadInput, SessionListInput,
     ForgemasterSprintInput, ShardStateQueryInput, ObsidianExportInput,
+    CachePrewarmInput,
 )
 from store import (
     sanitize_filename, get_unique_filename,
@@ -1543,7 +1544,7 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
     op_ok = False
     try:
         try:
-            summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list)
+            summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list, cached_system=params.cached_system)
         except Exception as exc:
             return json.dumps({"error": str(exc)}, indent=2)
 
@@ -1554,6 +1555,63 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
         _log_executed(request_id, "nova_forgemaster_sprint", params.sprint_id, op_ok)
 
 
+
+
+@nova_tool(mcp, name="nova_cache_prewarm")
+async def nova_cache_prewarm(params: CachePrewarmInput) -> str:
+    """
+    Pre-warm the Anthropic prompt cache with a summary context built from the
+    top-N highest-confidence shards. Returns the system prompt string that must
+    be passed (with cache_control) in every subsequent API call to get cache
+    reads instead of writes.
+
+    Call this once at the start of a Forgemaster sprint or any multi-turn
+    session where the same shard context will appear across several API calls.
+    The prewarm fires a max_tokens=0 request — no output generated, cache
+    entry written. Subsequent calls with the same system string pay ~0.1× cost.
+    """
+    if _permission_context.blocks("nova_cache_prewarm"):
+        return _permission_error("nova_cache_prewarm")
+
+    from recall import prewarm_session_context
+    from config import MUNINN_MODEL
+
+    model = params.model or MUNINN_MODEL
+
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: prewarm_session_context(
+                model=model,
+                top_n=params.top_n,
+                project_context=params.project_context,
+                min_confidence=params.min_confidence,
+            ),
+        )
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+
+    log_operation("nova_cache_prewarm", result.get("shard_ids", []), {
+        "model": model,
+        "top_n": params.top_n,
+        "cache_write_tokens": result.get("cache_write_tokens", 0),
+        "skipped": result.get("skipped", False),
+    })
+
+    output = {
+        "status": "skipped" if result["skipped"] else "ok",
+        "skip_reason": result.get("skip_reason", ""),
+        "shard_count": len(result.get("shard_ids", [])),
+        "shard_ids": result.get("shard_ids", []),
+        "cache_write_tokens": result.get("cache_write_tokens", 0),
+        "model": model,
+        "note": (
+            "" if result["skipped"] else
+            "Pass system_prompt with cache_control on every subsequent call to get cache reads."
+        ),
+        "system_prompt": result.get("system_prompt", ""),
+    }
+    return json.dumps(output, indent=2)
 
 
 @mcp.resource("nova://skill")

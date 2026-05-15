@@ -1,5 +1,5 @@
 """
-schemas.py — Pydantic input models for all 35 NOVA MCP tools.
+schemas.py — Pydantic input models for all 36 NOVA MCP tools.
 
 Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 """
@@ -211,6 +211,15 @@ class ForgemasterSprintInput(BaseModel):
     sprint_id: str = Field(..., min_length=1)
     design_doc: str = Field(..., min_length=1)
     shard_ids: Optional[str] = Field(default=None)
+    cached_system: str = Field(default="", description="System prompt from nova_cache_prewarm — passed to every Anthropic turn for cache reads")
+
+
+class CachePrewarmInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    top_n: int = Field(default=20, ge=5, le=100, description="Number of top-confidence shards to include")
+    project_context: Optional[str] = Field(default=None, description="Filter shards by project_context tag")
+    min_confidence: float = Field(default=0.6, ge=0.0, le=1.0, description="Minimum shard confidence floor")
+    model: str = Field(default="", description="Model to prewarm against (defaults to MUNINN_MODEL)")
 
 
 # ── Wiki tools ────────────────────────────────────────────────────────────────
