@@ -115,15 +115,25 @@ def test_capability_map_matches_registry():
         assert irrev == spec.irreversible
 
 
-def test_shard_tools_set_unchanged():
-    """Audit log's _SHARD_TOOLS derives from registry — must equal the
-    historical hardcoded set so corpus reconciliation behaviour doesn't drift."""
-    expected = {"nova_shard_archive", "nova_shard_forget", "nova_shard_consolidate"}
-    derived = {
-        name for name in tool_registry.irreversible_tools()
-        if tool_registry.get(name).category == "shard"
+def test_shard_tools_set_matches_audit_log_filter():
+    """Audit log's _SHARD_TOOLS targets shard IDs, so it must include both
+    shard-category irreversibles AND nova_graph_relate (graph category,
+    irreversible, target is source shard ID)."""
+    from audit_log import _SHARD_TOOL_NAMES
+    expected = {
+        "nova_shard_archive",
+        "nova_shard_forget",
+        "nova_shard_consolidate",
+        "nova_graph_relate",
     }
-    assert derived == expected
+    assert set(_SHARD_TOOL_NAMES) == expected
+
+
+def test_nova_graph_relate_is_irreversible():
+    """corroborated_by raises shard confidence — must be audit-logged."""
+    spec = tool_registry.get("nova_graph_relate")
+    assert spec.irreversible is True
+    assert spec.category == "graph"
 
 
 def test_tools_by_category_covers_registry():
