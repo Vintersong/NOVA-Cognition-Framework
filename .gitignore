@@ -11,7 +11,15 @@ summary_index.md
 nova_usage.jsonl
 nova_autoresearch.jsonl
 shard_access.jsonl
-skill_audit.db
+
+# SQLite databases — runtime artifacts, never commit
+skill_audit.db*
+nova_shard_index.db*
+mcp/nova_shard_index.db*
+
+# SQLite WAL-mode journals — mid-write state, never commit
+*.db-shm
+*.db-wal
 
 # Shard data — personal, never commit
 shards/
@@ -44,4 +52,3 @@ facts/*
 !facts/examples/
 !facts/examples/**
 facts_index.db
-nova_autoresearch.jsonl
