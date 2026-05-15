@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nova-cognition-framework"
+version = "0.1.0"
+description = "NOVA persistent memory MCP server + Forgemaster orchestration layer"
+requires-python = ">=3.11,<3.13"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "filelock>=3.12.0",
+    "ijson>=3.3.0",
+    "numpy>=1.23.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+ml = [
+    "sentence-transformers>=2.2.0",
+    "pyarrow>=14.0.0",
+]
+torch = [
+    "torch>=2.1,<2.5",
+]
+anthropic = [
+    "anthropic>=0.30.0",
+]
+gemini = [
+    "google-genai>=0.3.0",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+    "mypy>=1.8",
+]
+all = [
+    "nova-cognition-framework[ml,torch,anthropic,gemini,dev]",
+]
+
+[tool.setuptools]
+packages = []

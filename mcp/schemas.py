@@ -1,5 +1,5 @@
 """
-schemas.py — Pydantic input models for all 30 NOVA MCP tools.
+schemas.py — Pydantic input models for all 35 NOVA MCP tools.
 
 Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 """
@@ -8,6 +8,15 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from config import SESSION_ID_PATTERN
+
+
+# Shared relation enum: same set used by ShardCreateInput.relation_type and
+# GraphRelationInput.relation_type so creation-time wiring and explicit
+# graph writes can't drift apart.
+RelationType = Literal[
+    "influences", "depends_on", "contradicts", "extends", "references",
+    "merged_from", "supersedes", "corroborated_by",
+]
 
 
 # ── Shard tools ───────────────────────────────────────────────────────────────
@@ -46,7 +55,7 @@ class ShardCreateInput(BaseModel):
     theme: str = Field(default="general")
     initial_message: str = Field(default="")
     related_shards: str = Field(default="")
-    relation_type: str = Field(default="references")
+    relation_type: RelationType = Field(default="references")
     source: Literal[
         "user_input", "external_doc", "agent_inference", "session_extracted", "corroborated_by"
     ] = Field(default="agent_inference", description="Provenance of this shard")
@@ -156,10 +165,7 @@ class GraphRelationInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
     source_id: str = Field(..., min_length=1)
     target_id: str = Field(..., min_length=1)
-    relation_type: Literal[
-        "influences", "depends_on", "contradicts", "extends", "references",
-        "merged_from", "supersedes", "corroborated_by",
-    ] = Field(..., description="Edge type")
+    relation_type: RelationType = Field(..., description="Edge type")
     notes: str = Field(default="")
     reason: str = Field(default="", description="Required for supersedes edges — explain why source supersedes target")
 

@@ -1,0 +1,23 @@
+# Pinned dev/CI lockfile for reproducible builds.
+# Regenerate by installing `pip install -r mcp/requirements.txt pytest ruff mypy pyyaml`
+# in a clean Python 3.11 venv and running `pip freeze`. The pins below were
+# captured 2026-05-15; update when `mcp/requirements.txt` floors change.
+
+# Runtime (mirrors mcp/requirements.txt floors with explicit pins)
+mcp[cli]==1.2.0
+pydantic==2.7.4
+sentence-transformers==2.7.0
+python-dotenv==1.0.1
+filelock==3.15.4
+ijson==3.3.0
+pyarrow==16.1.0
+numpy==1.26.4
+anthropic==0.30.0
+google-genai==0.3.0
+torch==2.4.1
+pyyaml==6.0.1
+
+# Dev/CI tools
+pytest==7.4.4
+ruff==0.4.10
+mypy==1.10.1

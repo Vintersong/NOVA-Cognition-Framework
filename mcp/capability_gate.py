@@ -54,12 +54,14 @@ _CAPABILITY_MAP: dict[str, tuple[str, bool]] = {
     "nova_shard_index":        ("fs.read",        False),
     "nova_shard_summary":      ("fs.read",        False),
     "nova_shard_list":         ("fs.read",        False),
+    "nova_shard_query_state":  ("fs.read",        False),
     "nova_graph_query":        ("fs.read",        False),
     "nova_session_list":       ("fs.read",        False),
     "nova_wiki_schema":        ("fs.read",        False),
     "nova_wiki_query":         ("fs.read",        False),
     "nova_wiki_get":           ("fs.read",        False),
     "nova_wiki_list":          ("fs.read",        False),
+    "nova_facts_search":       ("fs.read",        False),
     "nidhogg_status":          ("fs.read",        False),
     # Reversible writes — transaction buffer
     "nova_shard_create":       ("fs.write.rev",   False),
@@ -70,6 +72,8 @@ _CAPABILITY_MAP: dict[str, tuple[str, bool]] = {
     "nova_session_load":       ("fs.write.rev",   False),
     "nova_wiki_ingest":        ("fs.write.rev",   False),
     "nova_wiki_lint":          ("fs.write.rev",   False),
+    "nova_facts_rebuild":      ("fs.write.rev",   False),
+    "nova_obsidian_export":    ("fs.write.rev",   False),
     # Irreversible writes
     "nova_shard_archive":      ("fs.write.irrev", True),
     "nova_shard_forget":       ("fs.write.irrev", True),
@@ -145,7 +149,7 @@ class _InteractiveBroker:
         # msvcrt polling keeps everything in the calling thread — no daemon
         # thread is left blocked after a timeout, so no stale reader can
         # consume a future operator approval.
-        import msvcrt
+        import msvcrt  # Windows-only stdlib; conditional branch (os.name == "nt")
         import time
 
         try:
@@ -159,8 +163,8 @@ class _InteractiveBroker:
         chars: list[str] = []
 
         while time.monotonic() < deadline:
-            if msvcrt.kbhit():
-                ch = msvcrt.getwche()   # echoes the character
+            if msvcrt.kbhit():  # type: ignore[attr-defined]
+                ch = msvcrt.getwche()  # type: ignore[attr-defined]  # echoes the character
                 if ch in ("\r", "\n"):
                     break
                 chars.append(ch)
@@ -169,8 +173,8 @@ class _InteractiveBroker:
         else:
             # Timeout — drain buffered keystrokes so they don't bleed into
             # the next prompt, then deny.
-            while msvcrt.kbhit():
-                msvcrt.getwch()
+            while msvcrt.kbhit():  # type: ignore[attr-defined]
+                msvcrt.getwch()  # type: ignore[attr-defined]
             try:
                 with open("CONOUT$", "w") as cout:
                     cout.write("\n[HITL] Timeout — denied.\n")

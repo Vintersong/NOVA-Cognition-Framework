@@ -295,6 +295,9 @@ _ALL_TOOL_NAMES: tuple[str, ...] = (
     "nova_wiki_get",
     "nova_wiki_list",
     "nova_wiki_lint",
+    # Facts tools (registered via facts.register_facts_tools)
+    "nova_facts_search",
+    "nova_facts_rebuild",
     # Nidhogg tools (registered via nidhogg.register_nidhogg_tools)
     "nidhogg_ingest",
     "nidhogg_scan",
@@ -1423,32 +1426,40 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
     """
     if _permission_context.blocks("nova_graph_relate"):
         return _permission_error("nova_graph_relate")
-    add_relation(params.source_id, params.target_id, params.relation_type, params.notes, params.reason)
+    gate_err, request_id = await _gate_check("nova_graph_relate", params.source_id)
+    if gate_err:
+        return gate_err
+    op_ok = False
+    try:
+        add_relation(params.source_id, params.target_id, params.relation_type, params.notes, params.reason)
 
-    confidence_bumped = None
-    if params.relation_type == "corroborated_by":
-        # corroborated_by is the ONLY sanctioned path for raising confidence.
-        # source_id is the shard being confirmed; bump its confidence.
-        try:
-            data, filepath = load_shard(params.source_id)
-            new_conf = apply_confidence_corroboration(data)
-            save_shard(filepath, data)
-            patch_index_entry(params.source_id, data)
-            confidence_bumped = round(new_conf, 4)
-        except Exception:
-            pass
+        confidence_bumped = None
+        if params.relation_type == "corroborated_by":
+            # corroborated_by is the ONLY sanctioned path for raising confidence.
+            # source_id is the shard being confirmed; bump its confidence.
+            try:
+                data, filepath = load_shard(params.source_id)
+                new_conf = apply_confidence_corroboration(data)
+                save_shard(filepath, data)
+                patch_index_entry(params.source_id, data)
+                confidence_bumped = round(new_conf, 4)
+            except Exception:
+                pass
 
-    result = {
-        "status": "relation_added",
-        "source": params.source_id,
-        "target": params.target_id,
-        "type": params.relation_type,
-        "notes": params.notes,
-    }
-    if confidence_bumped is not None:
-        result["confidence_after_corroboration"] = confidence_bumped
+        result = {
+            "status": "relation_added",
+            "source": params.source_id,
+            "target": params.target_id,
+            "type": params.relation_type,
+            "notes": params.notes,
+        }
+        if confidence_bumped is not None:
+            result["confidence_after_corroboration"] = confidence_bumped
 
-    return json.dumps(result, indent=2)
+        op_ok = True
+        return json.dumps(result, indent=2)
+    finally:
+        _log_executed(request_id, "nova_graph_relate", params.source_id, op_ok)
 
 
 # ═══════════════════════════════════════════════════════════

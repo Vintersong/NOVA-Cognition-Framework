@@ -74,7 +74,7 @@ Principle Library (reasoning methodology)
 
 ### Facts (2)
 
-`nova_facts_search`, `nova_facts_rebuild` — SQLite-backed `.shard` facts corpus. **Note:** these are currently outside the `_ALL_TOOL_NAMES` permission whitelist; see `docs/AUDIT-2026-05-12-followup.md`.
+`nova_facts_search`, `nova_facts_rebuild` — SQLite-backed `.shard` facts corpus.
 
 ### Gemini (2)
 
