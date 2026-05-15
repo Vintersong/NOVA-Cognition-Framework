@@ -1,0 +1,26 @@
+{
+  "shard_id": "nova_docker_healthcheck",
+  "guiding_question": "Is the NOVA MCP server running correctly in this Docker container?",
+  "conversation_history": [
+    {
+      "user": "System: Docker clean-room seed.",
+      "ai": "NOVA is running. This is the seed shard installed at first boot. Search for 'docker health' to confirm retrieval is working."
+    }
+  ],
+  "meta_tags": {
+    "intent": "reflection",
+    "theme": "nova_infrastructure",
+    "usage_count": 0,
+    "last_used": "2026-05-15T00:00:00",
+    "confidence": 1.0,
+    "enrichment_status": "pending",
+    "source": "agent_inference"
+  },
+  "context": {
+    "summary": "Docker clean-room health check shard. Confirms the NOVA MCP server started correctly.",
+    "topics": ["docker", "nova", "health", "test", "infrastructure"],
+    "conversation_type": "reflection",
+    "embedding": null,
+    "last_context_update": "2026-05-15T00:00:00"
+  }
+}

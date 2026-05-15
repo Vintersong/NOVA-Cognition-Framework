@@ -226,12 +226,16 @@ def _extract_target_file(design_doc: str) -> Optional[str]:
     return None
 
 
-def _snapshot_corpus() -> set[str]:
-    """Return the set of shard JSON filename stems currently on disk."""
+def _snapshot_corpus() -> dict[str, float]:
+    """Return stem → mtime for every shard JSON on disk.
+
+    Recording mtimes (not just stems) lets the biconditional check detect
+    modifications and deletions, not only additions.
+    """
     shard_path = Path(SHARD_DIR)
     if not shard_path.exists():
-        return set()
-    return {p.stem for p in shard_path.glob("*.json")}
+        return {}
+    return {p.stem: p.stat().st_mtime for p in shard_path.glob("*.json")}
 
 
 _DEFAULT_WRITE_ROOTS = ("output", "intake")
@@ -476,10 +480,6 @@ class ForgemasterRuntime:
 
         Each turn's output is passed forward as context to the next turn.
         """
-        # Phase 4: Snapshot corpus before sprint
-        from skill_verification import snapshot_corpus, run_biconditional_check, BiconditionalFailed
-        corpus_before_sv = snapshot_corpus()   # dict{filename: mtime} for skill_verification check
-
         session = self.bootstrap(sprint_id, shard_ids or [])
 
         # Corpus snapshot before any writes — used by AuditLog biconditional check at end.
@@ -634,6 +634,17 @@ class ForgemasterRuntime:
             biconditional_result = self._audit.run_biconditional_check(
                 sprint_id, corpus_before, corpus_after, files_written=files_written
             )
+            if not biconditional_result["passed"]:
+                _log_event({
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "sprint_id": sprint_id,
+                    "role": "outcome",
+                    "event": "biconditional_failed",
+                    "unaccounted_changes": biconditional_result["unaccounted_changes"],
+                    "phantom_records": biconditional_result["phantom_records"],
+                    "file_unaccounted": biconditional_result["file_unaccounted"],
+                    "file_phantom": biconditional_result["file_phantom"],
+                })
 
         # ── Outcome-based reinforcement ───────────────────────────────────
         review_head = review_out.strip().splitlines()[0] if review_out.strip() else ""
@@ -663,20 +674,6 @@ class ForgemasterRuntime:
                 "contributing shards flagged for review: %s",
                 sprint_id, contributing_shards,
             )
-
-        # Phase 4: Biconditional post-run check (skill_verification path, uses mtime dicts)
-        corpus_after_sv = snapshot_corpus()
-        try:
-            run_biconditional_check(sprint_id, corpus_before_sv, corpus_after_sv)
-        except BiconditionalFailed as e:
-            logger.error("ForgemasterRuntime.run_sprint: Biconditional check failed for sprint %s: %s", sprint_id, e)
-            _log_event({
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "sprint_id": sprint_id,
-                "role": "outcome",
-                "event": "biconditional_failed",
-                "error": str(e)
-            })
 
         return {
             "sprint_id": sprint_id,

@@ -975,8 +975,9 @@ async def nova_shard_index(params: ShardIndexInput) -> str:
     if _permission_context.blocks("nova_shard_index"):
         return _permission_error("nova_shard_index")
 
-    rebuild_summary_indexes(generate_missing=False)
-    rows = collect_browse_rows(include_synopsis=False)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: rebuild_summary_indexes(generate_missing=False))
+    rows = await loop.run_in_executor(None, lambda: collect_browse_rows(include_synopsis=False))
     page_rows, total = filter_sort_paginate_rows(
         rows,
         filter_tag=params.filter_tag,
@@ -1010,8 +1011,9 @@ async def nova_shard_summary(params: ShardIndexInput) -> str:
     if _permission_context.blocks("nova_shard_summary"):
         return _permission_error("nova_shard_summary")
 
-    rebuild_summary_indexes(generate_missing=False)
-    rows = collect_browse_rows(include_synopsis=True)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: rebuild_summary_indexes(generate_missing=False))
+    rows = await loop.run_in_executor(None, lambda: collect_browse_rows(include_synopsis=True))
     page_rows, total = filter_sort_paginate_rows(
         rows,
         filter_tag=params.filter_tag,

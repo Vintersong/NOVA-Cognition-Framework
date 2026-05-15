@@ -98,9 +98,11 @@ def resolve_capability(tool_name: str) -> tuple[str, bool]:
 
 class _InteractiveBroker:
     """
-    Blocking terminal prompt via /dev/tty.  Times out → deny.
+    Blocking terminal prompt with timeout → deny.
 
-    Reads from /dev/tty (the controlling terminal) instead of sys.stdin so it
+    On Unix reads from /dev/tty; on Windows uses CONOUT$/CONIN$ with a
+    daemon thread so select (unavailable on Windows file handles) is not needed.
+    Reads from the controlling terminal rather than sys.stdin so the prompt
     does not compete with the MCP JSON-RPC stdio transport.
     Only suitable for development / interactive operator sessions.
     """
@@ -117,22 +119,67 @@ class _InteractiveBroker:
             f"  Approve? [y/N] (timeout {self._timeout_s}s → deny): "
         )
         try:
-            import select
-            tty = open("/dev/tty", "r+")
-            tty.write(prompt)
-            tty.flush()
-            readable, _, _ = select.select([tty], [], [], self._timeout_s)
-            if readable:
-                answer = tty.readline().strip().lower()
-                tty.close()
-                return answer in ("y", "yes")
-            tty.write("\n[HITL] Timeout — denied.\n")
-            tty.flush()
-            tty.close()
-            return False
+            if os.name == "nt":
+                return self._request_windows(prompt)
+            return self._request_unix(prompt)
         except Exception:
             # No controlling terminal (piped, headless, test runner) — deny.
             return False
+
+    def _request_unix(self, prompt: str) -> bool:
+        import select
+        tty = open("/dev/tty", "r+")
+        tty.write(prompt)
+        tty.flush()
+        readable, _, _ = select.select([tty], [], [], self._timeout_s)
+        if readable:
+            answer = tty.readline().strip().lower()
+            tty.close()
+            return answer in ("y", "yes")
+        tty.write("\n[HITL] Timeout — denied.\n")
+        tty.flush()
+        tty.close()
+        return False
+
+    def _request_windows(self, prompt: str) -> bool:
+        # msvcrt polling keeps everything in the calling thread — no daemon
+        # thread is left blocked after a timeout, so no stale reader can
+        # consume a future operator approval.
+        import msvcrt
+        import time
+
+        try:
+            with open("CONOUT$", "w") as cout:
+                cout.write(prompt)
+                cout.flush()
+        except Exception:
+            return False
+
+        deadline = time.monotonic() + self._timeout_s
+        chars: list[str] = []
+
+        while time.monotonic() < deadline:
+            if msvcrt.kbhit():
+                ch = msvcrt.getwche()   # echoes the character
+                if ch in ("\r", "\n"):
+                    break
+                chars.append(ch)
+            else:
+                time.sleep(0.05)
+        else:
+            # Timeout — drain buffered keystrokes so they don't bleed into
+            # the next prompt, then deny.
+            while msvcrt.kbhit():
+                msvcrt.getwch()
+            try:
+                with open("CONOUT$", "w") as cout:
+                    cout.write("\n[HITL] Timeout — denied.\n")
+                    cout.flush()
+            except Exception:
+                pass
+            return False
+
+        return "".join(chars).strip().lower() in ("y", "yes")
 
 
 class _PolicyBroker:

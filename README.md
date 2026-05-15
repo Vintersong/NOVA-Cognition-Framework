@@ -3,6 +3,7 @@
 ![MCP](https://img.shields.io/badge/MCP-server-6B47ED?style=flat-square&logo=anthropic&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Gemini](https://img.shields.io/badge/Gemini-Flash-4285F4?style=flat-square&logo=google&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 ![Shard Health](https://github.com/Vintersong/NOVA-Cognition-Framework/actions/workflows/shard-health.yml/badge.svg)
 
@@ -128,6 +129,51 @@ If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN silently fall back to local-onl
 python mcp/nova_server.py
 ```
 
+### Docker (clean room)
+
+Build the image — embedding model (~80 MB) is downloaded and cached during build so first boot never blocks:
+
+```bash
+docker build -t nova:latest .
+```
+
+Run interactively (seeds one health-check shard on first boot if `nova_data` volume is empty):
+
+```bash
+docker run --rm -i \
+  -e CLAUDE_API_KEY=sk-ant-... \
+  -e GEMINI_API_KEY=... \
+  -v nova_data:/app/data \
+  nova:latest
+```
+
+Register in Claude Desktop / Claude Code (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "nova": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "CLAUDE_API_KEY=sk-ant-...",
+        "-e", "GEMINI_API_KEY=...",
+        "-v", "nova_data:/app/data",
+        "nova:latest"
+      ]
+    }
+  }
+}
+```
+
+Or use `docker-compose.yml` (copy your keys into `.env` first):
+
+```bash
+docker compose up nova
+```
+
+`NOVA_HITL_BROKER=policy` is set in the image by default — irreversible HITL calls are auto-denied rather than blocking the server waiting for terminal input.
+
 ---
 
 ## Directory Structure
@@ -135,65 +181,109 @@ python mcp/nova_server.py
 ```
 NOVA-Cognition-Framework/
   mcp/
-    nova_server.py           ← ACTIVE MCP server (registers all 31 tools)
+    # Core server
+    nova_server.py           ← ACTIVE MCP server (registers all 35 tools)
     config.py                ← all env vars and defaults (single source of truth)
-    schemas.py               ← Pydantic input models for core + wiki tools
+    schemas.py               ← Pydantic input models
     models.py                ← shared dataclasses (UsageSummary)
-    store.py                 ← shard I/O, index management, summary-index layer
-    graph.py                 ← knowledge graph ops (entities, relations, transitive BFS)
+    requirements.txt
+    SKILL.md                 ← NOVA cognitive instructions (loaded every session)
+    ONBOARDING.md            ← fresh-install flow (triggered when no shards exist)
+
+    # Shard I/O & persistence
+    store.py                 ← shard JSON read/write, index management, summary-index layer
+    nova_shard_db.py         ← SQLite-backed shard index (nova_shard_index.db)
+    shard_format.py          ← shard serialisation helpers (.json ↔ .shard)
+    shard_parser.py          ← shard parsing (used by facts.py)
+    atomic_io.py             ← atomic file write primitives
+
+    # Knowledge graph
+    graph.py                 ← inter-shard graph ops (entities, relations, transitive BFS)
+
+    # Maintenance & lifecycle
     maintenance.py           ← confidence decay, compaction, cosine similarity, merge
-    permissions.py           ← env-driven tool gating (NOVA_DENIED_TOOLS/PREFIXES)
-    hooks.py                 ← event-driven hook registry (session/post-sprint/count)
-    usage.py                 ← JSONL operation logging
-    session_store.py         ← session persistence (flush/load/list)
-    forgemaster_runtime.py   ← sprint orchestration + real LLM dispatch
-    ravens.py                ← HUGINN (Haiku) + MUNINN (Sonnet) retrieval
     nott.py                  ← NÓTT daemon: decay, compact, merge, graph sync
-    nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings + summaries
+
+    # Retrieval & ranking
+    ravens.py                ← HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank)
+    recall.py                ← recall utilities (cache, state-gate pre-filter)
+    nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings + heuristic summaries
+    clustering.py            ← shard community detection (Leiden algorithm)
+    arrow_cache.py           ← Arrow-format embedding cache for vectorised cosine
+
+    # Permissions, gating & audit
+    permissions.py           ← env-driven tool allow/deny (NOVA_DENIED_TOOLS/PREFIXES)
+    capability_gate.py       ← HITL gate keyed to skill verification level
+    audit_log.py             ← per-tool HITL audit trail (SQLite, WAL mode)
+    access_log.py            ← shard access logging for decay-on-read pass
+
+    # Session & sprint
+    session_store.py         ← session CRUD and flush-to-disk
+    forgemaster_runtime.py   ← sprint orchestration, real LLM dispatch, biconditional audit
+    usage.py                 ← JSONL operation logging
+    timeutils.py             ← shared time/date helpers
+
+    # Hook system
+    hooks.py                 ← hook registry (SESSION_START, POST_SPRINT, COUNT_THRESHOLD)
+    nova_hook_extract.py     ← PostToolUse hook: entity extraction on Edit/Write
+    nova_hook_precompact.py  ← pre-compaction preparation hook
+    nova_hook_recall.py      ← UserPromptSubmit hook: injects NOVA context into prompts
+    nova_hook_stop.py        ← session-stop cleanup hook
+
+    # Skill verification
+    skill_manifest.py        ← @@verification / @@capabilities header parser
+    skill_verification.py    ← biconditional post-run audit (Phase 4)
+
+    # MCP tool modules
     evolve.py                ← nova_evolve self-improvement loop
     nidhogg.py               ← nidhogg_ingest/scan/status tools
-    wiki.py                  ← WikiPage model, CRUD, embedding index
-    wiki_ingest.py           ← wiki ingestion pipeline
-    wiki_tools.py            ← nova_wiki_* MCP tools
+    facts.py                 ← nova_facts_search / nova_facts_rebuild
+    wiki.py / wiki_ingest.py / wiki_tools.py  ← wiki layer model, pipeline, MCP tools
+    obsidian_export.py       ← Obsidian vault export logic
     build_summary_index.py   ← batch-build summary_index.json via Haiku
-    test_nova.py             ← memory-explorer CLI (not pytest)
-    requirements.txt
-    SKILL.md                 ← NOVA cognitive instructions
-    ONBOARDING.md            ← fresh-install flow (used when no shards exist)
+    adversarial.py           ← adversarial shard contradiction testing
+    ternary_net.py           ← ternary epistemic memory encoder (experimental)
+
+    # Tests (run with pytest from repo root)
+    test_nova.py             ← memory-explorer CLI (not pytest — run directly)
+    test_adversarial.py / test_clustering.py / test_quarantine.py
+    test_recall.py / test_state_gating.py
+
     Gemini/
-      gemini_mcp.py          ← Gemini tools registered into nova_server
-  utilities/
-    chatgpt_to_nova.py       ← ChatGPT export migration
-    shard_index.py           ← manual index rebuild
-    dedup_json.py            ← duplicate shard detection
-    autoresearch.py          ← automated research loop
-    shard_compact.py         ← manual compaction helper
-    theme_analyzer.py        ← theme distribution analysis
+      gemini_mcp.py          ← Gemini Flash tools registered into nova_server
+
+  tests/                     ← main pytest suite (92 tests across 16 files)
+  utilities/                 ← migration helpers, diagnostics, ad-hoc maintenance
+  docker/
+    entrypoint.sh            ← seeds dummy shard on first boot, starts server
+    seed/
+      nova_docker_healthcheck.json  ← minimal valid shard for clean-room testing
   shards/                    ← live shard data (never edit directly)
   wiki/                      ← curated markdown pages with YAML frontmatter + [[wikilinks]]
   intake/                    ← drop zone for nidhogg_scan
   nova_sessions/             ← flushed MCP session state
   output/                    ← built artifacts, forgemaster event logs
+  facts/                     ← curated .shard files for SQLite pre-filter
   forgemaster/
     AGENTS.md                ← orchestration config and model routing
-    SKILL_LIBRARY.md         ← index of all skills across 15 domains
+    SKILL_LIBRARY.md         ← index of all skills across 25 domains
     STANDARDS.md             ← authoring standard for all forgemaster content
-    skills/                  ← core orchestration skills (10 files)
-    library/                 ← domain skill library (208 files, 15 categories)
-    agents/                  ← agent persona definitions (326 files, 18 divisions)
-  facts/                     ← curated .shard files for SQLite pre-filter
-  tests/                     ← test suite (adversarial, clustering, quarantine, recall, state-gating)
+    skills/                  ← core orchestration skills (12 files)
+    library/                 ← domain skill library (324 files, 25 categories)
+    agents/                  ← agent persona definitions (221 personas, 18 divisions)
   docs/                      ← reference and roadmap documents
   Donors/                    ← reference implementations
+  Dockerfile                 ← builds the MCP server image
+  docker-compose.yml         ← dev/test orchestration
   .env                       ← API keys (never commit)
   .env.example               ← template (committed)
 ```
 
 ---
 
-## NOVA MCP Tools (31)
+## NOVA MCP Tools (35)
 
-### Core shard + graph + session (19)
+### Core shard + graph + session (21)
 
 | Tool | Description |
 |---|---|
@@ -206,10 +296,12 @@ NOVA-Cognition-Framework/
 | `nova_shard_list` | Full raw dump (legacy; prefer index/summary) |
 | `nova_shard_get` | Read full shard — no side effects |
 | `nova_shard_get_full` | Cold-path full-body fetch — returns summary + conversation body |
+| `nova_shard_query_state` | Query SQLite shard index by epistemic state vector (confidence, valence, arousal) |
 | `nova_shard_merge` | Merge shards into meta-shard, updates graph |
 | `nova_shard_archive` | Soft-archive — excluded from search, preserved on disk |
 | `nova_shard_forget` | Hard exclude with provenance log |
 | `nova_shard_consolidate` | Full NÓTT cycle: decay + compact + merge suggestions |
+| `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault |
 | `nova_graph_query` | Query knowledge graph (direct or transitive BFS) |
 | `nova_graph_relate` | Add directed relation between shards |
 | `nova_session_flush` | Persist active session to disk |
@@ -241,6 +333,13 @@ Wiki pages live in `wiki/` as markdown with YAML frontmatter and `[[wikilinks]]`
 | `nidhogg_status` | Show manifest of ingested file hashes |
 
 Nidhogg is non-destructive: it appends a `nidhogg` block to matched shards and never rewrites existing fields. Idempotent via SHA256 manifest.
+
+### Facts (2)
+
+| Tool | Description |
+|---|---|
+| `nova_facts_search` | Search the SQLite-backed `.shard` facts corpus |
+| `nova_facts_rebuild` | Rebuild the facts index from shard sources |
 
 ### Evolution (1)
 
@@ -288,8 +387,11 @@ Read-only resources exposed alongside the tools:
 | `session_store.py` | Session CRUD and flush-to-disk |
 | `forgemaster_runtime.py` | Sprint orchestration — routes tickets to model lanes, writes output |
 | `ravens.py` | HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank) |
-| `nott.py` | NÓTT daemon — scheduled decay, compact, merge, graph sync |
-| `nova_embeddings_local.py` | Local embeddings + heuristic compaction summaries |
+| `nott.py` | NÓTT daemon — scheduled decay, compact, merge, graph sync (dedicated `ThreadPoolExecutor`, isolated from default executor) |
+| `nova_embeddings_local.py` | Local embeddings + heuristic compaction summaries (non-blocking `get_embedding_model_if_ready()` used on enrichment path) |
+| `capability_gate.py` | HITL gate — capability membership check + HITL broker (interactive on Unix, `msvcrt` polling on Windows) |
+| `audit_log.py` | SQLite HITL audit log — four-state lifecycle + biconditional corpus check |
+| `skill_manifest.py` | Parses `@@verification` / `@@capabilities` from skill file headers |
 | `evolve.py` | Self-evolution loop, adaptive governor, auto-commit |
 | `nidhogg.py` | Document ingestion with provenance |
 | `wiki.py` / `wiki_ingest.py` / `wiki_tools.py` | Wiki layer model, pipeline, and MCP tools |

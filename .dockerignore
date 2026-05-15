@@ -1,0 +1,42 @@
+# Live data — mount as volumes, never bake into the image
+shards/
+nova_sessions/
+output/
+intake/
+wiki/
+facts/
+
+# Secrets
+.env
+
+# Auto-generated index and log files
+shard_index.json
+shard_graph.json
+summary_index.json
+summary_index.md
+wiki_index.json
+nova_usage.jsonl
+nova_shard_index.db
+shard_access.jsonl
+evolve_cycles.jsonl
+evolve.json
+nidhogg_manifest.json
+output/audit_log.db
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Git and editor state
+.git/
+.gitignore
+.gitattributes
+.claude/
+memory/
+
+# Docs and non-runtime content (keeps image lean)
+docs/
+Donors/

@@ -196,14 +196,14 @@ class AuditLog:
     def run_biconditional_check(
         self,
         session_id: str,
-        corpus_before: set[str],
-        corpus_after: set[str],
+        corpus_before: "dict[str, float]",
+        corpus_after: "dict[str, float]",
         files_written: "set[str] | None" = None,
     ) -> dict:
         """
         Verify corpus delta matches executed audit records, partitioned by target type.
 
-        Shard check  — D = corpus_after - corpus_before
+        Shard check  — D = stems whose mtime changed, were added, or were deleted
                         S_shards = targets from shard-tool records
                         F1 unaccounted_changes: D - S_shards (gate bypass)
                         F2 phantom_records:     S_shards - D (spurious record)
@@ -214,8 +214,15 @@ class AuditLog:
 
         Keeping these categories separate avoids false positives from the
         prior design where shard IDs and file paths were compared in one set.
+
+        corpus_before / corpus_after are stem → mtime dicts so that
+        modifications and deletions are detected, not only additions.
         """
-        D = corpus_after - corpus_before
+        all_stems = set(corpus_before) | set(corpus_after)
+        D = {
+            stem for stem in all_stems
+            if corpus_before.get(stem) != corpus_after.get(stem)
+        }
         records = self.get_executed_records(session_id)
 
         shard_S = {

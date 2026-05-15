@@ -189,13 +189,12 @@ class BiconditionalFailed(Exception):
 
 def snapshot_corpus() -> dict:
     """Take a lightweight snapshot of the NOVA corpus using modification times."""
-    from config import _REPO_ROOT
-    shard_dir = os.path.join(_REPO_ROOT, "output", "shards")
+    from config import SHARD_DIR
     snapshot = {}
-    if os.path.exists(shard_dir):
-        for f in os.listdir(shard_dir):
+    if os.path.exists(SHARD_DIR):
+        for f in os.listdir(SHARD_DIR):
             if f.endswith(".json") or f.endswith(".shard"):
-                path = os.path.join(shard_dir, f)
+                path = os.path.join(SHARD_DIR, f)
                 snapshot[f] = os.path.getmtime(path)
     return snapshot
 

@@ -155,7 +155,10 @@ def enrich_shard(shard_id: str, shard_data: dict):
     No API key required. Uses sentence-transformers locally.
     Blocking — refactor to async post-write hook in future iteration.
     """
-    model = get_embedding_model()
+    # Non-blocking check: if the prewarm thread still holds _model_lock, return
+    # immediately with enrichment_status=pending rather than blocking the default
+    # executor thread pool behind _model_lock (which would starve nova_shard_search).
+    model = get_embedding_model_if_ready()
 
     # Build text to embed — guiding question + recent messages
     guiding_question = shard_data.get("guiding_question", "")
