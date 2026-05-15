@@ -57,8 +57,17 @@ Every 3 sprints: nova_shard_consolidate (maintain memory health)
 
 ## Skill Library
 The full skill library is indexed at `forgemaster/SKILL_LIBRARY.md`.
-It covers 15 specialization domains with 200+ skills across the workspace.
+It covers 27 specialization domains with 324 skills across the workspace.
 Always consult it when a task falls outside Forgemaster's core domain.
+
+## Repository Layout — Personas vs. Reference Material
+
+`forgemaster/agents/` mixes two file types:
+
+- **Persona agents (221)** — `.md` files with a `name:` frontmatter field. These are dispatchable personas across 18 divisions.
+- **Reference / runbook / example / engine-docs files (~99)** — supporting material (e.g. `engine-reference/`, `examples/`, `strategy/` runbooks, `research/program.md`) co-located with personas.
+
+A future pass will relocate the reference material into `forgemaster/resources/` so that `agents/` holds only true personas. Three frontmatter schemas are currently in active use (base / metadata-extended / technical-extended); a unified schema will be drafted in the same pass. See `docs/AUDIT-2026-05-12.md` and `docs/AUDIT-2026-05-12-followup.md`.
 
 Core skills (load first for internal operations):
 - forgemaster-orchestrator: sprint planning and routing
