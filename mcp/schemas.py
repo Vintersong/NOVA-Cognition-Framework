@@ -56,6 +56,10 @@ class ShardCreateInput(BaseModel):
     initial_message: str = Field(default="")
     related_shards: str = Field(default="")
     relation_type: RelationType = Field(default="references")
+    reason: str = Field(
+        default="",
+        description="Required when relation_type='supersedes' — explain why the new shard supersedes the related ones.",
+    )
     source: Literal[
         "user_input", "external_doc", "agent_inference", "session_extracted", "corroborated_by"
     ] = Field(default="agent_inference", description="Provenance of this shard")
@@ -71,6 +75,14 @@ class ShardCreateInput(BaseModel):
         default=None,
         description="ISO 8601 timestamp — shard is excluded from retrieval after this date.",
     )
+
+    @model_validator(mode="after")
+    def _require_reason_for_supersedes(self) -> "ShardCreateInput":
+        if self.relation_type == "supersedes" and self.related_shards.strip() and not self.reason:
+            raise ValueError(
+                "'reason' is required when relation_type is 'supersedes' and related_shards is set"
+            )
+        return self
 
 
 class ShardUpdateInput(BaseModel):

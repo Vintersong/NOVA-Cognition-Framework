@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from config import FACTS_DIR, FACTS_INDEX_FILE
+from permissions import is_blocked, denial_payload
 from shard_parser import ShardDB
 from tool_registry import nova_tool
 
@@ -63,6 +64,8 @@ def register_facts_tools(mcp: Any) -> None:
     async def nova_facts_search(params: FactsSearchInput) -> str:
         """Keyword search over the curated facts corpus (`.shard` files).
         Returns high-confidence facts as a HUGINN pre-filter."""
+        if is_blocked("nova_facts_search"):
+            return denial_payload("nova_facts_search")
         results = search_facts(params.query, confidence=params.confidence, limit=params.limit)
         return json.dumps({
             "status": "ok",
@@ -75,6 +78,8 @@ def register_facts_tools(mcp: Any) -> None:
     @nova_tool(mcp, name="nova_facts_rebuild")
     async def nova_facts_rebuild(params: FactsRebuildInput) -> str:
         """Re-scan FACTS_DIR and rebuild the SQLite index. Idempotent."""
+        if is_blocked("nova_facts_rebuild"):
+            return denial_payload("nova_facts_rebuild")
         try:
             with _open_db() as db:
                 count = db.rebuild_from_dir(FACTS_DIR)

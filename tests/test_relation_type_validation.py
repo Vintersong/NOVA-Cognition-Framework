@@ -54,3 +54,27 @@ def test_relation_type_alias_matches_both_models():
     import typing
     args = set(typing.get_args(RelationType))
     assert args == set(VALID_RELATIONS)
+
+
+def test_shard_create_supersedes_requires_reason_when_related_set():
+    """Mirrors GraphRelationInput's supersedes validator so create-time
+    supersedes can't bypass the reason requirement."""
+    with pytest.raises(ValidationError):
+        ShardCreateInput(
+            guiding_question="q",
+            relation_type="supersedes",
+            related_shards="other-shard-id",
+        )
+    # With reason — accepted.
+    ShardCreateInput(
+        guiding_question="q",
+        relation_type="supersedes",
+        related_shards="other-shard-id",
+        reason="The new shard subsumes the old one because the fact changed.",
+    )
+
+
+def test_shard_create_supersedes_without_related_is_allowed():
+    """If no related_shards is given, supersedes is informational only —
+    no graph write happens, so the reason check should not block creation."""
+    ShardCreateInput(guiding_question="q", relation_type="supersedes")

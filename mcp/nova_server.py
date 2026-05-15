@@ -574,7 +574,13 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     new_source = shard_data.get("meta_tags", {}).get("source", "agent_inference")
     _credible_sources = {"user_input", "external_doc"}
     for related_id in ([s.strip() for s in params.related_shards.split(",") if s.strip()] if params.related_shards else []):
-        add_relation(shard_id, related_id, params.relation_type)
+        if params.relation_type == "supersedes":
+            # Route explicit supersedes through add_supersedes so the
+            # user-supplied reason lands in the graph (schema validator
+            # guarantees params.reason is non-empty here).
+            add_supersedes(shard_id, related_id, reason=params.reason)
+        else:
+            add_relation(shard_id, related_id, params.relation_type)
         # Auto-emit supersedes when a credible source contradicts an existing shard.
         if params.relation_type == "contradicts" and new_source in _credible_sources:
             try:
