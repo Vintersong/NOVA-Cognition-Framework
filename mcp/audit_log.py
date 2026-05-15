@@ -30,7 +30,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from tool_registry import get as _get_spec, irreversible_tools
+
 logger = logging.getLogger(__name__)
+
+
+# Derived from `mcp/tool_registry.py:_REGISTRY` — shard-category irreversibles
+# whose audit targets are shard IDs (vs file paths from Forgemaster writes).
+_SHARD_TOOL_NAMES: frozenset[str] = frozenset(
+    name for name in irreversible_tools() if _get_spec(name).category == "shard"
+)
 
 
 class AuditLog:
@@ -189,9 +198,9 @@ class AuditLog:
         ]
 
     # Tools whose targets are shard IDs (vs file paths from forgemaster writes).
-    _SHARD_TOOLS = frozenset(
-        {"nova_shard_archive", "nova_shard_forget", "nova_shard_consolidate"}
-    )
+    # Derived from `mcp/tool_registry.py` — keep this class attribute as the
+    # in-class alias so existing self._SHARD_TOOLS usages keep working.
+    _SHARD_TOOLS = _SHARD_TOOL_NAMES
 
     def run_biconditional_check(
         self,

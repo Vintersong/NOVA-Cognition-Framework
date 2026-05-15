@@ -47,6 +47,7 @@ from atomic_io import atomic_write_json
 from config import SHARD_DIR, USAGE_LOG_FILE, MERGE_SIMILARITY_THRESHOLD
 from permissions import is_blocked, denial_payload
 from store import load_index, load_shard
+from tool_registry import nova_tool
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _REPO_ROOT = Path(__file__).parent.parent
@@ -651,7 +652,7 @@ def register_evolve_tools(mcp) -> None:
     Called once in nova_server.py — same pattern as Gemini and Nidhogg.
     """
 
-    @mcp.tool(name="nova_evolve")
+    @nova_tool(mcp, name="nova_evolve")
     async def nova_evolve(params: NovaEvolveInput) -> str:
         """
         Run one NOVA self-evolution cycle.

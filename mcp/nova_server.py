@@ -265,49 +265,11 @@ register_facts_tools(mcp)
 # PERMISSION HELPERS
 # ═══════════════════════════════════════════════════════════
 
-_ALL_TOOL_NAMES: tuple[str, ...] = (
-    # Core shard + graph + session tools (handled in this file)
-    "nova_shard_interact",
-    "nova_shard_create",
-    "nova_shard_update",
-    "nova_shard_search",
-    "nova_shard_query_state",
-    "nova_obsidian_export",
-    "nova_shard_index",
-    "nova_shard_summary",
-    "nova_shard_list",
-    "nova_shard_get",
-    "nova_shard_get_full",
-    "nova_shard_merge",
-    "nova_shard_archive",
-    "nova_shard_forget",
-    "nova_shard_consolidate",
-    "nova_graph_query",
-    "nova_graph_relate",
-    "nova_session_flush",
-    "nova_session_load",
-    "nova_session_list",
-    "nova_forgemaster_sprint",
-    # Wiki tools (registered via wiki_tools.register_wiki_tools)
-    "nova_wiki_schema",
-    "nova_wiki_ingest",
-    "nova_wiki_query",
-    "nova_wiki_get",
-    "nova_wiki_list",
-    "nova_wiki_lint",
-    # Facts tools (registered via facts.register_facts_tools)
-    "nova_facts_search",
-    "nova_facts_rebuild",
-    # Nidhogg tools (registered via nidhogg.register_nidhogg_tools)
-    "nidhogg_ingest",
-    "nidhogg_scan",
-    "nidhogg_status",
-    # Evolution tools (registered via evolve.register_evolve_tools)
-    "nova_evolve",
-    # Gemini tools (registered via Gemini/gemini_mcp.register_gemini_tools)
-    "gemini_execute_ticket",
-    "gemini_load_file",
-)
+from tool_registry import all_names as _registry_all_names, nova_tool
+
+# Derived from `mcp/tool_registry.py:_REGISTRY` — the canonical source.
+# Adding a tool requires editing the registry, not this tuple.
+_ALL_TOOL_NAMES: tuple[str, ...] = _registry_all_names()
 
 
 def get_permitted_tools(permission_context: ToolPermissionContext | None = None) -> list[str]:
@@ -425,7 +387,7 @@ _hooks.register(NovaHookEvent.SESSION_START, _refresh_server_session_id)
 # MCP TOOLS
 # ═══════════════════════════════════════════════════════════
 
-@mcp.tool(name="nova_shard_interact")
+@nova_tool(mcp, name="nova_shard_interact")
 async def nova_shard_interact(params: ShardInteractInput) -> str:
     """Load shards into context for synthesis. Auto-selects relevant shards if none specified. Confidence-weighted."""
     global _session_usage
@@ -549,7 +511,7 @@ async def nova_shard_interact(params: ShardInteractInput) -> str:
     return response_str
 
 
-@mcp.tool(name="nova_shard_create")
+@nova_tool(mcp, name="nova_shard_create")
 async def nova_shard_create(params: ShardCreateInput) -> str:
     """Create a new shard. Triggers post-write enrichment hook and registers in knowledge graph."""
     if _permission_context.blocks("nova_shard_create"):
@@ -670,7 +632,7 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_shard_update")
+@nova_tool(mcp, name="nova_shard_update")
 async def nova_shard_update(params: ShardUpdateInput) -> str:
     """Append to a shard. Triggers post-write enrichment hook and auto-compaction if threshold exceeded."""
     if _permission_context.blocks("nova_shard_update"):
@@ -787,7 +749,7 @@ def _local_keyword_search(query: str, include_low_confidence: bool) -> tuple[dic
     return index, results
 
 
-@mcp.tool(name="nova_shard_search")
+@nova_tool(mcp, name="nova_shard_search")
 async def nova_shard_search(params: ShardSearchInput) -> str:
     """Search shards with confidence weighting. High-confidence shards rank higher for same relevance score."""
     if _permission_context.blocks("nova_shard_search"):
@@ -846,7 +808,7 @@ async def nova_shard_search(params: ShardSearchInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_shard_query_state")
+@nova_tool(mcp, name="nova_shard_query_state")
 async def nova_shard_query_state(params: ShardStateQueryInput) -> str:
     """Query the SQLite shard index by epistemic state vector.
 
@@ -922,7 +884,7 @@ async def nova_shard_query_state(params: ShardStateQueryInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_obsidian_export")
+@nova_tool(mcp, name="nova_obsidian_export")
 async def nova_obsidian_export(params: ObsidianExportInput) -> str:
     """Export all shards to an Obsidian vault as Markdown files with YAML frontmatter
     and [[wikilink]] edges derived from the knowledge graph.
@@ -972,7 +934,7 @@ async def nova_obsidian_export(params: ObsidianExportInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_shard_index")
+@nova_tool(mcp, name="nova_shard_index")
 async def nova_shard_index(params: ShardIndexInput) -> str:
     """Browse shards using compact metadata rows without loading conversation bodies."""
     if _permission_context.blocks("nova_shard_index"):
@@ -1008,7 +970,7 @@ async def nova_shard_index(params: ShardIndexInput) -> str:
     return json.dumps(payload, indent=2)
 
 
-@mcp.tool(name="nova_shard_summary")
+@nova_tool(mcp, name="nova_shard_summary")
 async def nova_shard_summary(params: ShardIndexInput) -> str:
     """Browse shards with compact metadata rows plus a short synopsis per shard."""
     if _permission_context.blocks("nova_shard_summary"):
@@ -1044,7 +1006,7 @@ async def nova_shard_summary(params: ShardIndexInput) -> str:
     return json.dumps(payload, indent=2)
 
 
-@mcp.tool(name="nova_shard_list")
+@nova_tool(mcp, name="nova_shard_list")
 async def nova_shard_list(params: ShardListInput) -> str:
     """Return a legacy full shard dump. Prefer nova_shard_index or nova_shard_summary for browsing."""
     if _permission_context.blocks("nova_shard_list"):
@@ -1081,7 +1043,7 @@ async def nova_shard_list(params: ShardListInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_shard_get")
+@nova_tool(mcp, name="nova_shard_get")
 async def nova_shard_get(params: ShardGetInput) -> str:
     """Read the full raw content of a shard from disk. Read-only, no side effects."""
     if _permission_context.blocks("nova_shard_get"):
@@ -1098,7 +1060,7 @@ async def nova_shard_get(params: ShardGetInput) -> str:
     return json.dumps(data, indent=2)
 
 
-@mcp.tool(name="nova_shard_get_full")
+@nova_tool(mcp, name="nova_shard_get_full")
 async def nova_shard_get_full(params: ShardGetFullInput) -> str:
     """Cold-path full-body fetch. Returns conversation_history/turns payload without side effects. Use nova_shard_get for raw metadata."""
     if _permission_context.blocks("nova_shard_get_full"):
@@ -1122,7 +1084,7 @@ async def nova_shard_get_full(params: ShardGetFullInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_shard_merge")
+@nova_tool(mcp, name="nova_shard_merge")
 async def nova_shard_merge(params: ShardMergeInput) -> str:
     """Merge multiple shards into a meta-shard. Updates knowledge graph relations."""
     if _permission_context.blocks("nova_shard_merge"):
@@ -1202,7 +1164,7 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_shard_archive")
+@nova_tool(mcp, name="nova_shard_archive")
 async def nova_shard_archive(params: ShardArchiveInput) -> str:
     """Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion."""
     if _permission_context.blocks("nova_shard_archive"):
@@ -1232,7 +1194,7 @@ async def nova_shard_archive(params: ShardArchiveInput) -> str:
         _log_executed(request_id, "nova_shard_archive", params.shard_id, op_ok)
 
 
-@mcp.tool(name="nova_shard_forget")
+@nova_tool(mcp, name="nova_shard_forget")
 async def nova_shard_forget(params: ShardForgetInput) -> str:
     """
     Hard soft-delete with provenance log.
@@ -1276,7 +1238,7 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
 _last_consolidation_report: dict | None = None
 
 
-@mcp.tool(name="nova_shard_consolidate")
+@nova_tool(mcp, name="nova_shard_consolidate")
 async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
     """
     Trigger a full NÓTT maintenance cycle (fire-and-forget).
@@ -1343,7 +1305,7 @@ async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_graph_query")
+@nova_tool(mcp, name="nova_graph_query")
 async def nova_graph_query(params: GraphQueryInput) -> str:
     """
     Query the inter-shard knowledge graph.
@@ -1409,7 +1371,7 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_graph_relate")
+@nova_tool(mcp, name="nova_graph_relate")
 async def nova_graph_relate(params: GraphRelationInput) -> str:
     """
     Manually add a directed relation between two shards in the knowledge graph.
@@ -1466,7 +1428,7 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
 # SESSION TOOLS
 # ═══════════════════════════════════════════════════════════
 
-@mcp.tool(name="nova_session_flush")
+@nova_tool(mcp, name="nova_session_flush")
 async def nova_session_flush(params: SessionFlushInput) -> str:
     """Persist an active session to disk and remove it from memory. Returns JSON confirmation with token totals."""
     if _permission_context.blocks("nova_session_flush"):
@@ -1496,7 +1458,7 @@ async def nova_session_flush(params: SessionFlushInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_session_load")
+@nova_tool(mcp, name="nova_session_load")
 async def nova_session_load(params: SessionLoadInput) -> str:
     """Load a previously flushed session from disk into memory. Returns JSON with session metadata and message count."""
     if _permission_context.blocks("nova_session_load"):
@@ -1526,7 +1488,7 @@ async def nova_session_load(params: SessionLoadInput) -> str:
     }, indent=2)
 
 
-@mcp.tool(name="nova_session_list")
+@nova_tool(mcp, name="nova_session_list")
 async def nova_session_list(params: SessionListInput) -> str:
     """List all session IDs currently persisted on disk."""
     if _permission_context.blocks("nova_session_list"):
@@ -1544,7 +1506,7 @@ async def nova_session_list(params: SessionListInput) -> str:
 # FORGEMASTER TOOLS
 # ═══════════════════════════════════════════════════════════
 
-@mcp.tool(name="nova_forgemaster_sprint")
+@nova_tool(mcp, name="nova_forgemaster_sprint")
 async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
     """
     Run a full Forgemaster sprint: orchestrator → planner → implementer → reviewer.

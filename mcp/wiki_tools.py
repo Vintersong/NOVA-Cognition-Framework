@@ -39,6 +39,7 @@ from wiki import (
 )
 from wiki_ingest import ingest_source
 from nova_embeddings_local import generate_local_embedding
+from tool_registry import nova_tool
 
 
 # ═══════════════════════════════════════════════════════════
@@ -50,7 +51,7 @@ def register_wiki_tools(mcp) -> None:
 
     # ── nova_wiki_schema ──────────────────────────────────────────────────────
 
-    @mcp.tool(name="nova_wiki_schema")
+    @nova_tool(mcp, name="nova_wiki_schema")
     async def nova_wiki_schema(params: WikiSchemaInput) -> str:
         """
         View or modify the wiki topic taxonomy.
@@ -108,7 +109,7 @@ def register_wiki_tools(mcp) -> None:
 
     # ── nova_wiki_ingest ──────────────────────────────────────────────────────
 
-    @mcp.tool(name="nova_wiki_ingest")
+    @nova_tool(mcp, name="nova_wiki_ingest")
     async def nova_wiki_ingest(params: WikiIngestInput) -> str:
         """
         Ingest a source document into the wiki.
@@ -144,7 +145,7 @@ def register_wiki_tools(mcp) -> None:
 
     # ── nova_wiki_query ───────────────────────────────────────────────────────
 
-    @mcp.tool(name="nova_wiki_query")
+    @nova_tool(mcp, name="nova_wiki_query")
     async def nova_wiki_query(params: WikiQueryInput) -> str:
         """
         Semantic search over wiki pages using cosine similarity.
@@ -208,7 +209,7 @@ def register_wiki_tools(mcp) -> None:
 
     # ── nova_wiki_get ─────────────────────────────────────────────────────────
 
-    @mcp.tool(name="nova_wiki_get")
+    @nova_tool(mcp, name="nova_wiki_get")
     async def nova_wiki_get(params: WikiGetInput) -> str:
         """Read a specific wiki page in full."""
         page = load_wiki_page(params.slug)
@@ -230,7 +231,7 @@ def register_wiki_tools(mcp) -> None:
 
     # ── nova_wiki_list ────────────────────────────────────────────────────────
 
-    @mcp.tool(name="nova_wiki_list")
+    @nova_tool(mcp, name="nova_wiki_list")
     async def nova_wiki_list(params: WikiListInput) -> str:
         """
         List all wiki pages with one-line summaries.
@@ -266,7 +267,7 @@ def register_wiki_tools(mcp) -> None:
 
     # ── nova_wiki_lint ────────────────────────────────────────────────────────
 
-    @mcp.tool(name="nova_wiki_lint")
+    @nova_tool(mcp, name="nova_wiki_lint")
     async def nova_wiki_lint(params: WikiLintInput) -> str:
         """
         Health check the wiki.

@@ -10,6 +10,7 @@ import sys
 # Allow importing config from mcp/ when this module is loaded by nova_server.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import GEMINI_MODEL as MODEL
+from tool_registry import nova_tool
 _client = None
 _ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
 
@@ -56,7 +57,8 @@ def register_gemini_tools(mcp, gate=None, audit_log=None) -> None:
     (useful for direct unit invocation outside the MCP server).
     """
 
-    @mcp.tool(
+    @nova_tool(
+        mcp,
         name="gemini_execute_ticket",
         annotations={
             "title": "Execute Ticket via Gemini",
@@ -174,7 +176,8 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    @mcp.tool(
+    @nova_tool(
+        mcp,
         name="gemini_load_file",
         annotations={
             "title": "Load File as Context",

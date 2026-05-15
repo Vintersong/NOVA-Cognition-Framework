@@ -52,6 +52,7 @@ from graph import add_corroborated_by, load_graph, save_graph
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
+from tool_registry import nova_tool
 from store import load_index, load_shard, save_shard
 
 # ── Paths (env-overridable, no changes to config.py required) ─────────────────
@@ -492,7 +493,7 @@ def register_nidhogg_tools(mcp) -> None:
     Called once in nova_server.py after server init — same pattern as Gemini.
     """
 
-    @mcp.tool(name="nidhogg_ingest")
+    @nova_tool(mcp, name="nidhogg_ingest")
     async def nidhogg_ingest(params: NidhoggIngestInput) -> str:
         """
         Ingest a single document into NOVA's shard graph.
@@ -505,7 +506,7 @@ def register_nidhogg_tools(mcp) -> None:
         result = _ingest_file(params.file_path, params.source_type, params.top_n)
         return json.dumps(result, indent=2)
 
-    @mcp.tool(name="nidhogg_scan")
+    @nova_tool(mcp, name="nidhogg_scan")
     async def nidhogg_scan(params: NidhoggScanInput) -> str:
         """
         Scan the intake/ directory and ingest all pending files.
@@ -543,7 +544,7 @@ def register_nidhogg_tools(mcp) -> None:
         }
         return json.dumps(summary, indent=2)
 
-    @mcp.tool(name="nidhogg_status")
+    @nova_tool(mcp, name="nidhogg_status")
     async def nidhogg_status(params: NidhoggStatusInput) -> str:
         """
         Show the Nidhogg ingestion manifest — what files have been ingested,

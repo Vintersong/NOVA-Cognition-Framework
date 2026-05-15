@@ -3,44 +3,22 @@
 
 from __future__ import annotations
 
-import ast
 import re
+import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-NOVA_SERVER = REPO_ROOT / "mcp" / "nova_server.py"
 SCHEMAS = REPO_ROOT / "mcp" / "schemas.py"
 SKILL = REPO_ROOT / "mcp" / "SKILL.md"
 CLAUDE = REPO_ROOT / "CLAUDE.md"
 
 
-def _string_literals(expr: ast.AST | None) -> list[str]:
-    if not isinstance(expr, (ast.Tuple, ast.List)):
-        return []
-    out: list[str] = []
-    for elt in expr.elts:
-        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-            out.append(elt.value)
-    return out
-
-
-def _extract_tools_from_nova_server(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.AnnAssign):
-            ann_target = node.target
-            if isinstance(ann_target, ast.Name) and ann_target.id == "_ALL_TOOL_NAMES":
-                values = _string_literals(node.value)
-                if values:
-                    return values
-        if isinstance(node, ast.Assign):
-            for assign_target in node.targets:
-                if isinstance(assign_target, ast.Name) and assign_target.id == "_ALL_TOOL_NAMES":
-                    values = _string_literals(node.value)
-                    if values:
-                        return values
-    raise RuntimeError("Could not locate _ALL_TOOL_NAMES in mcp/nova_server.py")
+def _extract_tools() -> list[str]:
+    """Pull the canonical tool list from mcp/tool_registry.py."""
+    sys.path.insert(0, str(REPO_ROOT / "mcp"))
+    from tool_registry import all_names
+    return list(all_names())
 
 
 def _assert_count_phrase(path: Path, expected_count: int) -> list[str]:
@@ -62,7 +40,7 @@ def _assert_tool_mentions(path: Path, tools: list[str]) -> list[str]:
 
 
 def main() -> int:
-    tools = _extract_tools_from_nova_server(NOVA_SERVER)
+    tools = _extract_tools()
     expected_count = len(tools)
     errors: list[str] = []
 
