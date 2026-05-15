@@ -79,6 +79,11 @@ STALE_ACCESS_DAYS  = int(os.environ.get("NOVA_STALE_DAYS",  "14"))
 HUGINN_CONFIDENCE_THRESHOLD = float(os.environ.get("HUGINN_CONFIDENCE_THRESHOLD", "0.7"))
 NOTT_COUNT_THRESHOLD        = int(os.environ.get("NOTT_COUNT_THRESHOLD",         "100"))
 
+# ── Spreading activation (MUNINN third pass) ──────────────────────────────────
+# Minimum graph edge count required to attempt spreading activation in MUNINN.
+# Below this threshold the graph is too sparse for meaningful propagation.
+NOVA_ACTIVATION_MIN_EDGES = int(os.environ.get("NOVA_ACTIVATION_MIN_EDGES", "10"))
+
 # ── Ravens LLM config ────────────────────────────────────────────────────────
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-4-5-20251001")
