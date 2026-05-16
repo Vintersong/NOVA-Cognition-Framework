@@ -77,6 +77,7 @@ class NottReport:
     cluster_results: dict = field(default_factory=dict)
     adversarial_results: dict = field(default_factory=dict)
     valence_arousal_results: list[dict] = field(default_factory=list)
+    embedding_integrity_results: dict = field(default_factory=dict)
     graph_entities_synced: int = 0
     total_shards: int = 0
     duration_ms: float = 0.0
@@ -94,10 +95,12 @@ class NottReport:
         adv = self.adversarial_results
         adv_note = f", adversarial found {adv.get('contradictions_found', 0)} contradictions in {adv.get('shards_reviewed', 0)} shards" if adv and not adv.get("skipped") else ""
         va_note = f", scored valence/arousal for {len(self.valence_arousal_results)} shards" if self.valence_arousal_results else ""
+        ei = self.embedding_integrity_results
+        ei_note = f", embedding integrity: {ei.get('failures', 0)} failures in {ei.get('scanned', 0)} shards" if ei else ""
         return (
             f"Decayed {len(self.decayed_shards)} shards, "
             f"compacted {len(self.compacted_shards)}, "
-            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}{cluster_note}{adv_note}{va_note}."
+            f"found {len(self.merge_suggestions)} merge candidates{q_note}{dor_note}{cluster_note}{adv_note}{va_note}{ei_note}."
         )
 
     def to_dict(self) -> dict:
@@ -113,6 +116,7 @@ class NottReport:
             "cluster_results": self.cluster_results,
             "adversarial_results": self.adversarial_results,
             "valence_arousal_results": self.valence_arousal_results,
+            "embedding_integrity_results": self.embedding_integrity_results,
             "graph_entities_synced": self.graph_entities_synced,
             "total_shards": self.total_shards,
             "duration_ms": round(self.duration_ms, 1),
@@ -225,6 +229,7 @@ class Nott:
             report.cluster_results = await self._cluster_pass(index, dry_run)
             report.adversarial_results = await self._adversarial_pass(index, dry_run)
             report.valence_arousal_results = await self._valence_arousal_pass(index, dry_run)
+            report.embedding_integrity_results = await self._embedding_integrity_scan_pass(index, dry_run)
 
         # Rebuild index after mutations (skip on dry_run)
         if not dry_run and trigger in (NottTrigger.POST_SPRINT, NottTrigger.SCHEDULED):
@@ -653,6 +658,104 @@ class Nott:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor, self._adversarial_pass_sync, index, dry_run
+        )
+
+    # ── Embedding integrity scan pass ────────────────────────────────────
+
+    def _embedding_integrity_scan_pass_sync(self, index: dict, dry_run: bool) -> dict:
+        """
+        Sweep all enriched shards and re-verify their embedding signatures.
+
+        Catches shards that were mutated on disk after the last Arrow cache build
+        (the cache build only covers shards present at build time). Failures are:
+
+        1. Logged to embedding_integrity.jsonl with full diagnostic context.
+        2. Written as a ``contradicts`` graph edge — shard_id → synthetic node
+           ``integrity_sentinel:{shard_id}`` — so the adversarial edge set reflects
+           known tamper events with provenance.
+
+        Returns a summary dict: {scanned, failures, failure_details, skipped}.
+        """
+        try:
+            from embedding_integrity import verify_embedding, sign_embedding, log_integrity_failure
+        except ImportError:
+            return {"scanned": 0, "failures": 0, "failure_details": [], "skipped": "module_unavailable"}
+
+        try:
+            from graph import add_relation
+        except ImportError:
+            add_relation = None
+
+        scanned = 0
+        failures = 0
+        failure_details: list[dict] = []
+
+        for shard_id, entry in list(index.items()):
+            tags = entry.get("tags", [])
+            if "forgotten" in tags or "archived" in tags:
+                continue
+            enrichment = entry.get("enrichment_status") or entry.get("meta", {}).get("enrichment_status", "")
+            if "enriched" not in enrichment:
+                continue
+
+            try:
+                data, filepath = self._load_shard(shard_id)
+            except FileNotFoundError:
+                continue
+
+            context = data.get("context", {})
+            embedding = context.get("embedding")
+            sig = context.get("embedding_sig")
+
+            # Only verify shards that have both an embedding and a stored signature.
+            if not isinstance(embedding, list) or sig is None:
+                continue
+
+            scanned += 1
+            verified = verify_embedding(embedding, sig)
+            if verified:
+                continue
+
+            failures += 1
+            computed = sign_embedding(embedding)
+            log_integrity_failure(shard_id, sig, computed, "nott_scan")
+
+            detail: dict = {
+                "shard_id": shard_id,
+                "stored_sig": sig[:16] + "…" if sig else None,
+                "computed_sig": computed[:16] + "…" if computed else None,
+            }
+            failure_details.append(detail)
+
+            if not dry_run and add_relation is not None:
+                try:
+                    graph = self._load_graph()
+                    sentinel_id = f"integrity_sentinel:{shard_id}"
+                    add_relation(
+                        graph,
+                        source=shard_id,
+                        target=sentinel_id,
+                        relation_type="contradicts",
+                        notes="embedding_integrity_failure",
+                        reason=f"HMAC-SHA256 mismatch detected by NÓTT scan (stored={sig[:8]}…)",
+                    )
+                    self._save_graph(graph)
+                except Exception as exc:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "nott: embedding integrity graph write failed for %s: %s", shard_id, exc
+                    )
+
+        return {
+            "scanned": scanned,
+            "failures": failures,
+            "failure_details": failure_details,
+        }
+
+    async def _embedding_integrity_scan_pass(self, index: dict, dry_run: bool) -> dict:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._embedding_integrity_scan_pass_sync, index, dry_run
         )
 
     # ── Valence/Arousal pass ─────────────────────────────────────────────
