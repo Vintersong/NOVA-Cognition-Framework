@@ -585,7 +585,7 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
         # Auto-emit supersedes when a credible source contradicts an existing shard.
         if params.relation_type == "contradicts" and new_source in _credible_sources:
             try:
-                existing, existing_filepath = load_shard(related_id)
+                existing, existing_filepath = await loop.run_in_executor(None, load_shard, related_id)
                 existing_conf = existing.get("meta_tags", {}).get("confidence", 1.0)
                 new_conf = shard_data.get("meta_tags", {}).get("confidence", 1.0)
                 if new_conf >= existing_conf:
@@ -594,8 +594,8 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
                         reason=f"New {new_source} shard (conf={new_conf}) contradicts and supersedes existing (conf={existing_conf})",
                     )
                     existing.setdefault("meta_tags", {})["superseded_by"] = shard_id
-                    save_shard(existing_filepath, existing)
-                    patch_index_entry(related_id, existing)
+                    await loop.run_in_executor(None, save_shard, existing_filepath, existing)
+                    await loop.run_in_executor(None, patch_index_entry, related_id, existing)
             except Exception:
                 pass
 
@@ -625,7 +625,7 @@ async def nova_shard_create(params: ShardCreateInput) -> str:
     asyncio.create_task(_background_summary())
 
     # NÓTT — count-threshold check includes merge candidate scan (fire-and-forget)
-    index = load_index()
+    index = await loop.run_in_executor(None, load_index)
     if len(index) >= NOTT_COUNT_THRESHOLD:
         _hooks.emit(NovaHookEvent.COUNT_THRESHOLD)
 
@@ -904,8 +904,9 @@ async def nova_obsidian_export(params: ObsidianExportInput) -> str:
 
     from obsidian_export import export_shards, OBSIDIAN_DIR
 
-    index = load_index() or update_index()
-    graph = load_graph()
+    loop = asyncio.get_running_loop()
+    index = await loop.run_in_executor(None, lambda: load_index() or update_index())
+    graph = await loop.run_in_executor(None, load_graph)
     out_dir = params.out_dir.strip() or OBSIDIAN_DIR
 
     if params.dry_run:
@@ -1019,8 +1020,9 @@ async def nova_shard_list(params: ShardListInput) -> str:
     if _permission_context.blocks("nova_shard_list"):
         return _permission_error("nova_shard_list")
 
-    rebuild_summary_indexes(generate_missing=False)
-    rows = collect_browse_rows(include_synopsis=False)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: rebuild_summary_indexes(generate_missing=False))
+    rows = await loop.run_in_executor(None, lambda: collect_browse_rows(include_synopsis=False))
     page_number = (params.offset // params.limit) + 1
     page_rows, total = filter_sort_paginate_rows(
         rows,
@@ -1032,10 +1034,10 @@ async def nova_shard_list(params: ShardListInput) -> str:
         per_page=params.limit,
     )
 
-    shards = []
-    for row in page_rows:
-        data, _ = load_shard(row["id"])
-        shards.append(data)
+    def _load_all_shards(rows: list) -> list:
+        return [load_shard(row["id"])[0] for row in rows]
+
+    shards = await loop.run_in_executor(None, _load_all_shards, page_rows)
 
     return json.dumps({
         "_v": 3,
@@ -1055,8 +1057,9 @@ async def nova_shard_get(params: ShardGetInput) -> str:
     """Read the full raw content of a shard from disk. Read-only, no side effects."""
     if _permission_context.blocks("nova_shard_get"):
         return _permission_error("nova_shard_get")
+    loop = asyncio.get_running_loop()
     try:
-        data, _ = load_shard(params.shard_id)
+        data, _ = await loop.run_in_executor(None, load_shard, params.shard_id)
     except FileNotFoundError:
         return json.dumps({
             "status": "error",
@@ -1072,8 +1075,9 @@ async def nova_shard_get_full(params: ShardGetFullInput) -> str:
     """Cold-path full-body fetch. Returns conversation_history/turns payload without side effects. Use nova_shard_get for raw metadata."""
     if _permission_context.blocks("nova_shard_get_full"):
         return _permission_error("nova_shard_get_full")
+    loop = asyncio.get_running_loop()
     try:
-        data, _ = load_shard(params.shard_id)
+        data, _ = await loop.run_in_executor(None, load_shard, params.shard_id)
     except FileNotFoundError:
         return json.dumps({
             "status": "error",
@@ -1096,13 +1100,14 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
     """Merge multiple shards into a meta-shard. Updates knowledge graph relations."""
     if _permission_context.blocks("nova_shard_merge"):
         return _permission_error("nova_shard_merge")
+    loop = asyncio.get_running_loop()
     merged_history = []
     source_questions = []
     shard_ids_list = [s.strip() for s in params.shard_ids.split(",") if s.strip()]
 
     for sid in shard_ids_list:
         try:
-            data, _ = load_shard(sid)
+            data, _ = await loop.run_in_executor(None, load_shard, sid)
             merged_history.extend(data.get("conversation_history", []))
             source_questions.append(f"{sid}: {data.get('guiding_question', '')}")
         except FileNotFoundError:
@@ -1132,17 +1137,17 @@ async def nova_shard_merge(params: ShardMergeInput) -> str:
 
     # Persist the meta-shard immediately; enrichment happens in background.
     meta_shard.setdefault("meta_tags", {})["enrichment_status"] = "pending"
-    save_shard(filepath, meta_shard)
-    patch_index_entry(new_id, meta_shard)
+    await loop.run_in_executor(None, save_shard, filepath, meta_shard)
+    await loop.run_in_executor(None, patch_index_entry, new_id, meta_shard)
     add_shard_to_graph(new_id, meta_shard)
 
     if params.archive_originals:
         for sid in shard_ids_list:
             try:
-                data, fp = load_shard(sid)
+                data, fp = await loop.run_in_executor(None, load_shard, sid)
                 data.setdefault("meta_tags", {})["intent"] = "archived"
                 data["meta_tags"]["archived_at"] = datetime.now().isoformat()
-                save_shard(fp, data)
+                await loop.run_in_executor(None, save_shard, fp, data)
             except FileNotFoundError:
                 pass
 
@@ -1180,16 +1185,17 @@ async def nova_shard_archive(params: ShardArchiveInput) -> str:
     if gate_err:
         return gate_err
     op_ok = False
+    loop = asyncio.get_running_loop()
     try:
         try:
-            data, filepath = load_shard(params.shard_id)
+            data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
         except FileNotFoundError:
             return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
 
         data.setdefault("meta_tags", {})["intent"] = "archived"
         data["meta_tags"]["archived_at"] = datetime.now().isoformat()
-        save_shard(filepath, data)
-        patch_index_entry(params.shard_id, data)
+        await loop.run_in_executor(None, save_shard, filepath, data)
+        await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
         op_ok = True
 
         return json.dumps({
@@ -1216,9 +1222,10 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
     if gate_err:
         return gate_err
     op_ok = False
+    loop = asyncio.get_running_loop()
     try:
         try:
-            data, filepath = load_shard(params.shard_id)
+            data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
         except FileNotFoundError:
             return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
 
@@ -1226,8 +1233,8 @@ async def nova_shard_forget(params: ShardForgetInput) -> str:
         data["meta_tags"]["forgotten_at"] = datetime.now().isoformat()
         data["meta_tags"]["forget_reason"] = params.reason
         data["meta_tags"]["confidence"] = 0.0
-        save_shard(filepath, data)
-        patch_index_entry(params.shard_id, data)
+        await loop.run_in_executor(None, save_shard, filepath, data)
+        await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
         log_operation("nova_shard_forget", [params.shard_id], {"reason": params.reason})
         op_ok = True
@@ -1324,6 +1331,7 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
     """
     if _permission_context.blocks("nova_graph_query"):
         return _permission_error("nova_graph_query")
+    loop = asyncio.get_running_loop()
     if params.transitive:
         root_id = params.source or params.target
         if not root_id:
@@ -1335,7 +1343,7 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
             direction=direction,
             max_depth=params.max_depth,
         )
-        graph = load_graph()
+        graph = await loop.run_in_executor(None, load_graph)
         return json.dumps({
             "mode": "transitive",
             "root": root_id,
@@ -1356,7 +1364,7 @@ async def nova_graph_query(params: GraphQueryInput) -> str:
         pattern["type"] = params.relation_type
 
     relations = query_graph(pattern)
-    graph = load_graph()
+    graph = await loop.run_in_executor(None, load_graph)
 
     # Enrich with entity metadata
     enriched = []
@@ -1403,14 +1411,15 @@ async def nova_graph_relate(params: GraphRelationInput) -> str:
         add_relation(params.source_id, params.target_id, params.relation_type, params.notes, params.reason)
 
         confidence_bumped = None
+        loop = asyncio.get_running_loop()
         if params.relation_type == "corroborated_by":
             # corroborated_by is the ONLY sanctioned path for raising confidence.
             # source_id is the shard being confirmed; bump its confidence.
             try:
-                data, filepath = load_shard(params.source_id)
+                data, filepath = await loop.run_in_executor(None, load_shard, params.source_id)
                 new_conf = apply_confidence_corroboration(data)
-                save_shard(filepath, data)
-                patch_index_entry(params.source_id, data)
+                await loop.run_in_executor(None, save_shard, filepath, data)
+                await loop.run_in_executor(None, patch_index_entry, params.source_id, data)
                 confidence_bumped = round(new_conf, 4)
             except Exception:
                 pass
