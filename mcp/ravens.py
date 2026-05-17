@@ -34,6 +34,7 @@ import logging
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -462,6 +463,9 @@ class Muninn:
         # Propagates MUNINN scores through the knowledge graph to surface
         # related shards not in the original HUGINN candidate set.
         # Skipped gracefully when the graph is sparse or unavailable.
+        _bench_on = os.environ.get("NOVA_BENCH") == "1"
+        _bench_t0 = time.perf_counter() if _bench_on else None
+        _bench_in = len(result.shard_ids)
         try:
             from graph import load_graph
             from clustering import detect_communities
@@ -506,6 +510,24 @@ class Muninn:
                     )
         except Exception as exc:
             _record_error("muninn_spreading_activation", exc)
+        if _bench_on:
+            _bench_log = os.environ.get("NOVA_BENCH_LOG")
+            if _bench_log:
+                try:
+                    _bench_size = os.environ.get("NOVA_BENCH_CORPUS_SIZE")
+                    with open(_bench_log, "a", encoding="utf-8") as _fh:
+                        _fh.write(json.dumps({
+                            "ts": datetime.now().isoformat(),
+                            "corpus_size": int(_bench_size) if _bench_size else None,
+                            "stage": "spreading_activation_inner",
+                            "query_id": os.environ.get("NOVA_BENCH_QUERY_ID"),
+                            "duration_ms": (time.perf_counter() - _bench_t0) * 1000,
+                            "candidates_in": _bench_in,
+                            "candidates_out": len(result.shard_ids),
+                            "in_live_pipeline": True,
+                        }) + "\n")
+                except Exception:
+                    pass
         # ── End spreading activation ──────────────────────────────────────────
 
         self._log(query, candidates, result)
