@@ -56,6 +56,14 @@ CLUSTER_IDS: list[str] = [f"c{i}" for i in range(len(CLUSTER_VOCAB))]
 EMBEDDING_DIM = 384
 
 
+# Module-level registry of bench queries → cluster_id. Populated by
+# build_corpus(); consumed by install_embedding_stub()'s fake_generate
+# so the stubbed query vector lands near its target cluster (mirrors how
+# real sentence-transformers would behave for these in-domain queries).
+# Without this, MUNINN's cosine rerank measures random projection noise.
+_QUERY_CLUSTER_REGISTRY: dict[str, str] = {}
+
+
 def _deterministic_embedding(text: str, cluster_id: str) -> list[float]:
     """
     Build a 384-d unit vector where shards in the same cluster cluster
@@ -159,12 +167,17 @@ def build_corpus(
                 relations.append({"source": sid, "target": target, "type": "references"})
 
     # Queries: pick 3 terms from each cluster's on_vocab.
+    # Register query → cluster_id so the embedding stub can land each
+    # query vector near its target cluster (see _QUERY_CLUSTER_REGISTRY).
+    _QUERY_CLUSTER_REGISTRY.clear()
     queries: list[tuple[str, str]] = []
     for ci, cluster_id in enumerate(cluster_ids):
         on_vocab = vocabs[ci]
         for _ in range(n_queries_per_cluster):
             terms = rng.sample(on_vocab, k=min(3, len(on_vocab)))
-            queries.append((" ".join(terms), cluster_id))
+            query = " ".join(terms)
+            queries.append((query, cluster_id))
+            _QUERY_CLUSTER_REGISTRY[query] = cluster_id
 
     graph = {"entities": entities, "relations": relations}
     return Corpus(index=index, queries=queries, graph=graph, shard_dir=shard_dir)
@@ -389,9 +402,14 @@ def install_embedding_stub(monkeypatch):
         return sentinel
 
     def fake_generate(text: str) -> list[float]:
-        # Keyed off text only — no cluster info — so it works for both
-        # query strings (which we want to land near their target cluster)
-        # and arbitrary shard summaries.
+        # If the text is a registered bench query, embed it under that
+        # query's target cluster so it lands near same-cluster shard
+        # vectors (preserving the cosine signal MUNINN's rerank relies
+        # on). Otherwise fall back to a per-text random vector — same
+        # behavior as before for non-query inputs.
+        cluster_id = _QUERY_CLUSTER_REGISTRY.get(text)
+        if cluster_id is not None:
+            return _deterministic_embedding(text, cluster_id)
         seed = int(hashlib.sha1(text.encode()).hexdigest()[:8], 16)
         rng = random.Random(seed)
         vec = [rng.gauss(0.0, 1.0) for _ in range(EMBEDDING_DIM)]

@@ -79,10 +79,15 @@ def main(jsonl_path: str = DEFAULT_PATH) -> int:
 
     # Group: (corpus_size, stage) -> list[row]
     # spreading_activation_inner rows come from the MUNINN inner timer,
-    # which doesn't carry corpus_size — they get bucketed under "inner".
+    # which may have a null corpus_size when NOVA_BENCH_CORPUS_SIZE is
+    # unset — those get bucketed under "inner". Note: dict.get with a
+    # default won't fall back when the key exists with value None, so
+    # we have to check explicitly.
     grouped: dict[tuple[object, str], list[dict]] = defaultdict(list)
     for r in rows:
-        size = r.get("corpus_size", "inner")
+        size = r.get("corpus_size")
+        if size is None:
+            size = "inner"
         grouped[(size, r["stage"])].append(r)
 
     sizes = sorted(

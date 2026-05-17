@@ -63,14 +63,19 @@ def bench_log_path(tmp_path_factory) -> Path:
 
 # ── Common monkeypatching ─────────────────────────────────────────────────────
 
-def _patch_environment(monkeypatch, corpus: Corpus, log_path: Path,
+def _patch_environment(monkeypatch, corpus: Corpus, tmp_path: Path, log_path: Path,
                        huginn_latency: float, muninn_latency: float) -> None:
     """Apply all bench-scope patches: Anthropic stub, embedding stub,
-    Arrow disable, synthetic graph, NOVA_BENCH inner-timer env."""
+    Arrow disable, synthetic graph, NOVA_BENCH inner-timer env, and
+    point the facts index at a non-existent tmp path so search_facts()
+    deterministically takes its empty-corpus early-return (facts.py:50)
+    instead of opening/creating facts_index.db in the repo root."""
     install_anthropic_stub(monkeypatch, huginn_latency, muninn_latency)
     install_embedding_stub(monkeypatch)
     disable_arrow_cache(monkeypatch)
     monkeypatch.setattr("graph.load_graph", lambda: corpus.graph, raising=False)
+    monkeypatch.setattr("facts.FACTS_INDEX_FILE", str(tmp_path / "no_facts.db"), raising=False)
+    monkeypatch.setattr("facts.FACTS_DIR", str(tmp_path / "no_facts_dir"), raising=False)
     monkeypatch.setenv("NOVA_BENCH", "1")
     monkeypatch.setenv("NOVA_BENCH_LOG", str(log_path))
     monkeypatch.setenv("NOVA_BENCH_CORPUS_SIZE", str(len(corpus.index)))
@@ -101,10 +106,15 @@ def probe_facts(query: str, expected_cluster: str, corpus: Corpus,
                 log_path: Path, query_id: str) -> None:
     """Stage 1: SQLite facts pre-filter.
 
-    `facts.search_facts` returns [] when FACTS_INDEX_FILE is absent (which
-    is the case in tmp_path setup). The timing still reflects the existence-
-    check cost — matches production behavior on machines with no facts DB.
-    Recall fields are null because facts results have no cluster signal.
+    `_patch_environment` points facts.FACTS_INDEX_FILE and FACTS_DIR at
+    non-existent tmp paths so search_facts() deterministically takes
+    its empty-corpus early-return (facts.py:50). Without that, it would
+    open facts_index.db in the repo root and timings would depend on
+    whatever facts the developer has locally — non-reproducible.
+
+    The timing still reflects the existence-check cost — matches
+    production behavior on machines with no facts DB. Recall fields
+    are null because facts results have no cluster signal.
     """
     with BenchTimer(log_path, len(corpus.index), "facts_prefilter", query_id) as t:
         results = facts.search_facts(query, confidence=1, limit=5)
@@ -225,7 +235,7 @@ def test_bench_smoke(monkeypatch, tmp_path, bench_log_path: Path) -> None:
     """Fast 20-shard run. Validates the JSONL schema and that every
     stage emits at least one row. Must finish well under 5s."""
     corpus = build_corpus(tmp_path, n_shards=20, n_queries_per_cluster=2)
-    _patch_environment(monkeypatch, corpus, bench_log_path, 0.0, 0.0)
+    _patch_environment(monkeypatch, corpus, tmp_path, bench_log_path, 0.0, 0.0)
     huginn, muninn = _make_ravens(corpus, tmp_path)
     asyncio.run(_run_sweep(corpus, huginn, muninn, bench_log_path))
 
@@ -272,7 +282,7 @@ def test_bench_sweep(monkeypatch, tmp_path, bench_log_path: Path, n_shards: int)
     LLM latencies — expect ~8 min total wall clock."""
     corpus = build_corpus(tmp_path, n_shards=n_shards)
     _patch_environment(
-        monkeypatch, corpus, bench_log_path,
+        monkeypatch, corpus, tmp_path, bench_log_path,
         huginn_latency=_REAL_HUGINN_LATENCY_S,
         muninn_latency=_REAL_MUNINN_LATENCY_S,
     )
