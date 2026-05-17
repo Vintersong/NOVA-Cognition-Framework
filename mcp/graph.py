@@ -50,10 +50,9 @@ def save_graph(graph: dict):
 # GRAPH MUTATIONS
 # ═══════════════════════════════════════════════════════════
 
-def add_shard_to_graph(shard_id: str, shard_data: dict):
-    """Register a shard as an entity in the knowledge graph on create."""
-    graph = load_graph()
-    graph["entities"][shard_id] = {
+def build_shard_entity(shard_data: dict) -> dict:
+    """Build the graph entity dict for a shard. Single source of entity schema."""
+    return {
         "type": "Shard",
         "guiding_question": shard_data.get("guiding_question", ""),
         "theme": shard_data.get("meta_tags", {}).get("theme", "general"),
@@ -61,6 +60,12 @@ def add_shard_to_graph(shard_id: str, shard_data: dict):
         "created_at": datetime.now().isoformat(),
         "confidence": shard_data.get("meta_tags", {}).get("confidence", 1.0),
     }
+
+
+def add_shard_to_graph(shard_id: str, shard_data: dict):
+    """Register a shard as an entity in the knowledge graph on create."""
+    graph = load_graph()
+    graph["entities"][shard_id] = build_shard_entity(shard_data)
     save_graph(graph)
 
 
