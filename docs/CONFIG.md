@@ -1,6 +1,6 @@
 # NOVA Configuration Reference
 
-> **Source of truth:** `mcp/config.py` — all variables are read from there. Changing a default means changing one line in that file.
+> **Where defaults live:** most variables are centralized in `mcp/config.py` — changing a default there changes it everywhere. A small number of module-local variables (`NOVA_LOG_QUERY_PREVIEW`, `RAVEN_API_TIMEOUT`, `NIDHOGG_SIMILARITY_THRESHOLD`, `FORGEMASTER_EVENT_LOG`, `NOVA_DENIED_TOOLS`, `NOVA_DENIED_PREFIXES`) are read directly from the environment by the module that uses them; each is listed in its themed table below with the consuming module named.
 >
 > Set variables in your `.env` file at the repo root, or pass them directly in your `claude_desktop_config.json` / Docker `--env` flags.
 
@@ -49,12 +49,12 @@ Controls the HUGINN → MUNINN → Spreading Activation retrieval pipeline.
 | `HUGINN_MODEL` | `claude-haiku-4-5-20251001` | Model for the fast HUGINN retrieval pass. Swap to a newer Haiku model to improve speed without increasing cost significantly. |
 | `MUNINN_MODEL` | `claude-sonnet-4-6` | Model for the deep MUNINN rerank pass. Downgrading reduces rerank quality; upgrading increases cost per retrieval. |
 | `HUGINN_CONFIDENCE_THRESHOLD` | `0.7` | HUGINN scores at or above this skip MUNINN entirely. Raise to call MUNINN less often (cheaper, slightly lower quality); lower to call MUNINN more aggressively. |
-| `RAVEN_API_TIMEOUT` | `10` | Per-call LLM timeout in seconds. On timeout the MUNINN step is skipped and the HUGINN local-pass result is returned. Increase for slow networks; decrease to fail fast. |
+| `RAVEN_API_TIMEOUT` | `10` | Per-call LLM timeout in seconds. On timeout the MUNINN step is skipped and the HUGINN local-pass result is returned. Increase for slow networks; decrease to fail fast. Read directly by `ravens.py`. |
 | `NOVA_MAX_FRAGMENTS` | `10` | Maximum shard fragments injected into context per `nova_shard_interact` call. Raise for richer context; lower to save tokens. |
 | `NOVA_AGENT_INFERENCE_WEIGHT` | `0.7` | Score multiplier applied to `agent_inference` shards. Values below `1.0` deprioritise agent-generated content relative to external sources. Set to `1.0` to treat all sources equally. |
 | `NOVA_ACTIVATION_MIN_EDGES` | `10` | Minimum graph edge count before spreading activation runs as the third retrieval pass. Below this the graph is too sparse for meaningful propagation. Raise if spreading activation adds noise on small graphs. |
 | `NOVA_RECALL_CACHE_TTL` | `300` | In-memory recall cache TTL in seconds. Increase to reduce redundant retrieval calls within a session; decrease for fresher results. |
-| `NOVA_LOG_QUERY_PREVIEW` | *(unset)* | Set to `1`/`true` to log the first 200 chars of each HUGINN query to stdout. Useful for debugging retrieval. |
+| `NOVA_LOG_QUERY_PREVIEW` | *(unset)* | Set to `1`/`true` to log the first 200 chars of each HUGINN query to stdout. Useful for debugging retrieval. Read directly by `ravens.py`. |
 
 ---
 
@@ -135,8 +135,7 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 | Variable | Default | Impact |
 |---|---|---|
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used for the implementation lane. Swap to a newer Flash model to pick up capability improvements. |
-| `CONFIDENCE_THRESHOLD` | `0.65` | When Gemini's self-reported confidence falls below this, it escalates the ticket to Sonnet rather than retrying. Raise to escalate more aggressively; lower to keep more work in the cheaper Flash lane. |
-| `FORGEMASTER_EVENT_LOG` | *(unset)* | Override path for the sprint JSONL event log. Defaults to `output/forgemaster_events_<timestamp>.jsonl`. |
+| `FORGEMASTER_EVENT_LOG` | *(unset)* | Override path for the sprint JSONL event log. Defaults to `output/forgemaster_runs/<sprint_id>.jsonl` (read directly by `forgemaster_runtime.py`). |
 
 ---
 
@@ -147,8 +146,8 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 | `NOVA_HITL_BROKER` | `interactive` | `interactive` — prompts on Unix/Windows terminal before irreversible tool calls. `policy` — always-deny without prompting (used in Docker and CI where there is no terminal). |
 | `NOVA_HITL_TIMEOUT_S` | `30` | Seconds to wait for a human decision before auto-denying in interactive mode. |
 | `NOVA_SKILL_AUDIT_LOG` | `skill_audit.db` | SQLite file for the four-state HITL lifecycle (irreversible.request / decision / executed / capability.denied) and post-session biconditional audit. |
-| `NOVA_DENIED_TOOLS` | *(unset)* | Comma-separated tool names to block at runtime (e.g. `nova_evolve,nova_shard_forget`). Takes effect immediately without a server restart. |
-| `NOVA_DENIED_PREFIXES` | *(unset)* | Comma-separated tool name prefixes to block (e.g. `gemini_` to disable all Gemini tools). |
+| `NOVA_DENIED_TOOLS` | *(unset)* | Comma-separated tool names to block at runtime (e.g. `nova_evolve,nova_shard_forget`). Takes effect immediately without a server restart. Read directly by `permissions.py`. |
+| `NOVA_DENIED_PREFIXES` | *(unset)* | Comma-separated tool name prefixes to block (e.g. `gemini_` to disable all Gemini tools). Read directly by `permissions.py`. |
 
 ---
 
@@ -158,7 +157,7 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 |---|---|---|
 | `NIDHOGG_INTAKE_DIR` | `intake/` | Drop zone for `nidhogg_scan`. Files placed here are ingested on the next scan. |
 | `NIDHOGG_MANIFEST_FILE` | `nidhogg_manifest.json` | SHA256 manifest of ingested files — makes ingest idempotent. Delete to force re-ingest of all files. |
-| `NIDHOGG_SIMILARITY_THRESHOLD` | `0.55` | Cosine similarity threshold for matching an ingested file to an existing shard for annotation. Lower to annotate more shards; raise to only annotate close matches. |
+| `NIDHOGG_SIMILARITY_THRESHOLD` | `0.55` | Cosine similarity threshold for matching an ingested file to an existing shard for annotation. Lower to annotate more shards; raise to only annotate close matches. Read directly by `nidhogg.py`. |
 
 ---
 
@@ -175,16 +174,3 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 | Constant | Value | Notes |
 |---|---|---|
 | `SESSION_ID_PATTERN` | `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` | Regex that session IDs must match (enforced at input validation). Hardcoded in `config.py` — not an env var. IDs are persisted as filenames; this keeps them portable across filesystems. |
-
----
-
-## Variables not in `config.py` (set in calling environment)
-
-These are consumed directly by their respective modules and do not appear in `config.py`:
-
-| Variable | Module | Notes |
-|---|---|---|
-| `NOVA_LOG_QUERY_PREVIEW` | `ravens.py` | Set `1`/`true` to log HUGINN query previews to stdout. |
-| `RAVEN_API_TIMEOUT` | `ravens.py` | Per-call LLM timeout in seconds (default `10`). |
-| `NIDHOGG_SIMILARITY_THRESHOLD` | `nidhogg.py` | See Nidhogg section above. |
-| `FORGEMASTER_EVENT_LOG` | `forgemaster_runtime.py` | See Gemini / Forgemaster section above. |

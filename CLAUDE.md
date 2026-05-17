@@ -274,7 +274,6 @@ This is not optional. Without this, every session starts from zero.
 | `HUGINN_CONFIDENCE_THRESHOLD` | `0.7` | Score >= this skips MUNINN |
 | `GEMINI_API_KEY` | — | Required for Gemini worker |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Implementation lane model |
-| `CONFIDENCE_THRESHOLD` | `0.65` | Below this, Gemini escalates to Sonnet |
 | `NOVA_COMPACT_THRESHOLD` | `30` | Turns before auto-compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |
 | `NOVA_MERGE_THRESHOLD` | `0.85` | Cosine similarity floor for merge suggestions |
