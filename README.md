@@ -225,6 +225,30 @@ docker compose up nova
 
 ---
 
+## Development & Testing
+
+### Run the default test suite
+
+```bash
+python -m pytest tests/
+```
+
+The `benchmark` marker is excluded by default — only unit and integration tests run.
+
+### Run the retrieval pipeline benchmark
+
+Stage-level latency, funnel ratios, and recall@k for `nova_shard_interact` across corpus sizes 50 / 200 / 500 / 1000. Uses synthetic shards with ground-truth cluster labels; stubs the Anthropic API so the bench stays fully offline.
+
+```bash
+NOVA_BENCH=1 NOVA_BENCH_LOG=bench_retrieval.jsonl \
+    python -m pytest tests/bench_retrieval.py -m benchmark -s
+python utilities/bench_report.py bench_retrieval.jsonl
+```
+
+The bench measures each stage independently: SQLite facts pre-filter → HUGINN local + LLM → MUNINN local + LLM → spreading activation, plus the legacy `_walk_topk_with_cluster_collapse` walk as an off-path probe. See `tests/bench_retrieval.py` for the probe definitions.
+
+---
+
 ## Directory Structure
 
 ```

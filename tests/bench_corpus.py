@@ -127,9 +127,10 @@ def build_corpus(
     """
     vocabs, cluster_ids = _resize_clusters(n_shards)
     n_clusters = len(cluster_ids)
-    per_cluster = max(1, n_shards // n_clusters)
-    n_on_topic = max(1, round(per_cluster * (1 - noise_ratio)))
-    n_noise = per_cluster - n_on_topic
+    # divmod so total shards exactly equals n_shards: the first `remainder`
+    # clusters get one extra shard. Integer-floor split would lose up to
+    # n_clusters-1 shards (e.g. 500/17 = 29×17 = 493, 7 short).
+    base_per_cluster, remainder = divmod(n_shards, n_clusters)
 
     shard_dir = tmp_path / "shards"
     shard_dir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +145,9 @@ def build_corpus(
         on_vocab = vocabs[ci]
         noise_vocab = vocabs[(ci + 1) % n_clusters]
         cluster_shard_ids: list[str] = []
+        per_cluster = max(1, base_per_cluster + (1 if ci < remainder else 0))
+        n_on_topic = max(1, round(per_cluster * (1 - noise_ratio)))
+        n_noise = per_cluster - n_on_topic
 
         for j in range(n_on_topic):
             sid = f"{cluster_id}_s{j:03d}"
@@ -178,6 +182,13 @@ def build_corpus(
             query = " ".join(terms)
             queries.append((query, cluster_id))
             _QUERY_CLUSTER_REGISTRY[query] = cluster_id
+
+    # Catch regressions in the per-cluster split: index size must exactly
+    # match the requested n_shards. Caller code logs n_shards as
+    # NOVA_BENCH_CORPUS_SIZE so a mismatch silently mislabels rows.
+    assert len(index) == n_shards, (
+        f"corpus size mismatch: requested {n_shards}, built {len(index)}"
+    )
 
     graph = {"entities": entities, "relations": relations}
     return Corpus(index=index, queries=queries, graph=graph, shard_dir=shard_dir)
