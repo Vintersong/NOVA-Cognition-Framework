@@ -32,7 +32,7 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (35 total)
+## Tools (36 total)
 
 ### Core shard + graph + session (21)
 
@@ -59,6 +59,7 @@ Principle Library (reasoning methodology)
 | `nova_session_load` | Restore a stored session to memory. |
 | `nova_session_list` | List all stored session IDs. |
 | `nova_forgemaster_sprint` | Full 4-turn sprint pipeline. |
+| `nova_cache_prewarm` | Pre-warm Anthropic prompt cache with top-N shard context; returns the cached `system` string for subsequent calls. |
 
 ### Wiki (6)
 

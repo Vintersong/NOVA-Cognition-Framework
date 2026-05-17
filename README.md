@@ -149,7 +149,6 @@ Copy `.env.example` to `.env` at the repo root and fill in your keys:
 CLAUDE_API_KEY=sk-ant-...
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.5-flash
-CONFIDENCE_THRESHOLD=0.65
 ```
 
 If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN silently fall back to local-only retrieval (token overlap + cosine over local embeddings).
@@ -489,7 +488,6 @@ Read-only resources exposed alongside the tools:
 | `RAVEN_API_TIMEOUT` | `10` | Per-call LLM timeout (seconds) before local fallback |
 | `GEMINI_API_KEY` | — | Required for Gemini worker |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Implementation lane model |
-| `CONFIDENCE_THRESHOLD` | `0.65` | Below this, Gemini escalates to Sonnet |
 | `NOVA_COMPACT_THRESHOLD` | `30` | Turns before auto-compaction |
 | `NOVA_COMPACT_KEEP` | `15` | Recent turns retained after compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |
@@ -526,7 +524,7 @@ Read-only resources exposed alongside the tools:
 | `CLAUDE_API_KEY` absent | HUGINN and MUNINN silently fall back to local-only retrieval (token overlap + cosine over local all-MiniLM-L6-v2 embeddings). No error is raised; retrieval quality is reduced. |
 | HMAC signature mismatch | The embedding is rejected before MUNINN reranking. The event is written to `embedding_integrity.jsonl` (shard ID, timestamp, expected vs. actual signature). Retrieval continues without the tainted vector. |
 | MCP client disconnection | The server continues running. The stop hook (`nova_hook_stop.py`) flushes active session state to `nova_sessions/` so the next `nova_session_load` can resume where the session left off. |
-| API rate limit / timeout | `RAVEN_API_TIMEOUT` (default `10`s) controls the per-call LLM timeout. On timeout, the MUNINN step is skipped and HUGINN's local-pass result is returned. For the Gemini lane, `CONFIDENCE_THRESHOLD` (default `0.65`) determines when Gemini escalates the ticket to Sonnet rather than retrying. |
+| API rate limit / timeout | `RAVEN_API_TIMEOUT` (default `10`s) controls the per-call LLM timeout. On timeout, the MUNINN step is skipped and HUGINN's local-pass result is returned. |
 | Shard fails adversarial pass | The shard is quarantined for `NOVA_QUARANTINE_HOURS` (default `48`h). During quarantine its retrieval score is multiplied by `NOVA_QUARANTINE_PENALTY` (default `0.5`) and it is excluded from default search. It graduates automatically if the next NÓTT adversarial pass clears it. |
 
 ---

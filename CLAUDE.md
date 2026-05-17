@@ -125,9 +125,9 @@ NOVA-Whitepaper/
 
 ---
 
-## NOVA MCP Tools (35 total)
+## NOVA MCP Tools (36 total)
 
-### Core shard ops (`nova_server.py`, 21)
+### Core shard ops (`nova_server.py`, 22)
 
 | Tool | Purpose |
 |---|---|
@@ -152,6 +152,7 @@ NOVA-Whitepaper/
 | `nova_session_load` | Restore stored session to memory |
 | `nova_session_list` | List all stored session IDs |
 | `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
+| `nova_cache_prewarm` | Pre-warm Anthropic prompt cache with top-N shard context; returns the cached `system` string for subsequent calls |
 
 ### Wiki (`wiki_tools.py`, 6)
 
@@ -274,7 +275,6 @@ This is not optional. Without this, every session starts from zero.
 | `HUGINN_CONFIDENCE_THRESHOLD` | `0.7` | Score >= this skips MUNINN |
 | `GEMINI_API_KEY` | — | Required for Gemini worker |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Implementation lane model |
-| `CONFIDENCE_THRESHOLD` | `0.65` | Below this, Gemini escalates to Sonnet |
 | `NOVA_COMPACT_THRESHOLD` | `30` | Turns before auto-compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |
 | `NOVA_MERGE_THRESHOLD` | `0.85` | Cosine similarity floor for merge suggestions |

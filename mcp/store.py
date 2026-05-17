@@ -198,7 +198,6 @@ def update_index() -> dict:
                 seen[sid] = fname
 
     for sid, fname in seen.items():
-        fpath = os.path.join(SHARD_DIR, fname)
         try:
             shard, _ = load_shard_file(sid, SHARD_DIR)
         except Exception as exc:

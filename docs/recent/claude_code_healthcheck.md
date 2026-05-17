@@ -138,7 +138,7 @@ Expected files (10 total):
 4. Confirm it has the sprint workflow section
 5. Confirm it does NOT reference OpenAI key as required
 6. Confirm it references `utilities/` for shard_index.py and chatgpt_to_nova.py (not `python/` or `tools/`)
-7. Confirm it lists 3 env vars added in the last refactor: `CONFIDENCE_THRESHOLD`, `GEMINI_MODEL`, `GEMINI_API_KEY`
+7. Confirm it lists the Gemini env vars (`GEMINI_MODEL`, `GEMINI_API_KEY`) in the env-var table
 
 ---
 

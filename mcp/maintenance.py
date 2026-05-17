@@ -23,11 +23,11 @@ from config import (
     DECAY_INTERVAL_DAYS,
     MERGE_SIMILARITY_THRESHOLD,
 )
+from timeutils import parse_iso, now_utc
 
 # Confidence may ONLY rise via corroborated_by edges — never via repeat retrieval
 # or any other path. All callers must go through apply_confidence_corroboration().
 CORROBORATION_DELTA = float(os.environ.get("NOVA_CORROBORATION_DELTA", "0.1"))
-from timeutils import parse_iso, now_utc
 
 
 # ═══════════════════════════════════════════════════════════

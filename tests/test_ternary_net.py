@@ -156,7 +156,7 @@ def test_train_model_converges_on_synthetic():
     assert 0.0 <= rates["fc1"] <= 1.0
     assert 0.0 <= rates["fc2"] <= 1.0
     # No NaN crept in
-    assert all(not (l != l) for l in history.train_loss)  # NaN != NaN
+    assert all(not (loss != loss) for loss in history.train_loss)  # NaN != NaN
 
 
 def test_predict_no_nan():
