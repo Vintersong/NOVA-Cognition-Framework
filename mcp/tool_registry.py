@@ -89,13 +89,17 @@ _REGISTRY: dict[str, ToolSpec] = dict([
     _spec("nova_shard_consolidate", "fs.write.irrev", "shard", irreversible=True),
     # ── Graph (2) ────────────────────────────────────────────────────────
     _spec("nova_graph_query",       "fs.read",        "graph"),
-    _spec("nova_graph_relate",      "fs.write.rev",   "graph"),
+    # nova_graph_relate is the only sanctioned path to raise shard confidence
+    # (via corroborated_by). Marked irreversible so every call generates an
+    # audit request_id and a matching log_executed record.
+    _spec("nova_graph_relate",      "fs.write.rev",   "graph", irreversible=True),
     # ── Session (3) ──────────────────────────────────────────────────────
     _spec("nova_session_flush",     "fs.write.rev",   "session"),
     _spec("nova_session_load",      "fs.write.rev",   "session"),
     _spec("nova_session_list",      "fs.read",        "session"),
-    # ── Forgemaster (1) ──────────────────────────────────────────────────
+    # ── Forgemaster (2) ──────────────────────────────────────────────────
     _spec("nova_forgemaster_sprint", "spawn.proc",    "forgemaster", irreversible=True),
+    _spec("nova_cache_prewarm",      "net.egress",    "forgemaster"),
     # ── Wiki (6) ─────────────────────────────────────────────────────────
     _spec("nova_wiki_schema",       "fs.read",        "wiki"),
     _spec("nova_wiki_ingest",       "fs.write.rev",   "wiki"),

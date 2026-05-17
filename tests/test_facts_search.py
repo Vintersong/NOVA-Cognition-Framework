@@ -82,3 +82,38 @@ def test_search_facts_library_call_returns_empty_when_no_corpus(tmp_path: Path, 
     monkeypatch.setattr(facts_module, "FACTS_DIR", str(tmp_path / "missing"))
     monkeypatch.setattr(facts_module, "FACTS_INDEX_FILE", str(tmp_path / "missing.db"))
     assert facts_module.search_facts("anything") == []
+
+
+@pytest.mark.asyncio
+async def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When NOVA_DENIED_TOOLS blocks a facts tool, the handler returns the
+    denial payload instead of touching the SQLite index. Catches the gap
+    Codex review flagged where _ALL_TOOL_NAMES inclusion alone wasn't
+    enough to gate execution."""
+    import json
+    import facts as facts_module
+    import permissions
+
+    class _DummyMCP:
+        def __init__(self) -> None:
+            self.tools: dict[str, object] = {}
+
+        def tool(self, *, name: str, **_: object):
+            def decorator(fn):
+                self.tools[name] = fn
+                return fn
+            return decorator
+
+    mcp = _DummyMCP()
+    facts_module.register_facts_tools(mcp)
+
+    ctx = permissions.ToolPermissionContext.from_iterables(
+        deny_tools=["nova_facts_search", "nova_facts_rebuild"],
+    )
+    monkeypatch.setattr(permissions, "_active", ctx)
+
+    search_out = await mcp.tools["nova_facts_search"](facts_module.FactsSearchInput(query="x"))
+    rebuild_out = await mcp.tools["nova_facts_rebuild"](facts_module.FactsRebuildInput())
+
+    assert "not permitted" in json.loads(search_out)["error"]
+    assert "not permitted" in json.loads(rebuild_out)["error"]

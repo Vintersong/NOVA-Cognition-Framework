@@ -35,10 +35,14 @@ from tool_registry import get as _get_spec, irreversible_tools
 logger = logging.getLogger(__name__)
 
 
-# Derived from `mcp/tool_registry.py:_REGISTRY` — shard-category irreversibles
-# whose audit targets are shard IDs (vs file paths from Forgemaster writes).
+# Derived from `mcp/tool_registry.py:_REGISTRY` — irreversible tools whose
+# audit targets are shard IDs (vs file paths from Forgemaster writes).
+# Includes "graph" because nova_graph_relate's target is a source shard ID:
+# excluding it would cause run_biconditional_check to misclassify graph
+# audit records as file-path phantoms.
 _SHARD_TOOL_NAMES: frozenset[str] = frozenset(
-    name for name in irreversible_tools() if _get_spec(name).category == "shard"
+    name for name in irreversible_tools()
+    if _get_spec(name).category in ("shard", "graph")
 )
 
 

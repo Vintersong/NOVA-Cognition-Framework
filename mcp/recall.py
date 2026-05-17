@@ -1,8 +1,14 @@
 """
-recall.py — Hook recall for NOVA.
+recall.py — Hook recall and cache prewarm for NOVA.
 
 Provides hook_recall(): synchronous, confidence-floored, summary-only retrieval
 for use in Claude Code hooks (UserPromptSubmit, PostToolUse).
+
+Provides build_prewarm_context() / prewarm_session_context(): selects top-N
+high-confidence shards, assembles a summary system prompt, and fires a
+max_tokens=0 Anthropic API call to write the prompt into the cache before any
+real requests arrive.  Subsequent requests that send the same system string
+(with cache_control) receive ~0.1× read cost instead of full write cost.
 
 Confidence floor semantics: uses the shard's stored meta_tags.confidence,
 not the retrieval score. A shard that scores high on relevance but has low
@@ -212,3 +218,159 @@ def hook_recall(
         log_shard_access(r["shard_id"], "hook_recall")
 
     return results
+
+
+# ═══════════════════════════════════════════════════════════
+# CACHE PREWARM
+# ═══════════════════════════════════════════════════════════
+
+_PREWARM_HEADER = (
+    "You are working within NOVA, a persistent shard-based cognitive memory system.\n"
+    "The following are pre-loaded high-confidence memory shards for this session.\n"
+    "Draw on this context before reaching for new information.\n\n"
+)
+
+_PREWARM_SHARD_TEMPLATE = (
+    "---\n"
+    "[SHARD: {shard_id} | confidence: {confidence} | theme: {theme}]\n"
+    "Q: {guiding_question}\n"
+    "Summary: {summary}\n"
+)
+
+
+def build_prewarm_context(
+    top_n: int = 20,
+    project_context: str | None = None,
+    min_confidence: float = 0.6,
+) -> tuple[str, list[str]]:
+    """
+    Select top-N shards by confidence and assemble a summary-only system prompt.
+
+    Returns (system_prompt_str, shard_ids_included).
+
+    The returned string is deterministic for the same shard state — pass it
+    with cache_control on every real request to get cache reads after the
+    initial prewarm write.
+    """
+    index = load_index()
+
+    eligible = {
+        sid: entry for sid, entry in index.items()
+        if entry.get("confidence", 1.0) >= min_confidence
+        and "archived" not in entry.get("tags", [])
+        and "forgotten" not in entry.get("tags", [])
+        and passes_state_gate(entry, project_context or NOVA_PROJECT_CONTEXT)
+    }
+
+    sorted_shards = sorted(
+        eligible.items(),
+        key=lambda kv: kv[1].get("confidence", 0.0),
+        reverse=True,
+    )[:top_n]
+
+    blocks = [_PREWARM_HEADER]
+    shard_ids: list[str] = []
+
+    for shard_id, entry in sorted_shards:
+        meta = entry.get("meta", {}) or entry.get("meta_tags", {})
+        summary = (
+            meta.get("summary", "")
+            or entry.get("context_summary", "")
+            or entry.get("guiding_question", "")[:200]
+        )
+        block = _PREWARM_SHARD_TEMPLATE.format(
+            shard_id=shard_id,
+            confidence=round(entry.get("confidence", 1.0), 3),
+            theme=meta.get("theme", "general"),
+            guiding_question=entry.get("guiding_question", "")[:200],
+            summary=summary[:300],
+        )
+        blocks.append(block)
+        shard_ids.append(shard_id)
+
+    return "".join(blocks), shard_ids
+
+
+def prewarm_session_context(
+    model: str = "",
+    top_n: int = 20,
+    project_context: str | None = None,
+    min_confidence: float = 0.6,
+) -> dict:
+    """
+    Build the session context prompt and fire a max_tokens=0 cache-prewarm
+    request against the Anthropic API.
+
+    Returns a result dict:
+        system_prompt      str   — the exact string to reuse in subsequent calls
+        shard_ids          list  — shard IDs included in the prompt
+        token_count        int   — estimated characters (not tokens)
+        cache_write_tokens int   — cache_creation_input_tokens from the API
+        skipped            bool  — True when CLAUDE_API_KEY absent or no shards
+        skip_reason        str   — human-readable explanation when skipped
+
+    The caller must pass system_prompt back into every subsequent API call
+    with the same cache_control block to get cache reads:
+
+        system=[{"type": "text", "text": result["system_prompt"],
+                 "cache_control": {"type": "ephemeral"}}]
+    """
+    from config import CLAUDE_API_KEY, MUNINN_MODEL
+
+    target_model = model or MUNINN_MODEL
+
+    if not CLAUDE_API_KEY:
+        return {
+            "system_prompt": "",
+            "shard_ids": [],
+            "token_count": 0,
+            "cache_write_tokens": 0,
+            "skipped": True,
+            "skip_reason": "CLAUDE_API_KEY not set — running in local-only mode",
+        }
+
+    system_prompt, shard_ids = build_prewarm_context(
+        top_n=top_n,
+        project_context=project_context,
+        min_confidence=min_confidence,
+    )
+
+    if not shard_ids:
+        return {
+            "system_prompt": "",
+            "shard_ids": [],
+            "token_count": 0,
+            "cache_write_tokens": 0,
+            "skipped": True,
+            "skip_reason": f"No shards cleared confidence floor {min_confidence}",
+        }
+
+    import anthropic
+    import httpx
+
+    client = anthropic.Anthropic(
+        api_key=CLAUDE_API_KEY,
+        timeout=httpx.Timeout(30.0, connect=5.0),
+    )
+
+    response = client.messages.create(
+        model=target_model,
+        max_tokens=0,
+        system=[{
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{"role": "user", "content": "warmup"}],
+    )
+
+    cache_write = getattr(response.usage, "cache_creation_input_tokens", 0)
+
+    return {
+        "system_prompt": system_prompt,
+        "shard_ids": shard_ids,
+        "token_count": len(system_prompt),
+        "cache_write_tokens": cache_write,
+        "skipped": False,
+        "skip_reason": "",
+    }
