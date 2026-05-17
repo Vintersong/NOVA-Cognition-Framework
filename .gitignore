@@ -11,6 +11,8 @@ summary_index.md
 nova_usage.jsonl
 nova_autoresearch.jsonl
 shard_access.jsonl
+bench_retrieval.jsonl
+bench/
 
 # SQLite databases — runtime artifacts, never commit
 skill_audit.db*
