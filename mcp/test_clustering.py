@@ -19,7 +19,7 @@ from clustering import (
     _stable_labels,
     _connected_components,
 )
-from recall import _collapse_cluster_siblings
+from recall import _walk_topk_with_cluster_collapse
 
 
 def _graph(*relations, entities=None) -> dict:
@@ -149,37 +149,46 @@ class TestDetectCommunities(unittest.TestCase):
         self.assertEqual(largest, "c0")
 
 
-class TestCollapseClusterSiblings(unittest.TestCase):
+class TestWalkTopkWithClusterCollapse(unittest.TestCase):
 
-    def _idx(self, shard_id, cluster_id=None) -> dict:
-        meta = {}
+    def _eligible(self, shard_id, cluster_id=None) -> dict:
+        meta: dict = {"summary": ""}
         if cluster_id:
             meta["cluster_id"] = cluster_id
-        return {shard_id: {"meta": meta}}
-
-    def _result(self, shard_id, score=0.9) -> dict:
-        return {"shard_id": shard_id, "score": score, "summary": "", "confidence": 1.0, "guiding_question": ""}
+        return {shard_id: {"meta": meta, "guiding_question": "", "confidence": 1.0}}
 
     def test_no_clusters_unchanged(self):
-        results = [self._result("a"), self._result("b")]
-        index = {**self._idx("a"), **self._idx("b")}
-        out = _collapse_cluster_siblings(results, index)
+        eligible = {**self._eligible("a"), **self._eligible("b")}
+        scored = [("a", 0.9), ("b", 0.8)]
+        out = _walk_topk_with_cluster_collapse(scored, eligible, top_k=3)
         self.assertEqual(len(out), 2)
         self.assertNotIn("cluster_siblings", out[0])
 
     def test_siblings_collapsed(self):
-        results = [self._result("a", 0.9), self._result("b", 0.8)]
-        index = {**self._idx("a", "c0"), **self._idx("b", "c0")}
-        out = _collapse_cluster_siblings(results, index)
+        eligible = {**self._eligible("a", "c0"), **self._eligible("b", "c0")}
+        scored = [("a", 0.9), ("b", 0.8)]
+        out = _walk_topk_with_cluster_collapse(scored, eligible, top_k=3)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["shard_id"], "a")
         self.assertIn("b", out[0]["cluster_siblings"])
 
     def test_different_clusters_kept_separate(self):
-        results = [self._result("a"), self._result("b")]
-        index = {**self._idx("a", "c0"), **self._idx("b", "c1")}
-        out = _collapse_cluster_siblings(results, index)
+        eligible = {**self._eligible("a", "c0"), **self._eligible("b", "c1")}
+        scored = [("a", 0.9), ("b", 0.8)]
+        out = _walk_topk_with_cluster_collapse(scored, eligible, top_k=3)
         self.assertEqual(len(out), 2)
+
+    def test_walk_backfills_when_top_results_cluster(self):
+        eligible = {
+            **self._eligible("a", "c0"),
+            **self._eligible("b", "c0"),
+            **self._eligible("c", "c1"),
+        }
+        scored = [("a", 0.9), ("b", 0.85), ("c", 0.8)]
+        out = _walk_topk_with_cluster_collapse(scored, eligible, top_k=2)
+        ids = [r["shard_id"] for r in out]
+        self.assertEqual(ids, ["a", "c"])
+        self.assertEqual(out[0]["cluster_siblings"], ["b"])
 
 
 if __name__ == "__main__":
