@@ -114,40 +114,59 @@ def _local_score(query: str, index: dict) -> list[tuple[str, float]]:
 
 
 # ═══════════════════════════════════════════════════════════
-# CLUSTER COLLAPSE
+# CLUSTER-AWARE TOP-K WALK
 # ═══════════════════════════════════════════════════════════
 
-def _collapse_cluster_siblings(
-    results: list[dict],
-    index: dict,
+def _walk_topk_with_cluster_collapse(
+    scored: list[tuple[str, float]],
+    eligible: dict,
+    top_k: int,
 ) -> list[dict]:
     """
-    If multiple top results share a cluster_id, keep only the highest-scoring
-    one and attach a cluster_siblings list to it (other shard_ids in the cluster
-    that were in the result set). Shards without a cluster_id are kept as-is.
-    """
-    seen_clusters: dict[str, int] = {}  # cluster_id -> index of kept result
-    collapsed: list[dict] = []
+    Walk the scored shard list in rank order and build up to top_k distinct
+    cluster representatives.
 
-    for r in results:
-        shard_id = r["shard_id"]
-        cluster_id = index.get(shard_id, {}).get("meta", {}).get("cluster_id")
-        if not cluster_id:
-            collapsed.append(r)
+    The first time a cluster is encountered, the shard becomes the
+    representative and gets an empty ``cluster_siblings`` list. Subsequent
+    shards in the same cluster are appended to the representative's siblings
+    list and do not consume a top-k slot — the walk continues until top_k
+    distinct cluster representatives have been collected.
+
+    Shards without ``cluster_id`` count as their own cluster (no collapse).
+
+    Returns the result dict list (same shape as the legacy collapse output).
+    """
+    results: list[dict] = []
+    seen_clusters: dict[str, int] = {}  # cluster_id -> index into results
+
+    for shard_id, score in scored:
+        if len(results) >= top_k:
+            break
+
+        entry = eligible[shard_id]
+        meta = entry.get("meta", {})
+        cluster_id = meta.get("cluster_id")
+
+        if cluster_id and cluster_id in seen_clusters:
+            kept_idx = seen_clusters[cluster_id]
+            results[kept_idx]["cluster_siblings"].append(shard_id)
             continue
 
-        if cluster_id not in seen_clusters:
-            r = dict(r)
-            r["cluster_id"] = cluster_id
-            r["cluster_siblings"] = []
-            seen_clusters[cluster_id] = len(collapsed)
-            collapsed.append(r)
-        else:
-            # Append as sibling to the already-kept result for this cluster.
-            kept_idx = seen_clusters[cluster_id]
-            collapsed[kept_idx]["cluster_siblings"].append(shard_id)
+        summary = meta.get("summary", "") or entry.get("guiding_question", "")[:200]
+        result = {
+            "shard_id": shard_id,
+            "summary": summary,
+            "confidence": round(entry.get("confidence", 1.0), 4),
+            "score": round(score, 4),
+            "guiding_question": entry.get("guiding_question", ""),
+        }
+        if cluster_id:
+            result["cluster_id"] = cluster_id
+            result["cluster_siblings"] = []
+            seen_clusters[cluster_id] = len(results)
+        results.append(result)
 
-    return collapsed
+    return results
 
 
 # ═══════════════════════════════════════════════════════════
@@ -194,23 +213,7 @@ def hook_recall(
         return []
 
     scored = _local_score(query, eligible)
-    top = scored[:top_k]
-
-    results = []
-    for shard_id, score in top:
-        entry = eligible[shard_id]
-        meta = entry.get("meta", {})
-        # Prefer the Step 1 50-token summary; fall back to guiding question excerpt
-        summary = meta.get("summary", "") or entry.get("guiding_question", "")[:200]
-        results.append({
-            "shard_id": shard_id,
-            "summary": summary,
-            "confidence": round(entry.get("confidence", 1.0), 4),
-            "score": round(score, 4),
-            "guiding_question": entry.get("guiding_question", ""),
-        })
-
-    results = _collapse_cluster_siblings(results, eligible)
+    results = _walk_topk_with_cluster_collapse(scored, eligible, top_k)
 
     _cache_set(key, results)
 
