@@ -108,6 +108,14 @@ WIKI_INDEX_FILE   = os.environ.get("NOVA_WIKI_INDEX",   str(_REPO_ROOT / "wiki_i
 WIKI_ROUTING_MODEL   = os.environ.get("NOVA_WIKI_ROUTING_MODEL",   "claude-haiku-4-5-20251001")
 WIKI_SYNTHESIS_MODEL = os.environ.get("NOVA_WIKI_SYNTHESIS_MODEL", "claude-sonnet-4-6")
 
+# ── Embedding integrity (VectorPin) ──────────────────────────────────────────
+# HMAC-SHA256 key for signing/verifying embedding vectors.
+# Unset → signing disabled; existing deployments are unaffected.
+NOVA_EMBEDDING_HMAC_KEY = os.environ.get("NOVA_EMBEDDING_HMAC_KEY", "")
+EMBEDDING_INTEGRITY_LOG = os.environ.get(
+    "NOVA_EMBEDDING_INTEGRITY_LOG", str(_REPO_ROOT / "embedding_integrity.jsonl")
+)
+
 # ── Skill verification layer ──────────────────────────────────────────────────
 # SQLite audit log for HITL lifecycle events (irreversible.request/decision/executed,
 # capability.denied) and post-session biconditional checks.
