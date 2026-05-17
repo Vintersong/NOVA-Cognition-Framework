@@ -258,7 +258,6 @@ Should be extracted to a shared utility (e.g., `mcp/math_utils.py`).
 
 ## Brief files (prompts used to generate this doc set)
 
-| File | What it describes |
-|---|---|
-| [mcp_brief.md](mcp_brief.md) | Instructions used to generate all 25 `mcp/` design docs |
-| [utilities_brief.md](utilities_brief.md) | Instructions used to generate all 10 `utilities/` design docs |
+Archived under [`../archive/design/`](../archive/design/):
+- `mcp_brief.md` — instructions used to generate all 25 `mcp/` design docs
+- `utilities_brief.md` — instructions used to generate all 10 `utilities/` design docs
