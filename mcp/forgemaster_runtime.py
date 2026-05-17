@@ -27,7 +27,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from config import HUGINN_MODEL, MUNINN_MODEL, GEMINI_MODEL, SHARD_DIR
+from config import (
+    HUGINN_MODEL,
+    MUNINN_MODEL,
+    GEMINI_MODEL,
+    SHARD_DIR,
+    FORGEMASTER_ORCHESTRATOR_MODEL,
+    FORGEMASTER_PLANNER_MODEL,
+    FORGEMASTER_REVIEWER_MODEL,
+    FORGEMASTER_IMPLEMENTER_MODEL,
+)
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
 from graph import add_corroborated_by
@@ -84,12 +93,14 @@ _COMPLEX_KEYWORDS: frozenset[str] = frozenset({
     "tracing", "profiling", "concurrency",
 })
 
-# Role-to-model mapping for the 4-turn sprint pipeline.
+# Role-to-model mapping for the 4-turn sprint pipeline. Each role resolves
+# through its FORGEMASTER_*_MODEL env var (see config.py), which falls back
+# to MUNINN_MODEL / GEMINI_MODEL when unset.
 _ROLE_TO_MODEL: dict[str, str] = {
-    "orchestrator": MUNINN_MODEL,
-    "planner":      MUNINN_MODEL,
-    "implementer":  GEMINI_MODEL,
-    "reviewer":     MUNINN_MODEL,
+    "orchestrator": FORGEMASTER_ORCHESTRATOR_MODEL,
+    "planner":      FORGEMASTER_PLANNER_MODEL,
+    "implementer":  FORGEMASTER_IMPLEMENTER_MODEL,
+    "reviewer":     FORGEMASTER_REVIEWER_MODEL,
 }
 
 # Optional event log — one JSONL line per LLM call.
