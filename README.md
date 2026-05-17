@@ -85,6 +85,53 @@ You (design doc / feature request)
 
 ---
 
+## Architecture Diagram
+
+```mermaid
+graph TD
+    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"36 tool calls"| B["nova_server.py\nMCP Adapter"]
+
+    B --> C
+    B -->|"nova_shard_interact"| R
+    B --> D
+
+    subgraph C["NOVA Memory Layer"]
+        C1["store.py\nShard I/O"] --- C2["graph.py\nKnowledge Graph"]
+        C1 --- C3["wiki_tools.py\nWiki Layer"]
+        C1 --- C4["facts.py\nFacts Corpus"]
+    end
+
+    C1 -->|"nova_shard_index.db"| E[("SQLite Index")]
+    C4 -->|"facts_index.db"| E
+
+    subgraph R["Ravens Retrieval Pipeline"]
+        R1["HUGINN\nHaiku fast pass"] -->|"score ≥ threshold"| R3["Result"]
+        R1 -->|"score < threshold"| R2["MUNINN\nSonnet deep rerank"]
+        R2 --> R3
+        R2 --> R4["Spreading Activation\nGraph BFS third pass"]
+        R4 --> R3
+    end
+
+    subgraph N["NÓTT Daemon"]
+        N1["Decay"] --> N2["Compaction"]
+        N2 --> N3["Merge Scan"]
+        N3 --> N4["Adversarial Pass"]
+    end
+
+    N -->|"scheduled maintenance"| C1
+    ND["Nidhogg\nRepo Ingestion"] --> C1
+
+    subgraph FM["Forgemaster Model Routing"]
+        FM1["Sonnet\nArchitecture / Review"]
+        FM2["Gemini Flash\nImplementation"]
+        FM3["Haiku\nResearch / Docs"]
+    end
+
+    D["Forgemaster\nSprint Orchestrator"] --> FM
+```
+
+---
+
 ## Quick Start
 
 ### 1. Install dependencies
@@ -430,6 +477,8 @@ Read-only resources exposed alongside the tools:
 
 ## Key Environment Variables
 
+> For the complete 56-variable reference with impact explanations, see [docs/CONFIG.md](docs/CONFIG.md).
+
 | Variable | Default | Notes |
 |---|---|---|
 | `NOVA_SHARD_DIR` | `shards` | Path to shard JSON files |
@@ -467,6 +516,18 @@ Read-only resources exposed alongside the tools:
 | `NOVA_ACTIVATION_MIN_EDGES` | `10` | Minimum graph edges required to run spreading activation |
 | `NOVA_EMBEDDING_HMAC_KEY` | — | Hex or UTF-8 secret for HMAC-SHA256 embedding signing; if unset, signing is skipped |
 | `NOVA_EMBEDDING_INTEGRITY_LOG` | `embedding_integrity.jsonl` | Path for adversarial embedding event log |
+
+---
+
+## Error Handling
+
+| Scenario | Behavior |
+|---|---|
+| `CLAUDE_API_KEY` absent | HUGINN and MUNINN silently fall back to local-only retrieval (token overlap + cosine over local all-MiniLM-L6-v2 embeddings). No error is raised; retrieval quality is reduced. |
+| HMAC signature mismatch | The embedding is rejected before MUNINN reranking. The event is written to `embedding_integrity.jsonl` (shard ID, timestamp, expected vs. actual signature). Retrieval continues without the tainted vector. |
+| MCP client disconnection | The server continues running. The stop hook (`nova_hook_stop.py`) flushes active session state to `nova_sessions/` so the next `nova_session_load` can resume where the session left off. |
+| API rate limit / timeout | `RAVEN_API_TIMEOUT` (default `10`s) controls the per-call LLM timeout. On timeout, the MUNINN step is skipped and HUGINN's local-pass result is returned. For the Gemini lane, `CONFIDENCE_THRESHOLD` (default `0.65`) determines when Gemini escalates the ticket to Sonnet rather than retrying. |
+| Shard fails adversarial pass | The shard is quarantined for `NOVA_QUARANTINE_HOURS` (default `48`h). During quarantine its retrieval score is multiplied by `NOVA_QUARANTINE_PENALTY` (default `0.5`) and it is excluded from default search. It graduates automatically if the next NÓTT adversarial pass clears it. |
 
 ---
 
