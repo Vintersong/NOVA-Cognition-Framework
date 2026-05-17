@@ -189,7 +189,7 @@ def enrich_shard(shard_id: str, shard_data: dict):
 
         # Sign the embedding vector for later integrity verification.
         from embedding_integrity import sign_embedding, EMBEDDING_SIG_FIELD
-        embedding_sig = sign_embedding(embedding)
+        embedding_sig = sign_embedding(embedding) if embedding is not None else None
 
         ctx: dict = {
             "summary": guiding_question,  # use guiding question as summary
