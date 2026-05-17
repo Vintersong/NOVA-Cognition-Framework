@@ -184,7 +184,7 @@ def _call_anthropic(
     return text, in_tok, out_tok, latency_ms
 
 
-def _call_gemini(prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, int]:
+def _call_gemini(prompt: str, model: str = GEMINI_MODEL, max_tokens: int = 4096) -> tuple[str, int, int, int]:
     """
     Call Gemini with a single prompt.
 
@@ -201,7 +201,7 @@ def _call_gemini(prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, in
 
     t0 = time.time()
     client = genai.Client(api_key=key)
-    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    response = client.models.generate_content(model=model, contents=prompt)
     text = response.text or ""
     usage = getattr(response, "usage_metadata", None)
     in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
@@ -229,7 +229,7 @@ def _dispatch(
     if provider == "anthropic":
         text, in_tok, out_tok, lat = _call_anthropic(model, prompt, cached_system=cached_system)
     elif provider == "google":
-        text, in_tok, out_tok, lat = _call_gemini(prompt)
+        text, in_tok, out_tok, lat = _call_gemini(prompt, model=model)
     else:
         raise ValueError(f"Unknown model family for role={role!r}: {model!r}")
     return text, model, in_tok, out_tok, lat
