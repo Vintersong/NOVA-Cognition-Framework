@@ -488,6 +488,10 @@ Read-only resources exposed alongside the tools:
 | `RAVEN_API_TIMEOUT` | `10` | Per-call LLM timeout (seconds) before local fallback |
 | `GEMINI_API_KEY` | — | Required for Gemini worker |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Implementation lane model |
+| `FORGEMASTER_ORCHESTRATOR_MODEL` | inherits `MUNINN_MODEL` | Override the orchestrator role's model — set to an Opus alias on high-stakes sprints |
+| `FORGEMASTER_PLANNER_MODEL` | inherits `MUNINN_MODEL` | Override the planner role's model |
+| `FORGEMASTER_REVIEWER_MODEL` | inherits `MUNINN_MODEL` | Override the reviewer role's model |
+| `FORGEMASTER_IMPLEMENTER_MODEL` | inherits `GEMINI_MODEL` | Override the implementer role's model; `claude-*` IDs route to Anthropic automatically |
 | `NOVA_COMPACT_THRESHOLD` | `30` | Turns before auto-compaction |
 | `NOVA_COMPACT_KEEP` | `15` | Recent turns retained after compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |

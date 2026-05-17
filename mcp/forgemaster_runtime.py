@@ -27,7 +27,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from config import HUGINN_MODEL, MUNINN_MODEL, GEMINI_MODEL, SHARD_DIR
+from config import (
+    HUGINN_MODEL,
+    MUNINN_MODEL,
+    GEMINI_MODEL,
+    SHARD_DIR,
+    FORGEMASTER_ORCHESTRATOR_MODEL,
+    FORGEMASTER_PLANNER_MODEL,
+    FORGEMASTER_REVIEWER_MODEL,
+    FORGEMASTER_IMPLEMENTER_MODEL,
+)
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
 from graph import add_corroborated_by
@@ -84,12 +93,14 @@ _COMPLEX_KEYWORDS: frozenset[str] = frozenset({
     "tracing", "profiling", "concurrency",
 })
 
-# Role-to-model mapping for the 4-turn sprint pipeline.
+# Role-to-model mapping for the 4-turn sprint pipeline. Each role resolves
+# through its FORGEMASTER_*_MODEL env var (see config.py), which falls back
+# to MUNINN_MODEL / GEMINI_MODEL when unset.
 _ROLE_TO_MODEL: dict[str, str] = {
-    "orchestrator": MUNINN_MODEL,
-    "planner":      MUNINN_MODEL,
-    "implementer":  GEMINI_MODEL,
-    "reviewer":     MUNINN_MODEL,
+    "orchestrator": FORGEMASTER_ORCHESTRATOR_MODEL,
+    "planner":      FORGEMASTER_PLANNER_MODEL,
+    "implementer":  FORGEMASTER_IMPLEMENTER_MODEL,
+    "reviewer":     FORGEMASTER_REVIEWER_MODEL,
 }
 
 # Optional event log — one JSONL line per LLM call.
@@ -173,7 +184,7 @@ def _call_anthropic(
     return text, in_tok, out_tok, latency_ms
 
 
-def _call_gemini(prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, int]:
+def _call_gemini(prompt: str, model: str = GEMINI_MODEL, max_tokens: int = 4096) -> tuple[str, int, int, int]:
     """
     Call Gemini with a single prompt.
 
@@ -190,7 +201,7 @@ def _call_gemini(prompt: str, max_tokens: int = 4096) -> tuple[str, int, int, in
 
     t0 = time.time()
     client = genai.Client(api_key=key)
-    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    response = client.models.generate_content(model=model, contents=prompt)
     text = response.text or ""
     usage = getattr(response, "usage_metadata", None)
     in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
@@ -218,7 +229,7 @@ def _dispatch(
     if provider == "anthropic":
         text, in_tok, out_tok, lat = _call_anthropic(model, prompt, cached_system=cached_system)
     elif provider == "google":
-        text, in_tok, out_tok, lat = _call_gemini(prompt)
+        text, in_tok, out_tok, lat = _call_gemini(prompt, model=model)
     else:
         raise ValueError(f"Unknown model family for role={role!r}: {model!r}")
     return text, model, in_tok, out_tok, lat

@@ -135,6 +135,10 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 | Variable | Default | Impact |
 |---|---|---|
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used for the implementation lane. Swap to a newer Flash model to pick up capability improvements. |
+| `FORGEMASTER_ORCHESTRATOR_MODEL` | inherits `MUNINN_MODEL` | Model used by the orchestrator role (task decomposition + ticket routing). Defaults to Sonnet. Set to an Opus model alias on high-stakes sprints where mis-routing a ticket would cascade into many review iterations downstream — orchestrator output multiplies across every downstream ticket, so the upgrade is high-leverage spend. |
+| `FORGEMASTER_PLANNER_MODEL`      | inherits `MUNINN_MODEL` | Model used by the planner role (expanding the orchestrator's decomposition into concrete steps). Defaults to Sonnet. Opus pays off less here than at the orchestrator, but is the right choice when the planner is the bottleneck on ambiguous specs. |
+| `FORGEMASTER_REVIEWER_MODEL`     | inherits `MUNINN_MODEL` | Model used by the reviewer role (spec + quality review). Defaults to Sonnet. Set to an Opus model alias when catching subtle correctness issues matters more than throughput — e.g. before a release cut. |
+| `FORGEMASTER_IMPLEMENTER_MODEL`  | inherits `GEMINI_MODEL` | Model used by the implementer role. Defaults to Gemini Flash. Override only when you specifically want an Anthropic model writing code (e.g. languages/frameworks where Flash underperforms). The `_dispatch` provider detection routes `claude-*` IDs to Anthropic and `gemini-*` IDs to Google automatically, so cross-provider overrides work without extra wiring. |
 | `FORGEMASTER_EVENT_LOG` | *(unset)* | Override path for the sprint JSONL event log. Defaults to `output/forgemaster_runs/<sprint_id>.jsonl` (read directly by `forgemaster_runtime.py`). |
 
 ---

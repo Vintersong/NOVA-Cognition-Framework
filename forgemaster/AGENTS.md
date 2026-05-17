@@ -50,6 +50,10 @@ Multi-agent orchestration layer built on NOVA cognitive memory.
 | Boilerplate, formatting, deterministic output | gemini-flash |
 | Code review, quality judgment | claude-sonnet |
 
+### Per-role model overrides
+
+The role→model mapping in `mcp/forgemaster_runtime.py:_ROLE_TO_MODEL` resolves through four env vars (`FORGEMASTER_ORCHESTRATOR_MODEL`, `FORGEMASTER_PLANNER_MODEL`, `FORGEMASTER_REVIEWER_MODEL`, `FORGEMASTER_IMPLEMENTER_MODEL`) declared in `mcp/config.py`. Unset, they fall back to `MUNINN_MODEL` (the three Anthropic roles) and `GEMINI_MODEL` (implementer) — i.e. current behavior. Point any role at an Opus alias on high-stakes sprints; the orchestrator and reviewer are the two roles where the cost premium pays for itself most reliably. The HeavySkill stage-2 escalation in `forgemaster/skills/forgemaster-heavyskill.md` is a separate, complementary mechanism — it applies inside K-thinker deliberation, not at the sprint role level.
+
 ## NOVA Integration
 Every sprint starts with: nova_shard_interact (load project context)
 Every sprint ends with: nova_shard_update (write decisions made)

@@ -90,6 +90,15 @@ HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-4-5-202510
 MUNINN_MODEL      = os.environ.get("MUNINN_MODEL",      "claude-sonnet-4-6")
 GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-flash")
 
+# Forgemaster per-role model overrides. Default to MUNINN_MODEL for the
+# Anthropic roles and GEMINI_MODEL for the implementer so behavior is unchanged
+# when these are unset. Point a single role at a different model (e.g. an Opus
+# alias for the orchestrator on high-stakes sprints) without rebuilding.
+FORGEMASTER_ORCHESTRATOR_MODEL = os.environ.get("FORGEMASTER_ORCHESTRATOR_MODEL", MUNINN_MODEL)
+FORGEMASTER_PLANNER_MODEL      = os.environ.get("FORGEMASTER_PLANNER_MODEL",      MUNINN_MODEL)
+FORGEMASTER_REVIEWER_MODEL     = os.environ.get("FORGEMASTER_REVIEWER_MODEL",     MUNINN_MODEL)
+FORGEMASTER_IMPLEMENTER_MODEL  = os.environ.get("FORGEMASTER_IMPLEMENTER_MODEL",  GEMINI_MODEL)
+
 # ── Input validation patterns ──────────────────────────────────────────────────
 # Session IDs are persisted as filenames: keep strict and portable.
 # 1-128 chars total, start alnum, then alnum / dot / underscore / dash.
