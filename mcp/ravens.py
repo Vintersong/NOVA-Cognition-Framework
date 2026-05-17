@@ -515,6 +515,9 @@ class Muninn:
             if _bench_log:
                 try:
                     _bench_size = os.environ.get("NOVA_BENCH_CORPUS_SIZE")
+                    # Field set mirrors tests/bench_corpus.py BenchTimer.__exit__
+                    # so every JSONL row has the same key shape — defensive
+                    # against report logic that uses direct key access.
                     with open(_bench_log, "a", encoding="utf-8") as _fh:
                         _fh.write(json.dumps({
                             "ts": datetime.now().isoformat(),
@@ -524,6 +527,11 @@ class Muninn:
                             "duration_ms": (time.perf_counter() - _bench_t0) * 1000,
                             "candidates_in": _bench_in,
                             "candidates_out": len(result.shard_ids),
+                            "recall_at_5": None,
+                            "recall_at_10": None,
+                            "huginn_called": None,
+                            "muninn_called": None,
+                            "muninn_candidates": None,
                             "in_live_pipeline": True,
                         }) + "\n")
                 except Exception:
