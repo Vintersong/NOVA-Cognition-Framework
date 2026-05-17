@@ -187,14 +187,22 @@ def enrich_shard(shard_id: str, shard_data: dict):
                      'than', 'some', 'more', 'also', 'just', 'your', 'like'}
         keywords = list(dict.fromkeys([w for w in words if w not in stopwords]))[:6]
 
-        shard_data["context"] = {
+        # Sign the embedding vector for later integrity verification.
+        from embedding_integrity import sign_embedding, EMBEDDING_SIG_FIELD
+        embedding_sig = sign_embedding(embedding)
+
+        ctx: dict = {
             "summary": guiding_question,  # use guiding question as summary
             "topics": keywords,
             "conversation_type": shard_data.get("meta_tags", {}).get("intent", "general"),
             "embedding": embedding,
             "last_context_update": datetime.now().isoformat(),
-            "embedding_model": "all-MiniLM-L6-v2"
+            "embedding_model": "all-MiniLM-L6-v2",
         }
+        if embedding_sig is not None:
+            ctx[EMBEDDING_SIG_FIELD] = embedding_sig
+
+        shard_data["context"] = ctx
         shard_data["meta_tags"]["enrichment_status"] = "enriched_local"
 
     except Exception as e:

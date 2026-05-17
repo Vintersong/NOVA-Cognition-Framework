@@ -38,6 +38,7 @@ _FRONTMATTER_FIELDS = [
     "valence", "arousal", "provenance", "cluster_id",
     "context_topics", "context_summary",
     "enrichment_status", "last_compacted",
+    "embedding_sig",
 ]
 
 
@@ -70,6 +71,7 @@ def shard_to_md(data: dict) -> str:
         "context_summary": context.get("summary", ""),
         "enrichment_status": meta.get("enrichment_status", "pending"),
         "last_compacted":  meta.get("last_compacted"),
+        "embedding_sig":   context.get("embedding_sig"),
     }
     # Strip None-valued optional keys to keep frontmatter terse
     fm = {k: v for k, v in fm.items() if v is not None or k in (
@@ -170,6 +172,9 @@ def md_to_shard(text: str, shard_id: str = "") -> dict:
         "conversation_type": fm.get("intent", "reflection"),
         # embedding intentionally absent — regenerated on demand
     }
+    # Restore signature if present so Arrow cache can verify on rebuild.
+    if fm.get("embedding_sig"):
+        context["embedding_sig"] = fm["embedding_sig"]
 
     # ── Reconstruct conversation_history from body ────────────────────────
     history = _parse_body_turns(body_raw)

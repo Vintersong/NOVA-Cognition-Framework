@@ -64,6 +64,7 @@ if ARROW_AVAILABLE:
         pa.field("mtime_ns",            pa.int64(),                             nullable=False),
         pa.field("meta_tags_json",      pa.string(),                            nullable=True),
         pa.field("context_extras_json", pa.string(),                            nullable=True),
+        pa.field("embedding_sig",       pa.string(),                            nullable=True),
     ])
 else:
     SCHEMA = None  # type: ignore[assignment]
@@ -120,6 +121,8 @@ class ArrowShardCache:
         self._table = None
         self._embedding_norm = None        # (N, 384) float32, L2-normalised; zero rows for missing
         self._has_embedding = None          # (N,) bool
+        self._sig_verified = None           # (N,) bool; True when sig is absent or matches
+        self._integrity_failures: dict[str, dict] = {}  # shard_id → failure diagnostic
         self._shard_id_to_row: dict[str, int] = {}
         self._index_mtime_ns: int | None = None
 
@@ -156,6 +159,8 @@ class ArrowShardCache:
             self._table = None
             self._embedding_norm = None
             self._has_embedding = None
+            self._sig_verified = None
+            self._integrity_failures = {}
             self._shard_id_to_row = {}
             self._index_mtime_ns = None
 
@@ -190,6 +195,16 @@ class ArrowShardCache:
 
         rescored: list[tuple[str, float, str]] = []
         for shard_id in candidate_ids:
+            # Reject embeddings that failed signature verification at cache-build time.
+            if shard_id in self._integrity_failures:
+                huginn_score = float(huginn_scores.get(shard_id, 0.0))
+                rescored.append((
+                    shard_id,
+                    huginn_score * 0.8,
+                    "embedding_sig_failure: excluded from cosine rerank",
+                ))
+                continue
+
             row = self._shard_id_to_row.get(shard_id)
             if row is None or not bool(self._has_embedding[row]):
                 huginn_score = float(huginn_scores.get(shard_id, 0.0))
@@ -376,8 +391,17 @@ class ArrowShardCache:
         mtimes: list[int] = []
         meta_tags_json: list[str | None] = []
         context_extras_json: list[str | None] = []
+        embedding_sig_col: list[str | None] = []
         embedding_rows: list[Any] = []
         has_embedding: list[bool] = []
+        sig_verified: list[bool] = []
+        new_integrity_failures: dict[str, dict] = {}
+
+        try:
+            from embedding_integrity import verify_embedding, sign_embedding, log_integrity_failure
+            _integrity_available = True
+        except ImportError:
+            _integrity_available = False
 
         shard_dir = Path(self.shard_dir)
 
@@ -403,15 +427,42 @@ class ArrowShardCache:
             shard_ids.append(shard_id)
             guiding_questions.append(data.get("guiding_question"))
 
+            sig = context.get("embedding_sig")
+            embedding_sig_col.append(sig if isinstance(sig, str) else None)
+
             if isinstance(embedding, list) and len(embedding) == EMBEDDING_DIM:
-                emb_array = np.asarray(embedding, dtype=np.float32)
-                embeddings.append([float(x) for x in embedding])
-                embedding_rows.append(emb_array)
-                has_embedding.append(True)
+                # Verify signature when present and integrity module is available.
+                verified = True
+                if _integrity_available and sig is not None:
+                    verified = verify_embedding(embedding, sig)
+                    if not verified:
+                        computed = sign_embedding(embedding)
+                        log_integrity_failure(
+                            shard_id, sig, computed, "arrow_cache_build"
+                        )
+                        new_integrity_failures[shard_id] = {
+                            "stored_sig": sig,
+                            "computed_sig": computed,
+                            "detected_at": "arrow_cache_build",
+                        }
+
+                if verified:
+                    emb_array = np.asarray(embedding, dtype=np.float32)
+                    embeddings.append([float(x) for x in embedding])
+                    embedding_rows.append(emb_array)
+                    has_embedding.append(True)
+                    sig_verified.append(True)
+                else:
+                    # Treat corrupted embedding as missing; zero row for matrix.
+                    embeddings.append(None)
+                    embedding_rows.append(np.zeros(EMBEDDING_DIM, dtype=np.float32))
+                    has_embedding.append(False)
+                    sig_verified.append(False)
             else:
                 embeddings.append(None)
                 embedding_rows.append(np.zeros(EMBEDDING_DIM, dtype=np.float32))
                 has_embedding.append(False)
+                sig_verified.append(True)  # no embedding → nothing to verify
 
             confidences.append(float(meta.get("confidence", 1.0) or 1.0))
             last_used.append(_ts_to_dt(meta.get("last_used")))
@@ -436,7 +487,7 @@ class ArrowShardCache:
                 meta_tags_json.append(None)
             context_extras = {
                 k: v for k, v in context.items()
-                if k not in {"embedding", "topics", "summary"}
+                if k not in {"embedding", "topics", "summary", "embedding_sig"}
             }
             try:
                 context_extras_json.append(json.dumps(context_extras, default=str))
@@ -464,6 +515,7 @@ class ArrowShardCache:
             pa.array(mtimes,                type=pa.int64()),
             pa.array(meta_tags_json,        type=pa.string()),
             pa.array(context_extras_json,   type=pa.string()),
+            pa.array(embedding_sig_col,     type=pa.string()),
         ]
         self._table = pa.Table.from_arrays(columns, schema=SCHEMA)
 
@@ -473,12 +525,16 @@ class ArrowShardCache:
         safe_norms = np.where(norms == 0.0, 1.0, norms)
         self._embedding_norm = (emb_matrix / safe_norms).astype(np.float32, copy=False)
         self._has_embedding = np.asarray(has_embedding, dtype=bool)
+        self._sig_verified = np.asarray(sig_verified, dtype=bool)
+        self._integrity_failures = new_integrity_failures
         self._shard_id_to_row = {sid: i for i, sid in enumerate(shard_ids)}
 
     def _set_empty(self) -> None:
         self._table = SCHEMA.empty_table() if SCHEMA is not None else None
         self._embedding_norm = np.zeros((0, EMBEDDING_DIM), dtype=np.float32) if np is not None else None
         self._has_embedding = np.zeros((0,), dtype=bool) if np is not None else None
+        self._sig_verified = np.zeros((0,), dtype=bool) if np is not None else None
+        self._integrity_failures = {}
         self._shard_id_to_row = {}
 
 
