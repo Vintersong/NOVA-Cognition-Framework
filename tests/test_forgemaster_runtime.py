@@ -40,7 +40,7 @@ def test_get_permitted_lanes_marks_implementer_restricted(tmp_path: Path) -> Non
 def test_run_turn_dispatch_failure_surfaces_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rt = _build_runtime(tmp_path)
     session = rt.bootstrap("s1", [])
-    monkeypatch.setattr(runtime, "_dispatch", lambda role, prompt: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(runtime, "_dispatch", lambda role, prompt, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
 
     updated, response, _ = rt.run_turn(
         session=session,

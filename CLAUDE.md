@@ -125,9 +125,9 @@ NOVA-Whitepaper/
 
 ---
 
-## NOVA MCP Tools (35 total)
+## NOVA MCP Tools (36 total)
 
-### Core shard ops (`nova_server.py`, 21)
+### Core shard ops (`nova_server.py`, 22)
 
 | Tool | Purpose |
 |---|---|
@@ -152,6 +152,7 @@ NOVA-Whitepaper/
 | `nova_session_load` | Restore stored session to memory |
 | `nova_session_list` | List all stored session IDs |
 | `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
+| `nova_cache_prewarm` | Pre-warm Anthropic prompt cache with top-N shard context; returns the cached `system` string for subsequent calls |
 
 ### Wiki (`wiki_tools.py`, 6)
 
