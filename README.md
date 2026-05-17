@@ -23,8 +23,11 @@ NOVA is a persistent memory system for AI agents. It stores conversations and de
 NOVA runs as an MCP server, meaning any MCP-compatible client (Claude Desktop, Claude Code, Cursor) can connect to it and query/write memory using structured tool calls.
 
 **Key capabilities:**
-- Semantic shard retrieval via HUGINN (Haiku fast pass) + MUNINN (Sonnet deep rerank)
+- Semantic shard retrieval via HUGINN (Haiku fast pass) + MUNINN (Sonnet deep rerank) + spreading activation (graph-based third pass)
 - Confidence-weighted recall with time-based decay
+- Cluster-aware hook recall: top-k walk that collapses same-cluster results and surfaces siblings
+- Anthropic prompt-cache prewarm: fires a max_tokens=0 cache-write call so subsequent requests read at ~0.1× cost
+- HMAC-SHA256 embedding integrity: signs vectors at ingestion, verifies before MUNINN reranking, logs adversarial events
 - NÓTT background daemon: decay, compaction, merge suggestions, graph sync
 - Knowledge graph of inter-shard relationships with transitive BFS
 - Three-tier discovery: index → summary → full shard (via `summary_index.json`)
@@ -182,7 +185,7 @@ docker compose up nova
 NOVA-Cognition-Framework/
   mcp/
     # Core server
-    nova_server.py           ← ACTIVE MCP server (registers all 35 tools)
+    nova_server.py           ← ACTIVE MCP server (registers all 36 tools)
     config.py                ← all env vars and defaults (single source of truth)
     schemas.py               ← Pydantic input models
     models.py                ← shared dataclasses (UsageSummary)
@@ -206,10 +209,12 @@ NOVA-Cognition-Framework/
 
     # Retrieval & ranking
     ravens.py                ← HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank)
-    recall.py                ← recall utilities (cache, state-gate pre-filter)
+    recall.py                ← hook recall + cache prewarm + cluster-aware top-k walk
     nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings + heuristic summaries
     clustering.py            ← shard community detection (Leiden algorithm)
     arrow_cache.py           ← Arrow-format embedding cache for vectorised cosine
+    spreading_activation.py  ← graph-based score propagation as MUNINN third pass
+    embedding_integrity.py   ← HMAC-SHA256 signing and verification for shard embeddings
 
     # Permissions, gating & audit
     permissions.py           ← env-driven tool allow/deny (NOVA_DENIED_TOOLS/PREFIXES)
@@ -229,6 +234,9 @@ NOVA-Cognition-Framework/
     nova_hook_precompact.py  ← pre-compaction preparation hook
     nova_hook_recall.py      ← UserPromptSubmit hook: injects NOVA context into prompts
     nova_hook_stop.py        ← session-stop cleanup hook
+
+    # Tool registry
+    tool_registry.py         ← canonical ToolSpec registry; @nova_tool validates names at import
 
     # Skill verification
     skill_manifest.py        ← @@verification / @@capabilities header parser
@@ -252,7 +260,7 @@ NOVA-Cognition-Framework/
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
 
-  tests/                     ← main pytest suite (92 tests across 16 files)
+  tests/                     ← main pytest suite (17 test files)
   utilities/                 ← migration helpers, diagnostics, ad-hoc maintenance
   docker/
     entrypoint.sh            ← seeds dummy shard on first boot, starts server
@@ -281,9 +289,9 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (35)
+## NOVA MCP Tools (36)
 
-### Core shard + graph + session (21)
+### Core shard + graph + session (22)
 
 | Tool | Description |
 |---|---|
@@ -308,6 +316,7 @@ NOVA-Cognition-Framework/
 | `nova_session_load` | Restore flushed session to memory |
 | `nova_session_list` | List all persisted session IDs |
 | `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
+| `nova_cache_prewarm` | Fire a max_tokens=0 cache-write call with top-N shard summaries so subsequent requests receive Anthropic cache reads |
 
 Relation types: `influences`, `depends_on`, `contradicts`, `extends`, `references`, `merged_from`, `supersedes`, `corroborated_by`.
 
@@ -378,6 +387,7 @@ Read-only resources exposed alongside the tools:
 | `config.py` | Single source for all env vars and defaults |
 | `schemas.py` | Pydantic input models for core + wiki tools |
 | `models.py` | Shared dataclasses (UsageSummary) |
+| `tool_registry.py` | Canonical `ToolSpec` registry — `@nova_tool` validates names at import, feeds permissions/audit/docs |
 | `store.py` | Shard filesystem I/O, index, summary-index layer, path-traversal guards |
 | `graph.py` | Knowledge graph load/save/query/relate/transitive BFS |
 | `maintenance.py` | Confidence decay, auto-compaction, cosine similarity, merge candidates |
@@ -387,6 +397,9 @@ Read-only resources exposed alongside the tools:
 | `session_store.py` | Session CRUD and flush-to-disk |
 | `forgemaster_runtime.py` | Sprint orchestration — routes tickets to model lanes, writes output |
 | `ravens.py` | HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank) |
+| `spreading_activation.py` | Damped BFS over the knowledge graph — MUNINN third retrieval pass with cluster-boundary penalties |
+| `recall.py` | Hook recall + cache prewarm + cluster-aware top-k walk (collapses same-cluster results, collects siblings over 2×top_k window) |
+| `embedding_integrity.py` | HMAC-SHA256 signing at ingestion, signature verification before MUNINN cosine reranking, adversarial event log |
 | `nott.py` | NÓTT daemon — scheduled decay, compact, merge, graph sync (dedicated `ThreadPoolExecutor`, isolated from default executor) |
 | `nova_embeddings_local.py` | Local embeddings + heuristic compaction summaries (non-blocking `get_embedding_model_if_ready()` used on enrichment path) |
 | `capability_gate.py` | HITL gate — capability membership check + HITL broker (interactive on Unix, `msvcrt` polling on Windows) |
@@ -403,8 +416,8 @@ Read-only resources exposed alongside the tools:
 
 ### Production-critical (stable, supported)
 - `mcp/nova_server.py` and exported MCP tools
-- Core runtime modules: `mcp/store.py`, `mcp/graph.py`, `mcp/maintenance.py`, `mcp/forgemaster_runtime.py`, `mcp/permissions.py`, `mcp/session_store.py`, `mcp/hooks.py`
-- Retrieval and indexing pipeline: `mcp/ravens.py`, `mcp/nova_embeddings_local.py`, `mcp/build_summary_index.py`
+- Core runtime modules: `mcp/store.py`, `mcp/graph.py`, `mcp/maintenance.py`, `mcp/forgemaster_runtime.py`, `mcp/permissions.py`, `mcp/session_store.py`, `mcp/hooks.py`, `mcp/tool_registry.py`
+- Retrieval and indexing pipeline: `mcp/ravens.py`, `mcp/recall.py`, `mcp/spreading_activation.py`, `mcp/embedding_integrity.py`, `mcp/nova_embeddings_local.py`, `mcp/build_summary_index.py`
 - Wiki and ingestion modules: `mcp/wiki.py`, `mcp/wiki_ingest.py`, `mcp/wiki_tools.py`, `mcp/nidhogg.py`
 
 ### Experimental / internal tooling (may change without compatibility guarantees)
@@ -450,6 +463,10 @@ Read-only resources exposed alongside the tools:
 | `NIDHOGG_MANIFEST_FILE` | `nidhogg_manifest.json` | Ingested-hash manifest |
 | `NIDHOGG_SIMILARITY_THRESHOLD` | `0.55` | Shard-match threshold for annotation |
 | `FORGEMASTER_EVENT_LOG` | — | Override path for sprint JSONL event log |
+| `NOVA_RECALL_CACHE_TTL` | `300` | In-memory recall cache TTL in seconds |
+| `NOVA_ACTIVATION_MIN_EDGES` | `10` | Minimum graph edges required to run spreading activation |
+| `NOVA_EMBEDDING_HMAC_KEY` | — | Hex or UTF-8 secret for HMAC-SHA256 embedding signing; if unset, signing is skipped |
+| `NOVA_EMBEDDING_INTEGRITY_LOG` | `embedding_integrity.jsonl` | Path for adversarial embedding event log |
 
 ---
 
@@ -472,7 +489,7 @@ Original named concepts in this repository: **shard** (memory unit), **HUGINN/MU
 ## Notes
 
 - Never manually edit files in `shards/` or `wiki/` — always use the MCP tools
-- Auto-generated files, never commit: `shard_index.json`, `shard_graph.json`, `summary_index.json`, `summary_index.md`, `wiki_index.json`, `nidhogg_manifest.json`, `nova_usage.jsonl`, `evolve_cycles.jsonl`, `evolve.json`
+- Auto-generated files, never commit: `shard_index.json`, `shard_graph.json`, `summary_index.json`, `summary_index.md`, `wiki_index.json`, `nidhogg_manifest.json`, `nova_usage.jsonl`, `evolve_cycles.jsonl`, `evolve.json`, `embedding_integrity.jsonl`
 - `.env` contains API keys — never commit it
 - `test_nova.py` is a memory-explorer CLI, not a pytest suite — run it with `python mcp/test_nova.py`
 - See `CLAUDE.md` for operational instructions and sprint workflow; see `docs/ROADMAP.md` for shipped-vs-planned split
