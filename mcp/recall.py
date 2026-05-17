@@ -139,10 +139,7 @@ def _walk_topk_with_cluster_collapse(
     results: list[dict] = []
     seen_clusters: dict[str, int] = {}  # cluster_id -> index into results
 
-    for shard_id, score in scored:
-        if len(results) >= top_k:
-            break
-
+    for shard_id, score in scored[:2 * top_k]:
         entry = eligible[shard_id]
         meta = entry.get("meta", {})
         cluster_id = meta.get("cluster_id")
@@ -150,6 +147,9 @@ def _walk_topk_with_cluster_collapse(
         if cluster_id and cluster_id in seen_clusters:
             kept_idx = seen_clusters[cluster_id]
             results[kept_idx]["cluster_siblings"].append(shard_id)
+            continue
+
+        if len(results) >= top_k:
             continue
 
         summary = meta.get("summary", "") or entry.get("guiding_question", "")[:200]
