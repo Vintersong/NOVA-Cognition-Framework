@@ -22,14 +22,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
 from pathlib import Path
 
 _MCP_DIR = Path(__file__).resolve().parent.parent / "mcp"
 sys.path.insert(0, str(_MCP_DIR))
 
 from store import load_index, load_shard  # type: ignore[import-not-found]
-from graph import load_graph, save_graph  # type: ignore[import-not-found]
+from graph import build_shard_entity, load_graph, save_graph  # type: ignore[import-not-found]
 
 
 def main() -> int:
@@ -73,14 +72,7 @@ def main() -> int:
             failed.append((shard_id, f"load failed: {exc}"))
             continue
         try:
-            graph["entities"][shard_id] = {
-                "type": "Shard",
-                "guiding_question": data.get("guiding_question", ""),
-                "theme": data.get("meta_tags", {}).get("theme", "general"),
-                "intent": data.get("meta_tags", {}).get("intent", "reflection"),
-                "created_at": datetime.now().isoformat(),
-                "confidence": data.get("meta_tags", {}).get("confidence", 1.0),
-            }
+            graph["entities"][shard_id] = build_shard_entity(data)
         except Exception as exc:
             failed.append((shard_id, f"graph write failed: {exc}"))
             continue
