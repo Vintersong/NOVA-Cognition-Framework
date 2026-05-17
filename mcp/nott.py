@@ -728,18 +728,15 @@ class Nott:
             failure_details.append(detail)
 
             if not dry_run and add_relation is not None:
+                sentinel_id = f"integrity_sentinel:{shard_id}"
                 try:
-                    graph = self._load_graph()
-                    sentinel_id = f"integrity_sentinel:{shard_id}"
                     add_relation(
-                        graph,
-                        source=shard_id,
-                        target=sentinel_id,
-                        relation_type="contradicts",
+                        shard_id,
+                        sentinel_id,
+                        "contradicts",
                         notes="embedding_integrity_failure",
                         reason=f"HMAC-SHA256 mismatch detected by NÓTT scan (stored={sig[:8]}…)",
                     )
-                    self._save_graph(graph)
                 except Exception as exc:
                     import logging as _logging
                     _logging.getLogger(__name__).warning(

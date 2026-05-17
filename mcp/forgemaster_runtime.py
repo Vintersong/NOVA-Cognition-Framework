@@ -236,19 +236,43 @@ def _extract_target_file(design_doc: str) -> Optional[str]:
     """
     Pull the target implementation path out of a design doc.
 
-    Looks for patterns like:  Target file: `utilities/foo.py`
-    or:                       New file: `utilities/foo.py`
-    Returns the path string or None if no match.
+    Recognised labels: "Target file", "New file", "Output file", "Output path",
+    "Implementation file". The path may be wrapped in backticks or written
+    inline (e.g. ``Output file: output/foo.py``).
     """
+    labels = r"(?:Target file|New file|Output file|Output path|Implementation file)"
     patterns = [
-        r"[Tt]arget file[^`]*`([^`]+)`",
-        r"[Nn]ew file[^`]*`([^`]+)`",
+        rf"(?im)^\s*{labels}\s*[:\-]\s*`([^`\n]+)`",
+        rf"(?im)^\s*{labels}\s*[:\-]\s*([^\s`][^\n]*?)\s*$",
     ]
     for pat in patterns:
         m = re.search(pat, design_doc)
         if m:
-            return m.group(1).strip()
+            return m.group(1).strip().strip("'\"")
     return None
+
+
+_FENCE_RE = re.compile(r"^\s*```")
+
+
+def _first_verdict_line(review_out: str) -> str:
+    """
+    Return the first non-empty, non-code-fence line from a reviewer output.
+
+    Reviewers occasionally wrap their response in a ``` fence; without
+    skipping it, the parser reads the fence marker as the verdict line and
+    every sprint is treated as a failure.
+    """
+    if not review_out:
+        return ""
+    for raw in review_out.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if _FENCE_RE.match(line):
+            continue
+        return line
+    return ""
 
 
 def _snapshot_corpus() -> dict[str, float]:
@@ -684,7 +708,7 @@ class ForgemasterRuntime:
                 })
 
         # ── Outcome-based reinforcement ───────────────────────────────────
-        review_head = review_out.strip().splitlines()[0] if review_out.strip() else ""
+        review_head = _first_verdict_line(review_out)
         sprint_passed = review_head.upper().startswith("PASS")
         contributing_shards = shard_ids or []
 
