@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -93,6 +94,13 @@ _COMPLEX_KEYWORDS: frozenset[str] = frozenset({
     "tracing", "profiling", "concurrency",
 })
 
+# Empirical routing cache — loaded lazily from forgemaster run logs.
+# Keyed by (task_type, model); values are {"pass": int, "fail": int}.
+# Process-scoped: cleared on restart (acceptable staleness).
+_empirical_routing_stats: dict[tuple[str, str], dict[str, int]] = {}
+_empirical_stats_loaded: bool = False
+_EMPIRICAL_MIN_SAMPLES: int = 10  # minimum samples before empirical route overrides static rules
+
 # Role-to-model mapping for the 4-turn sprint pipeline. Each role resolves
 # through its FORGEMASTER_*_MODEL env var (see config.py), which falls back
 # to MUNINN_MODEL / GEMINI_MODEL when unset.
@@ -127,6 +135,87 @@ def _log_event(entry: dict) -> None:
             fh.write(json.dumps(entry) + "\n")
     except Exception as exc:
         logger.warning("event log write failed: %s", exc)
+
+
+def _load_empirical_stats() -> dict[tuple[str, str], dict[str, int]]:
+    """
+    Parse sprint_verdict events from forgemaster JSONL logs and accumulate
+    pass/fail counts per (task_type, routed_model).
+
+    Checks FORGEMASTER_EVENT_LOG env var first; falls back to scanning all
+    files under output/forgemaster_runs/. Returns {} on any IO error.
+    """
+    stats: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"pass": 0, "fail": 0})
+
+    log_files: list[str] = []
+    override = os.environ.get("FORGEMASTER_EVENT_LOG", "")
+    if override and os.path.exists(override):
+        log_files = [override]
+    else:
+        run_dir = _REPO_ROOT / "output" / "forgemaster_runs"
+        if run_dir.exists():
+            log_files = [str(p) for p in sorted(run_dir.glob("*.jsonl"))]
+
+    for log_path in log_files:
+        try:
+            with open(log_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if ev.get("role") == "outcome" and ev.get("event") == "sprint_verdict":
+                        tt = ev.get("task_type", "")
+                        model = ev.get("routed_model", "")
+                        outcome = ev.get("outcome", "")
+                        if tt and model and outcome in ("review_pass", "review_fail"):
+                            key = (tt, model)
+                            if outcome == "review_pass":
+                                stats[key]["pass"] += 1
+                            else:
+                                stats[key]["fail"] += 1
+        except OSError as exc:
+            logger.warning("_load_empirical_stats: could not read %s — %s", log_path, exc)
+
+    return dict(stats)
+
+
+def _compute_empirical_route(
+    task_type: str,
+    stats: dict[tuple[str, str], dict[str, int]],
+) -> tuple[str, float]:
+    """
+    Pick the best model for task_type based on historical sprint pass rates.
+
+    Only considers models with >= _EMPIRICAL_MIN_SAMPLES outcomes. Returns
+    ("", 0.0) if no model has sufficient history for this task_type.
+    """
+    candidates = {
+        model: counts
+        for (tt, model), counts in stats.items()
+        if tt == task_type
+    }
+    viable = {
+        model: counts
+        for model, counts in candidates.items()
+        if (counts["pass"] + counts["fail"]) >= _EMPIRICAL_MIN_SAMPLES
+    }
+    if not viable:
+        return "", 0.0
+
+    best_model = max(
+        viable,
+        key=lambda m: (
+            viable[m]["pass"] / max(viable[m]["pass"] + viable[m]["fail"], 1),
+            viable[m]["pass"] + viable[m]["fail"],
+        ),
+    )
+    total = viable[best_model]["pass"] + viable[best_model]["fail"]
+    pass_rate = viable[best_model]["pass"] / max(total, 1)
+    return best_model, round(pass_rate, 4)
 
 
 def _provider_for(model: str) -> str:
@@ -286,6 +375,23 @@ def _first_verdict_line(review_out: str) -> str:
     return ""
 
 
+def _parse_review_verdict(response_text: str) -> str:
+    """
+    Extract a structured outcome string from reviewer output.
+
+    Returns one of: "review_pass", "review_fail", "error".
+    """
+    first = _first_verdict_line(response_text)
+    if not first:
+        return "error"
+    upper = first.upper()
+    if upper.startswith("PASS"):
+        return "review_pass"
+    if upper.startswith("FAIL"):
+        return "review_fail"
+    return "error"
+
+
 def _snapshot_corpus() -> dict[str, float]:
     """Return stem → mtime for every shard JSON on disk.
 
@@ -421,22 +527,43 @@ class ForgemasterRuntime:
 
         return session
 
-    def route_ticket(self, task_type: str) -> str:
+    def route_ticket(self, task_type: str) -> tuple[str, float]:
         """
-        Map a task type to a model name using the routing table from
-        ``forgemaster/AGENTS.md``.
+        Map a task type to a model name and confidence score using three-tier logic:
 
-        Complexity override: tasks whose type string contains any of the
-        ``_COMPLEX_KEYWORDS`` are promoted to ``claude-sonnet`` regardless
-        of the routing table (borrows the keyword-routing heuristic from
-        hermes-agent smart_model_routing.py).
+        1. Empirical: if >= _EMPIRICAL_MIN_SAMPLES historical outcomes exist for this
+           task_type and best-model pass rate > 0.6, use that model.
+        2. Complexity override: task_type string contains a complexity keyword → Sonnet.
+        3. Routing table + default: static prior from forgemaster/AGENTS.md.
 
-        Defaults to ``claude-sonnet`` for unknown task types.
+        Confidence values: empirical pass rate | 1.0 (keyword) | 0.9 (table) | 0.0 (default).
         """
+        global _empirical_routing_stats, _empirical_stats_loaded
+        if not _empirical_stats_loaded:
+            _empirical_routing_stats = _load_empirical_stats()
+            _empirical_stats_loaded = True
+
         normalized = task_type.lower().strip()
+
+        # Tier 1: empirical model selection (model-adaptive routing)
+        if _empirical_routing_stats:
+            emp_model, emp_confidence = _compute_empirical_route(normalized, _empirical_routing_stats)
+            if emp_model and emp_confidence > 0.6:
+                logger.info(
+                    "route_ticket: empirical route task_type=%r -> %s (conf=%.3f)",
+                    normalized, emp_model, emp_confidence,
+                )
+                return emp_model, emp_confidence
+
+        # Tier 2: complexity keyword override
         if any(kw in normalized for kw in _COMPLEX_KEYWORDS):
-            return MUNINN_MODEL
-        return _ROUTING_TABLE.get(normalized, MUNINN_MODEL)
+            return MUNINN_MODEL, 1.0
+
+        # Tier 3: static routing table + default
+        keyword_match = _ROUTING_TABLE.get(normalized)
+        if keyword_match is not None:
+            return keyword_match, 0.9
+        return MUNINN_MODEL, 0.0
 
     def run_turn(
         self,
@@ -527,6 +654,7 @@ class ForgemasterRuntime:
         design_doc: str,
         shard_ids: list[str] | None = None,
         cached_system: str = "",
+        task_type: str = "",
     ) -> dict:
         """
         Execute the full Forgemaster sprint lifecycle with real LLM dispatch:
@@ -550,6 +678,17 @@ class ForgemasterRuntime:
 
         # Corpus snapshot before any writes — used by AuditLog biconditional check at end.
         corpus_before = _snapshot_corpus()     # set[str] of shard stems for audit check
+
+        # ── Routing decision (logged for calibration) ─────────────────────
+        routed_model, routing_confidence = self.route_ticket(task_type)
+        _log_event({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sprint_id": sprint_id,
+            "role": "routing",
+            "task_type": task_type,
+            "routed_model": routed_model,
+            "routing_confidence": round(routing_confidence, 4),
+        })
 
         # ── Turn 1: Orchestrator ──────────────────────────────────────────
         session, orch_out, _ = self.run_turn(
@@ -721,6 +860,19 @@ class ForgemasterRuntime:
         # ── Outcome-based reinforcement ───────────────────────────────────
         review_head = _first_verdict_line(review_out)
         sprint_passed = review_head.upper().startswith("PASS")
+
+        # Emit structured verdict event for calibration tooling (Component 2+).
+        _log_event({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sprint_id": sprint_id,
+            "role": "outcome",
+            "event": "sprint_verdict",
+            "outcome": _parse_review_verdict(review_out),
+            "review_head": review_head,
+            "task_type": task_type,
+            "routed_model": routed_model,
+            "routing_confidence": round(routing_confidence, 4),
+        })
         contributing_shards = shard_ids or []
 
         if sprint_passed and contributing_shards:
