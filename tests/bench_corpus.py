@@ -114,6 +114,8 @@ def build_corpus(
     n_shards: int,
     n_queries_per_cluster: int = 4,
     noise_ratio: float = 0.12,
+    graph_only_ratio: float = 0.0,
+    graph_cross_cluster_ratio: float = 0.0,
 ) -> Corpus:
     """
     Build a synthetic corpus on disk + in memory.
@@ -124,6 +126,18 @@ def build_corpus(
       - graph: {"entities": {...}, "relations": [...]} (>=10 relations so
         spreading activation runs)
       - shard_dir: tmp_path/shards (each shard written as JSON)
+
+    graph_only_ratio (0–1): fraction of on-topic shards built with a
+    randomized embedding (not cluster-seeded). MUNINN cosine misses
+    them; the graph still links them to same-cluster siblings; so
+    spreading activation can recover them. This is what makes the
+    bench's activation-recall delta non-zero — without it, MUNINN
+    already finds everything activation could find.
+
+    graph_cross_cluster_ratio (0–1): fraction of the wired edges that
+    point to a random shard in a *different* cluster. Acts as
+    activation noise — without it the graph is partitioned by cluster
+    and activation can't pull in distractors.
     """
     vocabs, cluster_ids = _resize_clusters(n_shards)
     n_clusters = len(cluster_ids)
@@ -138,6 +152,7 @@ def build_corpus(
     index: dict = {}
     entities: dict = {}
     relations: list[dict] = []
+    all_shard_ids: list[str] = []
 
     rng = random.Random(42)  # deterministic across runs
 
@@ -148,11 +163,22 @@ def build_corpus(
         per_cluster = max(1, base_per_cluster + (1 if ci < remainder else 0))
         n_on_topic = max(1, round(per_cluster * (1 - noise_ratio)))
         n_noise = per_cluster - n_on_topic
+        # graph-only shards live inside the on-topic count: they're
+        # cluster-correct (right cluster_id) but their embedding is
+        # randomized so cosine retrieval misses them.
+        n_graph_only = int(round(n_on_topic * graph_only_ratio))
 
         for j in range(n_on_topic):
             sid = f"{cluster_id}_s{j:03d}"
             terms = rng.sample(on_vocab, k=min(5, len(on_vocab)))
-            _write_shard(shard_dir, index, entities, sid, cluster_id, terms)
+            # The last n_graph_only on-topic shards get a per-shard
+            # random embedding cluster so they don't co-locate with
+            # the rest of the cluster in vector space.
+            embedding_cluster = (
+                f"orphan_{sid}" if j >= (n_on_topic - n_graph_only) else cluster_id
+            )
+            _write_shard(shard_dir, index, entities, sid, cluster_id, terms,
+                         embedding_cluster=embedding_cluster)
             cluster_shard_ids.append(sid)
 
         for j in range(n_noise):
@@ -162,6 +188,8 @@ def build_corpus(
             _write_shard(shard_dir, index, entities, sid, cluster_id, terms)
             cluster_shard_ids.append(sid)
 
+        all_shard_ids.extend(cluster_shard_ids)
+
         # Wire ~3 same-cluster `references` edges per on-topic shard.
         for sid in cluster_shard_ids[:n_on_topic]:
             siblings = [s for s in cluster_shard_ids if s != sid]
@@ -169,6 +197,18 @@ def build_corpus(
                 continue
             for target in rng.sample(siblings, k=min(3, len(siblings))):
                 relations.append({"source": sid, "target": target, "type": "references"})
+
+    # Cross-cluster edges: rewrite a fraction of existing edges to point
+    # at a random shard in a different cluster. Keep the source on its
+    # cluster so query→source affinity is intact; only the target moves.
+    if graph_cross_cluster_ratio > 0 and relations:
+        n_cross = int(round(len(relations) * graph_cross_cluster_ratio))
+        for idx in rng.sample(range(len(relations)), k=n_cross):
+            src = relations[idx]["source"]
+            src_cluster = src.split("_", 1)[0]
+            other = [s for s in all_shard_ids if not s.startswith(src_cluster + "_")]
+            if other:
+                relations[idx]["target"] = rng.choice(other)
 
     # Queries: pick 3 terms from each cluster's on_vocab.
     # Register query → cluster_id so the embedding stub can land each
@@ -201,12 +241,22 @@ def _write_shard(
     sid: str,
     cluster_id: str,
     terms: list[str],
+    embedding_cluster: str | None = None,
 ) -> None:
-    """Write one shard JSON to disk and register it in the in-memory index."""
+    """Write one shard JSON to disk and register it in the in-memory index.
+
+    embedding_cluster: by default the shard's embedding seed is its
+    cluster_id (so same-cluster shards co-locate in vector space). Pass
+    a different value (e.g. f"orphan_{sid}") to make this shard a
+    graph-only outlier — cluster-tagged correctly but invisible to
+    cosine rerank.
+    """
     guiding_q = f"What about {' '.join(terms[:2])}?"
     summary = f"Notes on {' and '.join(terms)}."
     searchable = guiding_q + " " + summary
-    embedding = _deterministic_embedding(searchable, cluster_id)
+    embedding = _deterministic_embedding(
+        searchable, embedding_cluster if embedding_cluster is not None else cluster_id
+    )
 
     # On-disk JSON — MUNINN._local_rerank reads `context.embedding` from this.
     shard_data = {
@@ -374,14 +424,18 @@ class BenchTimer:
 _SHARD_ID_RE = re.compile(r'"id"\s*:\s*"([^"]+)"')
 
 
-def _deterministic_scorer(prompt: str) -> dict[str, float]:
+def _deterministic_scorer(prompt: str, ceiling: float = 1.0) -> dict[str, float]:
     """
     Parse shard IDs out of the JSON-encoded shards in the prompt and
-    return decaying scores (1.0, 0.95, 0.9, ...) in the order they
-    appear. Sufficient to make recall non-trivial without semantic
-    understanding — the prompt's shard order already reflects the
-    pre-filter's ranking, so 'preserve top entries' is a reasonable
-    fake-LLM strategy.
+    return decaying scores (ceiling, ceiling-0.05, ceiling-0.10, ...)
+    in the order they appear. Sufficient to make recall non-trivial
+    without semantic understanding — the prompt's shard order already
+    reflects the pre-filter's ranking, so 'preserve top entries' is a
+    reasonable fake-LLM strategy.
+
+    `ceiling` lets callers depress the top score so HUGINN's
+    max_confidence sometimes lands below the gate threshold; see
+    install_anthropic_stub's confidence_jitter.
     """
     ids = _SHARD_ID_RE.findall(prompt)
     seen: list[str] = []
@@ -390,7 +444,7 @@ def _deterministic_scorer(prompt: str) -> dict[str, float]:
             seen.append(sid)
     scores: dict[str, float] = {}
     for i, sid in enumerate(seen):
-        scores[sid] = max(0.05, 1.0 - 0.05 * i)
+        scores[sid] = max(0.05, ceiling - 0.05 * i)
     return scores
 
 
@@ -399,10 +453,17 @@ class FakeAnthropic:
     Drop-in replacement for `anthropic.Anthropic` used by HUGINN/MUNINN.
     Sleeps a per-model latency to simulate API round-trip, then returns
     the XML-score-tag format ravens._parse_score_xml expects.
+
+    confidence_jitter (>0, ≤1): per-call deterministic depression of the
+    top score, applied only on the HUGINN (haiku) path so the gate
+    decision sees a realistic distribution. Seeded by SHA1 of the prompt
+    so reruns are reproducible.
     """
 
-    def __init__(self, model_latency: dict[str, float], *_args, **_kwargs):
+    def __init__(self, model_latency: dict[str, float],
+                 confidence_jitter: float = 0.0, *_args, **_kwargs):
         self._model_latency = model_latency
+        self._jitter = confidence_jitter
         self.messages = self  # `client.messages.create(...)` → self.create
 
     def create(self, *, model: str, max_tokens: int, messages: list[dict]):
@@ -417,7 +478,13 @@ class FakeAnthropic:
         if lat:
             time.sleep(lat)
         prompt = messages[0]["content"]
-        scores = _deterministic_scorer(prompt)
+        ceiling = 1.0
+        if self._jitter > 0 and "haiku" in model:
+            # Hash the prompt for a stable [0, jitter] depression per query.
+            seed = int(hashlib.sha1(prompt.encode()).hexdigest()[:8], 16)
+            depression = (seed % 1000) / 1000.0 * self._jitter
+            ceiling = max(0.05, 1.0 - depression)
+        scores = _deterministic_scorer(prompt, ceiling=ceiling)
         xml = "\n".join(
             f'<score id="{sid}" value="{v:.2f}">stub</score>'
             for sid, v in scores.items()
@@ -429,6 +496,7 @@ def install_anthropic_stub(
     monkeypatch,
     huginn_latency: float = 0.0,
     muninn_latency: float = 0.0,
+    confidence_jitter: float = 0.0,
 ) -> None:
     """
     Patch ravens.anthropic.Anthropic and CLAUDE_API_KEY so both ravens
@@ -437,6 +505,11 @@ def install_anthropic_stub(
     The stub routes latency by model name substring: "haiku" → huginn,
     "sonnet" → muninn. Matches the real Anthropic model IDs configured
     in mcp/config.py (claude-haiku-4-5-*, claude-sonnet-4-6).
+
+    confidence_jitter (>0, ≤1): when set, the HUGINN top score is
+    depressed by a deterministic per-prompt amount in [0, jitter]. With
+    jitter=0.4 and threshold=0.7, roughly half of queries trigger
+    MUNINN, giving the gate-fire-rate metric real signal.
     """
     # CLAUDE_API_KEY is a *cached* module-level constant in config.py
     # (config.py:88 reads os.environ at import time). Setting the env
@@ -447,7 +520,10 @@ def install_anthropic_stub(
     model_latency = {"haiku": huginn_latency, "sonnet": muninn_latency}
     monkeypatch.setattr(
         "ravens.anthropic.Anthropic",
-        lambda **kw: FakeAnthropic(model_latency=model_latency),
+        lambda **kw: FakeAnthropic(
+            model_latency=model_latency,
+            confidence_jitter=confidence_jitter,
+        ),
     )
 
 

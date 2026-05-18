@@ -65,13 +65,15 @@ def bench_log_path(tmp_path_factory) -> Path:
 # ── Common monkeypatching ─────────────────────────────────────────────────────
 
 def _patch_environment(monkeypatch, corpus: Corpus, tmp_path: Path, log_path: Path,
-                       huginn_latency: float, muninn_latency: float) -> None:
+                       huginn_latency: float, muninn_latency: float,
+                       confidence_jitter: float = 0.0) -> None:
     """Apply all bench-scope patches: Anthropic stub, embedding stub,
     Arrow disable, synthetic graph, NOVA_BENCH inner-timer env, and
     point the facts index at a non-existent tmp path so search_facts()
     deterministically takes its empty-corpus early-return (facts.py:50)
     instead of opening/creating facts_index.db in the repo root."""
-    install_anthropic_stub(monkeypatch, huginn_latency, muninn_latency)
+    install_anthropic_stub(monkeypatch, huginn_latency, muninn_latency,
+                            confidence_jitter=confidence_jitter)
     install_embedding_stub(monkeypatch)
     disable_arrow_cache(monkeypatch)
     monkeypatch.setattr("graph.load_graph", lambda: corpus.graph, raising=False)
@@ -242,6 +244,21 @@ async def _run_sweep(corpus: Corpus, huginn: ravens.Huginn, muninn: ravens.Munin
 _REAL_HUGINN_LATENCY_S = 0.4
 _REAL_MUNINN_LATENCY_S = 1.2
 
+# HUGINN confidence depression for the real sweep. With threshold=0.7 the
+# fake LLM otherwise pegs every query at 1.0 and the gate never fires.
+# 0.4 makes ~50% of queries fall below threshold so the gate-fire metric
+# carries signal. The smoke test stays at 0 so its assertions on
+# deterministic scores remain stable.
+_REAL_CONFIDENCE_JITTER = 0.4
+
+# Corpus realism for the real sweep. graph_only_ratio = fraction of
+# on-topic shards whose embeddings are randomized — MUNINN cosine misses
+# them, but the cluster graph reaches them, so spreading activation
+# recovers them. graph_cross_cluster_ratio = small fraction of relations
+# linking different clusters (acts as activation noise).
+_REAL_GRAPH_ONLY_RATIO = 0.15
+_REAL_CROSS_CLUSTER_RATIO = 0.05
+
 
 @pytest.mark.benchmark
 def test_bench_smoke(monkeypatch, tmp_path, bench_log_path: Path) -> None:
@@ -322,12 +339,27 @@ def test_bench_smoke(monkeypatch, tmp_path, bench_log_path: Path) -> None:
 @pytest.mark.parametrize("n_shards", [50, 200, 500, 1000])
 def test_bench_sweep(monkeypatch, tmp_path, bench_log_path: Path, n_shards: int) -> None:
     """The real sweep. ~20 queries × 6 stages × 4 sizes with stubbed
-    LLM latencies — expect ~8 min total wall clock."""
-    corpus = build_corpus(tmp_path, n_shards=n_shards)
+    LLM latencies — expect ~8 min total wall clock.
+
+    Builds a more realistic corpus than the smoke test: a fraction of
+    shards are graph-only (random embeddings; only reachable via the
+    graph), the graph has a few cross-cluster relations, and HUGINN's
+    confidence is jittered so the gate-fire-rate metric has signal.
+    Without these, gate fires 0% and activation contributes ~0 to
+    recall on every query — the instrumentation works but reads as
+    "nothing happens."
+    """
+    corpus = build_corpus(
+        tmp_path,
+        n_shards=n_shards,
+        graph_only_ratio=_REAL_GRAPH_ONLY_RATIO,
+        graph_cross_cluster_ratio=_REAL_CROSS_CLUSTER_RATIO,
+    )
     _patch_environment(
         monkeypatch, corpus, tmp_path, bench_log_path,
         huginn_latency=_REAL_HUGINN_LATENCY_S,
         muninn_latency=_REAL_MUNINN_LATENCY_S,
+        confidence_jitter=_REAL_CONFIDENCE_JITTER,
     )
     huginn, muninn = _make_ravens(corpus, tmp_path)
     asyncio.run(_run_sweep(corpus, huginn, muninn, bench_log_path))
