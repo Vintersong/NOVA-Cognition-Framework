@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 
 from schemas import CalibrateRoutingInput
@@ -41,21 +41,27 @@ def _load_huginn_log_sample(usage_log_file: str, n: int) -> list[dict]:
     """
     Read the last N HUGINN entries from nova_usage.jsonl.
 
-    Returns list of dicts with: query_sha256_16, max_confidence, shard_ids, used_llm.
-    Silently returns [] on missing file or parse errors.
+    Streams the file line-by-line using a deque so only n lines are held in
+    memory regardless of log file size. Returns [] on missing file or IO error.
     """
     path = Path(usage_log_file)
     if not path.exists():
         return []
 
+    buffer: deque[str] = deque()
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with open(usage_log_file, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if '"operator": "HUGINN"' in line:
+                    buffer.append(line)
+                    if len(buffer) > n:
+                        buffer.popleft()
     except OSError as exc:
         logger.warning("calibrate: could not read usage log %s — %s", usage_log_file, exc)
         return []
 
     results: list[dict] = []
-    for line in reversed(lines):
+    for line in reversed(list(buffer)):
         line = line.strip()
         if not line:
             continue
@@ -63,15 +69,12 @@ def _load_huginn_log_sample(usage_log_file: str, n: int) -> list[dict]:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if entry.get("operator") == "HUGINN":
-            results.append({
-                "query_sha256_16": entry.get("metadata", {}).get("query_sha256_16", ""),
-                "max_confidence": entry.get("metadata", {}).get("max_confidence", 0.0),
-                "shard_ids": entry.get("shards", []),
-                "used_llm": entry.get("metadata", {}).get("used_llm", False),
-            })
-            if len(results) >= n:
-                break
+        results.append({
+            "query_sha256_16": entry.get("metadata", {}).get("query_sha256_16", ""),
+            "max_confidence":   entry.get("metadata", {}).get("max_confidence", 0.0),
+            "shard_ids":        entry.get("shards", []),
+            "used_llm":         entry.get("metadata", {}).get("used_llm", False),
+        })
 
     return results
 

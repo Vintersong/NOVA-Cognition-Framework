@@ -96,10 +96,13 @@ _COMPLEX_KEYWORDS: frozenset[str] = frozenset({
 
 # Empirical routing cache — loaded lazily from forgemaster run logs.
 # Keyed by (task_type, model); values are {"pass": int, "fail": int}.
-# Process-scoped: cleared on restart (acceptable staleness).
 _empirical_routing_stats: dict[tuple[str, str], dict[str, int]] = {}
 _empirical_stats_loaded: bool = False
+_empirical_stats_loaded_at: float = 0.0
 _EMPIRICAL_MIN_SAMPLES: int = 10  # minimum samples before empirical route overrides static rules
+# Cache TTL — override via NOVA_EMPIRICAL_CACHE_TTL_S env var (default 5 minutes).
+# A short TTL means long-running MCP servers pick up new sprint outcomes without restart.
+_EMPIRICAL_CACHE_TTL_S: float = float(os.environ.get("NOVA_EMPIRICAL_CACHE_TTL_S", "300"))
 
 # Role-to-model mapping for the 4-turn sprint pipeline. Each role resolves
 # through its FORGEMASTER_*_MODEL env var (see config.py), which falls back
@@ -206,16 +209,15 @@ def _compute_empirical_route(
     if not viable:
         return "", 0.0
 
-    best_model = max(
-        viable,
-        key=lambda m: (
-            viable[m]["pass"] / max(viable[m]["pass"] + viable[m]["fail"], 1),
-            viable[m]["pass"] + viable[m]["fail"],
-        ),
-    )
-    total = viable[best_model]["pass"] + viable[best_model]["fail"]
-    pass_rate = viable[best_model]["pass"] / max(total, 1)
-    return best_model, round(pass_rate, 4)
+    def _score(m: str) -> tuple[float, int]:
+        counts = viable[m]
+        total = counts["pass"] + counts["fail"]
+        return (counts["pass"] / total, total)
+
+    best_model = max(viable, key=_score)
+    counts = viable[best_model]
+    total = counts["pass"] + counts["fail"]
+    return best_model, round(counts["pass"] / total, 4)
 
 
 def _provider_for(model: str) -> str:
@@ -303,6 +305,7 @@ def _dispatch(
     role: str,
     prompt: str,
     cached_system: str = "",
+    model_override: str = "",
 ) -> tuple[str, str, int, int, int]:
     """
     Dispatch a prompt to the model assigned to *role*.
@@ -312,8 +315,12 @@ def _dispatch(
 
     cached_system is forwarded to _call_anthropic for Anthropic lanes so
     repeated sprint turns benefit from prompt-cache reads.
+
+    model_override, when non-empty, replaces the role's default model. Used by
+    run_sprint() to wire route_ticket() decisions into the implementer dispatch
+    so sprint_verdict logs accurately reflect which model actually ran.
     """
-    model = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+    model = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
     provider = _provider_for(model)
     if provider == "anthropic":
         text, in_tok, out_tok, lat = _call_anthropic(model, prompt, cached_system=cached_system)
@@ -538,10 +545,12 @@ class ForgemasterRuntime:
 
         Confidence values: empirical pass rate | 1.0 (keyword) | 0.9 (table) | 0.0 (default).
         """
-        global _empirical_routing_stats, _empirical_stats_loaded
-        if not _empirical_stats_loaded:
+        global _empirical_routing_stats, _empirical_stats_loaded, _empirical_stats_loaded_at
+        now = time.monotonic()
+        if not _empirical_stats_loaded or (now - _empirical_stats_loaded_at) > _EMPIRICAL_CACHE_TTL_S:
             _empirical_routing_stats = _load_empirical_stats()
             _empirical_stats_loaded = True
+            _empirical_stats_loaded_at = now
 
         normalized = task_type.lower().strip()
 
@@ -572,6 +581,7 @@ class ForgemasterRuntime:
         skill_path: str,
         prompt: str,
         cached_system: str = "",
+        model_override: str = "",
     ) -> tuple[NovaSession, str, SkillManifest]:
         """
         Execute a single agent turn with real LLM dispatch.
@@ -580,7 +590,9 @@ class ForgemasterRuntime:
         2. Parse @@verification / @@capabilities from the skill content.
         3. Build a prompt of (skill_content + '---' + prompt).
         4. Append as a user message to *session*.
-        5. Dispatch to the model assigned to *role* (see _ROLE_TO_MODEL).
+        5. Dispatch to the model assigned to *role* (see _ROLE_TO_MODEL),
+           or to model_override when provided (used by the implementer turn
+           to wire route_ticket() decisions into actual dispatch).
         6. Append the response as an assistant message.
         7. Emit a JSONL event to FORGEMASTER_EVENT_LOG if configured.
 
@@ -615,12 +627,14 @@ class ForgemasterRuntime:
         # Real dispatch.
         dispatch_error: Optional[str] = None
         try:
-            response_text, model_used, in_tok, out_tok, latency_ms = _dispatch(role, user_content, cached_system=cached_system)
+            response_text, model_used, in_tok, out_tok, latency_ms = _dispatch(
+                role, user_content, cached_system=cached_system, model_override=model_override
+            )
         except Exception as exc:
             logger.error("ForgemasterRuntime.run_turn: dispatch failed for %s — %s", role, exc)
             dispatch_error = str(exc)
             response_text = f"[DISPATCH FAILED: {exc}]"
-            model_used = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+            model_used = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
             in_tok = out_tok = latency_ms = 0
 
         session = session.add_message_with_usage("assistant", response_text, in_tok, out_tok)
@@ -722,6 +736,9 @@ class ForgemasterRuntime:
         )
 
         # ── Turn 3: Implementer ───────────────────────────────────────────
+        # routed_model from route_ticket() is passed as model_override so the
+        # calibration loop is closed: sprint_verdict records the model that
+        # actually ran, not the static _ROLE_TO_MODEL default.
         session, impl_out, impl_skill = self.run_turn(
             session,
             role="implementer",
@@ -736,9 +753,8 @@ class ForgemasterRuntime:
                 "No markdown fences. No explanation. No prose. "
                 "Begin with the first line of the file and stop at the last."
             ),
-            # Gemini handles the implementer lane — cached_system is Anthropic-only
-            # but run_turn guards it inside _dispatch so it's safe to pass through.
             cached_system=cached_system,
+            model_override=routed_model,
         )
 
         # Write implementer output to disk if a target file is named in the design doc.
