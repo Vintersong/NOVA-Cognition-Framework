@@ -1,8 +1,8 @@
 # Brief: Implement the NOVA epistemic upgrade
 
-You are Sonnet 4.6. Your job is to implement the 12 changes described in `docs/design/nova_new.md`, in the **revised order** below. The original doc says "don't reorder" — that guidance is superseded by this brief. A dependency review found items 2, 6, and 7 listed in the wrong order; this plan corrects them.
+You are Sonnet 4.6. Your job is to implement the 12 changes described in `docs/archive/design/nova_new.md` (archived 2026-05-17; this plan is now canonical), in the **revised order** below. The original doc says "don't reorder" — that guidance is superseded by this brief. A dependency review found items 2, 6, and 7 listed in the wrong order; this plan corrects them.
 
-Read `docs/design/nova_new.md` first for the full rationale on each item. This brief is the execution plan, not a re-statement of the design.
+Read `docs/archive/design/nova_new.md` first for the full rationale on each item. This brief is the execution plan, not a re-statement of the design.
 
 ## Hard prerequisites before any implementation
 
@@ -200,9 +200,9 @@ Now safe to run: schema, lineage edges, recall floor, and quarantine are all in 
 
 ## Markdown-as-source-of-truth (was item 4) — parallel track
 
-Item 4 (Dory pattern) is independent of the dependency chain above. **Run it in parallel** as a separate work stream — it doesn't block any step and isn't blocked by any. Use a separate branch or ticket. The brief from `nova_new.md` item 4 stands as written.
+Item 4 (Dory pattern) is independent of the dependency chain above. **Run it in parallel** as a separate work stream — it doesn't block any step and isn't blocked by any. Use a separate branch or ticket. The brief from `archive/design/nova_new.md` item 4 stands as written.
 
-## Things explicitly deferred (unchanged from `nova_new.md`)
+## Things explicitly deferred (unchanged from archived `nova_new.md`)
 
 - GP surrogate (decay tuner) — wait until exogenous benchmark exists
 - Critic Pass writing verdicts to NOVA — wait until quarantine + lineage + hop-limited propagation are all in place (this is now after step 4 — re-evaluate then)
@@ -215,7 +215,7 @@ Item 4 (Dory pattern) is independent of the dependency chain above. **Run it in 
 2. **Do not start a step until the previous step's "Done when" boxes are all checked.**
 3. **Each step gets its own branch and PR.** Do not bundle steps into one PR — they're sequenced for review, not just execution.
 4. **Write a NOVA session handoff after every step** per `CLAUDE.md`'s handoff protocol. Each step is at least one full session.
-5. **Update `docs/design/nova_new.md`** after each step: mark the item complete with a date and a one-line note on what changed during implementation. The plan will drift from reality otherwise.
+5. **Update this plan** after each step: mark the item complete with a date and a one-line note on what changed during implementation. The plan will drift from reality otherwise. (The original `nova_new.md` was archived 2026-05-17 after the 12-item plan was substantially complete; treat this file as canonical.)
 6. **Do not reorder again without surfacing to the user.** This plan is the agreed sequence.
 7. **No emojis.**
 
