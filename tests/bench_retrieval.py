@@ -27,6 +27,7 @@ import pytest
 from bench_corpus import (
     BenchTimer,
     Corpus,
+    annotate_activation_recall,
     build_corpus,
     disable_arrow_cache,
     install_anthropic_stub,
@@ -140,6 +141,10 @@ async def probe_huginn_llm(query: str, expected_cluster: str, corpus: Corpus,
     """Stage 3: HUGINN end-to-end (local pre-filter + Haiku LLM rescore).
 
     Returns the RetrievalResult so the MUNINN probes can chain off it.
+    Also records the confidence-gate decision: with the bench corpus's
+    realistic score distribution, what fraction of queries would the
+    gate at nova_server.py:425 route to MUNINN? `muninn_triggered=True`
+    means HUGINN's confidence fell below threshold, so MUNINN would run.
     """
     candidates_in = len(corpus.index)
     with BenchTimer(log_path, candidates_in, "huginn_llm", query_id) as t:
@@ -149,6 +154,9 @@ async def probe_huginn_llm(query: str, expected_cluster: str, corpus: Corpus,
         t.extra["huginn_called"] = result.used_llm
         t.extra["recall_at_5"] = recall_at_k(result.shard_ids, expected_cluster, corpus.index, 5)
         t.extra["recall_at_10"] = recall_at_k(result.shard_ids, expected_cluster, corpus.index, 10)
+        t.extra["huginn_max_confidence"] = round(result.max_confidence, 4)
+        t.extra["confidence_threshold"] = huginn.confidence_threshold
+        t.extra["muninn_triggered"] = not result.is_confident(huginn.confidence_threshold)
     return result
 
 
@@ -223,6 +231,11 @@ async def _run_sweep(corpus: Corpus, huginn: ravens.Huginn, muninn: ravens.Munin
         probe_cluster_collapse(query, expected_cluster, corpus, muninn_result,
                                log_path, query_id)
 
+    # Post-process: fill recall@k for spreading_activation_inner rows
+    # using the pre/post ID lists ravens emitted. Has to happen here —
+    # ravens has no ground truth.
+    annotate_activation_recall(log_path, corpus.queries, corpus.index)
+
 
 # Latencies for the LLM stubs. Set to 0 in the smoke test so it stays under
 # the 5s target. For the real sweep these approximate observed p50 round-trip.
@@ -251,10 +264,40 @@ def test_bench_smoke(monkeypatch, tmp_path, bench_log_path: Path) -> None:
         "muninn_llm",
         "cluster_collapse_offpath",
         "spreading_activation_inner",
+        # Spreading activation sub-stage timers. graph_load always runs
+        # in the bench; community_detect + bfs only run when the synthetic
+        # graph clears NOVA_ACTIVATION_MIN_EDGES (build_corpus seeds enough
+        # edges per cluster that the smoke run satisfies this).
+        "spreading_graph_load",
+        "spreading_community_detect",
+        "spreading_bfs",
     }
     observed_stages = {r["stage"] for r in rows}
     missing = expected_stages - observed_stages
     assert not missing, f"missing stage rows: {missing}"
+
+    # Gate-decision fields populated only on huginn_llm rows.
+    huginn_rows = [r for r in rows if r["stage"] == "huginn_llm"]
+    assert huginn_rows, "no huginn_llm rows"
+    for r in huginn_rows:
+        assert r["huginn_max_confidence"] is not None
+        assert r["confidence_threshold"] == 0.7
+        assert isinstance(r["muninn_triggered"], bool)
+
+    # Activation recall fields filled by annotate_activation_recall.
+    inner_rows = [r for r in rows if r["stage"] == "spreading_activation_inner"]
+    assert inner_rows, "no spreading_activation_inner rows"
+    for r in inner_rows:
+        assert isinstance(r.get("pre_activation_ids"), list)
+        assert isinstance(r.get("post_activation_ids"), list)
+        # Recall is filled when the query_id is recognized (always true in
+        # the smoke test since _run_sweep tags every query). Must be in
+        # range when present.
+        for rk in ("recall_at_5", "recall_at_10",
+                   "pre_activation_recall_at_5", "pre_activation_recall_at_10"):
+            v = r.get(rk)
+            if v is not None:
+                assert 0.0 <= v <= 1.0, f"{rk} out of range on inner row: {v}"
 
     required_fields = {"corpus_size", "stage", "duration_ms", "in_live_pipeline"}
     for r in rows:

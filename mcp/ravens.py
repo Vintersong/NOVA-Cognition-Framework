@@ -53,6 +53,53 @@ def _record_error(operation: str, exc: Exception) -> None:
     _error_counts[operation] += 1
     logger.warning("ravens.%s failed (%s): %s", operation, type(exc).__name__, exc)
 
+
+# ═══════════════════════════════════════════════════════════
+# BENCH JSONL HELPER  (NOVA_BENCH=1)
+# ═══════════════════════════════════════════════════════════
+#
+# Field set mirrors tests/bench_corpus.py BenchTimer.__exit__ so every
+# JSONL row has a uniform key shape — defensive against report logic
+# that uses direct key access. Unknown stages emit None for fields they
+# don't compute.
+
+def _emit_bench_row(
+    log_path: str,
+    corpus_size: int | None,
+    query_id: str | None,
+    stage: str,
+    duration_ms: float,
+    *,
+    candidates_in: int | None = None,
+    candidates_out: int | None = None,
+    pre_activation_ids: list[str] | None = None,
+    post_activation_ids: list[str] | None = None,
+) -> None:
+    rec = {
+        "ts": datetime.now().isoformat(),
+        "corpus_size": corpus_size,
+        "stage": stage,
+        "query_id": query_id,
+        "duration_ms": duration_ms,
+        "candidates_in": candidates_in,
+        "candidates_out": candidates_out,
+        "recall_at_5": None,
+        "recall_at_10": None,
+        "huginn_called": None,
+        "muninn_called": None,
+        "muninn_candidates": None,
+        "huginn_max_confidence": None,
+        "confidence_threshold": None,
+        "muninn_triggered": None,
+        "pre_activation_ids": pre_activation_ids,
+        "post_activation_ids": post_activation_ids,
+        "pre_activation_recall_at_5": None,
+        "pre_activation_recall_at_10": None,
+        "in_live_pipeline": True,
+    }
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
 # Timeout (seconds) for each LLM API call.  Falls back to local scores on expiry.
 _RAVEN_API_TIMEOUT = float(os.environ.get("RAVEN_API_TIMEOUT", "10"))
 _ENABLE_QUERY_PREVIEW = parse_bool_env("NOVA_LOG_QUERY_PREVIEW", default=False)
@@ -466,20 +513,42 @@ class Muninn:
         _bench_on = os.environ.get("NOVA_BENCH") == "1"
         _bench_t0 = time.perf_counter() if _bench_on else None
         _bench_in = len(result.shard_ids)
+        # Snapshot pre-activation top-N for the bench's recall-delta probe.
+        _pre_activation_ids = list(result.shard_ids[:top_n]) if _bench_on else None
+
+        # Sub-stage timers — each None unless NOVA_BENCH=1.
+        _t_graph_load: float | None = None
+        _t_community: float | None = None
+        _t_bfs: float | None = None
+        _graph_edges = 0
+        _activation_ran = False
         try:
             from graph import load_graph
             from clustering import detect_communities
             from spreading_activation import spreading_activation as _spread
             from config import NOVA_ACTIVATION_MIN_EDGES
 
+            _sub_t = time.perf_counter() if _bench_on else 0.0
             _graph = load_graph()
-            if len(_graph.get("relations", [])) >= NOVA_ACTIVATION_MIN_EDGES:
+            _graph_edges = len(_graph.get("relations", []))
+            if _bench_on:
+                _t_graph_load = (time.perf_counter() - _sub_t) * 1000
+            if _graph_edges >= NOVA_ACTIVATION_MIN_EDGES:
+                _sub_t = time.perf_counter() if _bench_on else 0.0
                 _cluster_map = detect_communities(_graph)
+                if _bench_on:
+                    _t_community = (time.perf_counter() - _sub_t) * 1000
+
+                _sub_t = time.perf_counter() if _bench_on else 0.0
                 _activation = _spread(
                     seeds=result.scores,
                     graph=_graph,
                     cluster_map=_cluster_map,
                 )
+                if _bench_on:
+                    _t_bfs = (time.perf_counter() - _sub_t) * 1000
+                _activation_ran = True
+
                 if _activation:
                     # Merge: 0.7 × original MUNINN score + 0.3 × activation score
                     _all_ids = set(result.shard_ids) | set(_activation)
@@ -515,25 +584,43 @@ class Muninn:
             if _bench_log:
                 try:
                     _bench_size = os.environ.get("NOVA_BENCH_CORPUS_SIZE")
-                    # Field set mirrors tests/bench_corpus.py BenchTimer.__exit__
-                    # so every JSONL row has the same key shape — defensive
-                    # against report logic that uses direct key access.
-                    with open(_bench_log, "a", encoding="utf-8") as _fh:
-                        _fh.write(json.dumps({
-                            "ts": datetime.now().isoformat(),
-                            "corpus_size": int(_bench_size) if _bench_size else None,
-                            "stage": "spreading_activation_inner",
-                            "query_id": os.environ.get("NOVA_BENCH_QUERY_ID"),
-                            "duration_ms": (time.perf_counter() - _bench_t0) * 1000,
-                            "candidates_in": _bench_in,
-                            "candidates_out": len(result.shard_ids),
-                            "recall_at_5": None,
-                            "recall_at_10": None,
-                            "huginn_called": None,
-                            "muninn_called": None,
-                            "muninn_candidates": None,
-                            "in_live_pipeline": True,
-                        }) + "\n")
+                    _bench_size_i = int(_bench_size) if _bench_size else None
+                    _query_id = os.environ.get("NOVA_BENCH_QUERY_ID")
+                    _post_activation_ids = list(result.shard_ids[:top_n])
+                    _emit_bench_row(
+                        _bench_log,
+                        _bench_size_i,
+                        _query_id,
+                        "spreading_activation_inner",
+                        (time.perf_counter() - _bench_t0) * 1000,
+                        candidates_in=_bench_in,
+                        candidates_out=len(result.shard_ids),
+                        pre_activation_ids=_pre_activation_ids,
+                        post_activation_ids=_post_activation_ids,
+                    )
+                    # Sub-stage rows. Community + BFS only emitted when the
+                    # min-edges gate passed; graph_load always emits because
+                    # it runs unconditionally.
+                    if _t_graph_load is not None:
+                        _emit_bench_row(
+                            _bench_log, _bench_size_i, _query_id,
+                            "spreading_graph_load", _t_graph_load,
+                            candidates_in=_graph_edges,
+                            candidates_out=_graph_edges,
+                        )
+                    if _t_community is not None:
+                        _emit_bench_row(
+                            _bench_log, _bench_size_i, _query_id,
+                            "spreading_community_detect", _t_community,
+                            candidates_in=_graph_edges,
+                        )
+                    if _t_bfs is not None:
+                        _emit_bench_row(
+                            _bench_log, _bench_size_i, _query_id,
+                            "spreading_bfs", _t_bfs,
+                            candidates_in=len(result.scores),
+                            candidates_out=len(result.shard_ids),
+                        )
                 except Exception:
                     pass
         # ── End spreading activation ──────────────────────────────────────────

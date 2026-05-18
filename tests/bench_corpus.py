@@ -277,6 +277,49 @@ def recall_at_k(retrieved_ids: list[str], expected_cluster: str, index: dict, k:
 
 # ── BenchTimer ────────────────────────────────────────────────────────────────
 
+def annotate_activation_recall(log_path: Path, queries: list[tuple[str, str]],
+                                index: dict) -> None:
+    """Post-process JSONL: fill recall@{5,10} on `spreading_activation_inner`
+    rows by reading `pre_activation_ids` / `post_activation_ids` and the
+    query's expected cluster.
+
+    Ravens can't compute recall itself — ground-truth cluster labels live
+    in the bench corpus, not in the runtime. So the inner timer emits raw
+    ID lists and the bench fills in recall after the sweep.
+
+    `recall_at_5` / `recall_at_10` on inner rows reflects post-activation
+    ranking; `pre_activation_recall_at_{5,10}` reflects the pre-activation
+    state. Compare the two to see activation's recall contribution.
+    """
+    rows: list[dict] = []
+    with log_path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+
+    # query_id is set by tests/bench_retrieval.py:_run_sweep as f"q{qi:03d}".
+    qid_to_cluster = {f"q{i:03d}": cl for i, (_, cl) in enumerate(queries)}
+
+    for r in rows:
+        if r.get("stage") != "spreading_activation_inner":
+            continue
+        cluster = qid_to_cluster.get(r.get("query_id"))
+        if cluster is None:
+            continue
+        post = r.get("post_activation_ids") or []
+        pre = r.get("pre_activation_ids") or []
+        r["recall_at_5"] = recall_at_k(post, cluster, index, 5)
+        r["recall_at_10"] = recall_at_k(post, cluster, index, 10)
+        r["pre_activation_recall_at_5"] = recall_at_k(pre, cluster, index, 5)
+        r["pre_activation_recall_at_10"] = recall_at_k(pre, cluster, index, 10)
+
+    with log_path.open("w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+
+
 @dataclass
 class BenchTimer:
     log_path: Path
@@ -305,6 +348,20 @@ class BenchTimer:
             "huginn_called": self.extra.get("huginn_called"),
             "muninn_called": self.extra.get("muninn_called"),
             "muninn_candidates": self.extra.get("muninn_candidates"),
+            # Gate visibility: huginn_llm rows fill these so the report can
+            # surface "what % of queries triggered MUNINN?" without
+            # re-running. None elsewhere keeps the JSONL schema uniform.
+            "huginn_max_confidence": self.extra.get("huginn_max_confidence"),
+            "confidence_threshold": self.extra.get("confidence_threshold"),
+            "muninn_triggered": self.extra.get("muninn_triggered"),
+            # Spreading activation isolates its contribution to recall by
+            # emitting the top-N IDs before and after the activation pass.
+            # The bench post-processes inner rows to fill recall_at_{5,10}
+            # for each side (see annotate_activation_recall).
+            "pre_activation_ids": self.extra.get("pre_activation_ids"),
+            "post_activation_ids": self.extra.get("post_activation_ids"),
+            "pre_activation_recall_at_5": self.extra.get("pre_activation_recall_at_5"),
+            "pre_activation_recall_at_10": self.extra.get("pre_activation_recall_at_10"),
             "in_live_pipeline": self.in_live_pipeline,
         }
         # JSONL append idiom matches mcp/embedding_integrity.py:122-157.
