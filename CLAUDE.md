@@ -125,7 +125,7 @@ NOVA-Whitepaper/
 
 ---
 
-## NOVA MCP Tools (36 total)
+## NOVA MCP Tools (37 total)
 
 ### Core shard ops (`nova_server.py`, 22)
 
@@ -192,6 +192,12 @@ NOVA-Whitepaper/
 |---|---|
 | `gemini_execute_ticket` | Run an implementation ticket on Gemini Flash |
 | `gemini_load_file` | Load a file into the Gemini worker's context |
+
+### Calibrate (`calibrate.py`, 1)
+
+| Tool | Purpose |
+|---|---|
+| `nova_calibrate_routing` | Analyse HUGINN consistency and Forgemaster sprint pass rates to suggest routing threshold adjustments |
 
 ---
 

@@ -64,6 +64,7 @@ _FOCUS_AREAS = [
     "nova_server",         # new MCP tools, performance, API surface
     "test_coverage",       # missing tests, edge cases
     "documentation",       # CLAUDE.md, SKILL.md, inline docstrings
+    "routing_calibration", # HUGINN threshold drift, Forgemaster model routing accuracy
 ]
 
 _FOCUS_INSTRUCTIONS = {
@@ -95,6 +96,15 @@ _FOCUS_INSTRUCTIONS = {
         "Focus on documentation gaps: CLAUDE.md accuracy, mcp/SKILL.md completeness, "
         "missing docstrings in evolve.py and nidhogg.py. "
         "Is the onboarding flow still correct?"
+    ),
+    "routing_calibration": (
+        "Focus on routing and retrieval calibration. Run nova_calibrate_routing to get "
+        "the current HUGINN consistency analysis and Forgemaster routing pass rates. "
+        "Propose: (1) the HUGINN_CONFIDENCE_THRESHOLD change to apply in .env if "
+        "threshold_delta > 0.05, (2) any task_type→model routing corrections based on "
+        "observed pass rates, (3) whether _COMPLEX_KEYWORDS in forgemaster_runtime.py "
+        "should be expanded or narrowed based on empirical evidence. "
+        "Ground all recommendations in the nova_calibrate_routing output, not intuition."
     ),
 }
 
@@ -226,6 +236,77 @@ def _shard_health() -> ShardHealthReport:
     report.merge_candidates = max(0, report.enriched // 5)  # rough heuristic
     report.avg_confidence = round(sum(confidences) / len(confidences), 4) if confidences else 1.0
     return report
+
+
+def _routing_health() -> dict:
+    """
+    Read calibration signals from forgemaster and HUGINN logs.
+
+    Returns: huginn_consistency_rate, routing_success_by_model, suggested_threshold_delta,
+    sample_size. Safe fallback dict on any import/IO error so evolve cycle continues.
+    """
+    try:
+        from calibrate import (
+            _load_huginn_log_sample,
+            _compute_huginn_consistency,
+            _suggest_threshold,
+            _load_forgemaster_log,
+            _compute_forgemaster_stats,
+        )
+        from config import HUGINN_CONFIDENCE_THRESHOLD, USAGE_LOG_FILE
+    except ImportError:
+        return {
+            "huginn_consistency_rate": None,
+            "routing_success_by_model": {},
+            "suggested_threshold_delta": 0.0,
+            "sample_size": 0,
+            "note": "calibrate module not available",
+        }
+
+    try:
+        import os
+        from collections import defaultdict
+
+        sample = _load_huginn_log_sample(USAGE_LOG_FILE, n=200)
+        bucket_stats = _compute_huginn_consistency(sample, k_runs=5)
+        suggested = _suggest_threshold(bucket_stats)
+        delta = round(suggested - HUGINN_CONFIDENCE_THRESHOLD, 3)
+
+        event_log = os.environ.get("FORGEMASTER_EVENT_LOG", "")
+        forgemaster_events = _load_forgemaster_log(event_log)
+        fm_stats = _compute_forgemaster_stats(forgemaster_events)
+
+        # Aggregate pass rate per model (collapse task_type dimension)
+        model_totals: dict = defaultdict(lambda: {"pass": 0, "total": 0})
+        for key, counts in fm_stats.items():
+            model = key.split(":", 1)[1] if ":" in key else key
+            model_totals[model]["pass"] += counts["pass"]
+            model_totals[model]["total"] += counts["total"]
+        routing_success = {
+            model: round(v["pass"] / max(v["total"], 1), 3)
+            for model, v in model_totals.items()
+            if v["total"] >= 5
+        }
+
+        best_consistency = max(
+            (s["consistency_rate"] for s in bucket_stats.values() if s["total"] > 0),
+            default=0.0,
+        )
+
+        return {
+            "huginn_consistency_rate": round(best_consistency, 3),
+            "routing_success_by_model": routing_success,
+            "suggested_threshold_delta": delta,
+            "sample_size": len(sample),
+        }
+    except Exception as exc:
+        return {
+            "huginn_consistency_rate": None,
+            "routing_success_by_model": {},
+            "suggested_threshold_delta": 0.0,
+            "sample_size": 0,
+            "note": f"calibration error: {exc}",
+        }
 
 
 # ═══════════════════════════════════════════════════════════
@@ -416,6 +497,7 @@ def _adjust_weights(
     health: ShardHealthReport,
     tests: TestResult,
     consecutive_empty: int,
+    routing: dict | None = None,
 ) -> tuple[dict[str, float], str]:
     """
     Nudge focus area weights based on current health signals.
@@ -423,6 +505,10 @@ def _adjust_weights(
     """
     w = dict(weights)
     reasons = []
+
+    # Ensure routing_calibration is present if it's a known focus area
+    if "routing_calibration" not in w:
+        w["routing_calibration"] = 1.0
 
     # Boost shard_health if confidence is degrading or merge backlog growing
     if health.avg_confidence < 0.7 or health.nidhogg_merge_pending > 3:
@@ -441,6 +527,12 @@ def _adjust_weights(
     if health.nidhogg_merge_pending > 5:
         w["nidhogg_pipeline"] = min(w.get("nidhogg_pipeline", 1.0) * 1.2, 3.0)
         reasons.append("nidhogg merge backlog")
+
+    # Boost routing_calibration if HUGINN threshold has drifted significantly
+    if routing and abs(routing.get("suggested_threshold_delta", 0.0)) > 0.05:
+        w["routing_calibration"] = min(w.get("routing_calibration", 1.0) * 1.4, 3.0)
+        delta = routing["suggested_threshold_delta"]
+        reasons.append(f"routing threshold drift={delta:+.2f}")
 
     # Decay weights that haven't been acted on (diminishing returns)
     if consecutive_empty >= 2:
@@ -476,9 +568,20 @@ def _build_director_prompt(
     health: ShardHealthReport,
     tests: TestResult,
     commit: CommitResult,
+    routing: dict | None = None,
 ) -> str:
     """Build the PRODUCT DIRECTOR prompt for the Forgemaster sprint."""
     focus_text = _FOCUS_INSTRUCTIONS.get(focus_area, "Focus on high-impact improvements.")
+
+    routing_section = ""
+    if routing and routing.get("huginn_consistency_rate") is not None:
+        routing_section = (
+            f"\n## Routing & Retrieval Health\n"
+            f"HUGINN consistency rate: {routing['huginn_consistency_rate']:.1%} | "
+            f"Suggested threshold delta: {routing['suggested_threshold_delta']:+.3f} | "
+            f"Sample size: {routing['sample_size']}\n"
+            f"Routing success by model: {routing.get('routing_success_by_model', {})}\n"
+        )
 
     return f"""You are NOVA's PRODUCT DIRECTOR in EVOLVE mode (cycle {cycle_number}).
 
@@ -490,7 +593,7 @@ def _build_director_prompt(
 
 ## Last Commit
 {commit.reason}{"  ⚠ RESTART REQUESTED — mcp/ source changed" if commit.restart_requested else ""}
-
+{routing_section}
 ## This Cycle's Focus: {focus_area.replace("_", " ").title()}
 {focus_text}
 
@@ -531,6 +634,7 @@ def _log_cycle(
     commit: CommitResult,
     weight_reason: str,
     duration_s: float,
+    routing: dict | None = None,
 ) -> None:
     entry = {
         "cycle": cycle_number,
@@ -555,6 +659,10 @@ def _log_cycle(
         },
         "weight_reason": weight_reason,
         "duration_s": round(duration_s, 2),
+        "routing": {
+            "huginn_consistency_rate": routing.get("huginn_consistency_rate") if routing else None,
+            "suggested_threshold_delta": routing.get("suggested_threshold_delta", 0.0) if routing else 0.0,
+        },
     }
     try:
         with open(_EVOLVE_CYCLES_FILE, "a", encoding="utf-8") as f:
@@ -599,6 +707,7 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
 
     # 1. ANALYZE
     health = _shard_health()
+    routing = _routing_health()
 
     # 2. VERIFY
     tests = _run_tests()
@@ -607,11 +716,11 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
     commit = _auto_commit(dry_run=dry_run)
 
     # 4. GOVERN
-    weights, weight_reason = _adjust_weights(weights, health, tests, consecutive_empty)
+    weights, weight_reason = _adjust_weights(weights, health, tests, consecutive_empty, routing=routing)
     focus_area = _pick_focus(weights, cycle_number)
 
     # 5. PLAN
-    director_prompt = _build_director_prompt(cycle_number, focus_area, health, tests, commit)
+    director_prompt = _build_director_prompt(cycle_number, focus_area, health, tests, commit, routing=routing)
 
     # Track diminishing returns
     produced = commit.committed
@@ -620,7 +729,7 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
     # 6. LOG
     duration_s = time.monotonic() - t_start
     if not dry_run:
-        _log_cycle(cycle_number, focus_area, health, tests, commit, weight_reason, duration_s)
+        _log_cycle(cycle_number, focus_area, health, tests, commit, weight_reason, duration_s, routing=routing)
         cfg["_cycle_count"] = cycle_number
         cfg["_last_cycle_ts"] = time.time()
         cfg["_consecutive_empty"] = new_consecutive_empty
@@ -640,6 +749,7 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
         "consecutive_empty": new_consecutive_empty,
         "duration_s": round(duration_s, 2),
         "director_prompt": director_prompt,
+        "routing_health": routing,
     }
 
 

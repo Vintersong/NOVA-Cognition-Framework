@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -93,6 +94,16 @@ _COMPLEX_KEYWORDS: frozenset[str] = frozenset({
     "tracing", "profiling", "concurrency",
 })
 
+# Empirical routing cache — loaded lazily from forgemaster run logs.
+# Keyed by (task_type, model); values are {"pass": int, "fail": int}.
+_empirical_routing_stats: dict[tuple[str, str], dict[str, int]] = {}
+_empirical_stats_loaded: bool = False
+_empirical_stats_loaded_at: float = 0.0
+_EMPIRICAL_MIN_SAMPLES: int = 10  # minimum samples before empirical route overrides static rules
+# Cache TTL — override via NOVA_EMPIRICAL_CACHE_TTL_S env var (default 5 minutes).
+# A short TTL means long-running MCP servers pick up new sprint outcomes without restart.
+_EMPIRICAL_CACHE_TTL_S: float = float(os.environ.get("NOVA_EMPIRICAL_CACHE_TTL_S", "300"))
+
 # Role-to-model mapping for the 4-turn sprint pipeline. Each role resolves
 # through its FORGEMASTER_*_MODEL env var (see config.py), which falls back
 # to MUNINN_MODEL / GEMINI_MODEL when unset.
@@ -127,6 +138,86 @@ def _log_event(entry: dict) -> None:
             fh.write(json.dumps(entry) + "\n")
     except Exception as exc:
         logger.warning("event log write failed: %s", exc)
+
+
+def _load_empirical_stats() -> dict[tuple[str, str], dict[str, int]]:
+    """
+    Parse sprint_verdict events from forgemaster JSONL logs and accumulate
+    pass/fail counts per (task_type, routed_model).
+
+    Checks FORGEMASTER_EVENT_LOG env var first; falls back to scanning all
+    files under output/forgemaster_runs/. Returns {} on any IO error.
+    """
+    stats: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"pass": 0, "fail": 0})
+
+    log_files: list[str] = []
+    override = os.environ.get("FORGEMASTER_EVENT_LOG", "")
+    if override and os.path.exists(override):
+        log_files = [override]
+    else:
+        run_dir = _REPO_ROOT / "output" / "forgemaster_runs"
+        if run_dir.exists():
+            log_files = [str(p) for p in sorted(run_dir.glob("*.jsonl"))]
+
+    for log_path in log_files:
+        try:
+            with open(log_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if ev.get("role") == "outcome" and ev.get("event") == "sprint_verdict":
+                        tt = ev.get("task_type", "")
+                        model = ev.get("routed_model", "")
+                        outcome = ev.get("outcome", "")
+                        if tt and model and outcome in ("review_pass", "review_fail"):
+                            key = (tt, model)
+                            if outcome == "review_pass":
+                                stats[key]["pass"] += 1
+                            else:
+                                stats[key]["fail"] += 1
+        except OSError as exc:
+            logger.warning("_load_empirical_stats: could not read %s — %s", log_path, exc)
+
+    return dict(stats)
+
+
+def _compute_empirical_route(
+    task_type: str,
+    stats: dict[tuple[str, str], dict[str, int]],
+) -> tuple[str, float]:
+    """
+    Pick the best model for task_type based on historical sprint pass rates.
+
+    Only considers models with >= _EMPIRICAL_MIN_SAMPLES outcomes. Returns
+    ("", 0.0) if no model has sufficient history for this task_type.
+    """
+    candidates = {
+        model: counts
+        for (tt, model), counts in stats.items()
+        if tt == task_type
+    }
+    viable = {
+        model: counts
+        for model, counts in candidates.items()
+        if (counts["pass"] + counts["fail"]) >= _EMPIRICAL_MIN_SAMPLES
+    }
+    if not viable:
+        return "", 0.0
+
+    def _score(m: str) -> tuple[float, int]:
+        counts = viable[m]
+        total = counts["pass"] + counts["fail"]
+        return (counts["pass"] / total, total)
+
+    best_model = max(viable, key=_score)
+    counts = viable[best_model]
+    total = counts["pass"] + counts["fail"]
+    return best_model, round(counts["pass"] / total, 4)
 
 
 def _provider_for(model: str) -> str:
@@ -214,6 +305,7 @@ def _dispatch(
     role: str,
     prompt: str,
     cached_system: str = "",
+    model_override: str = "",
 ) -> tuple[str, str, int, int, int]:
     """
     Dispatch a prompt to the model assigned to *role*.
@@ -223,8 +315,12 @@ def _dispatch(
 
     cached_system is forwarded to _call_anthropic for Anthropic lanes so
     repeated sprint turns benefit from prompt-cache reads.
+
+    model_override, when non-empty, replaces the role's default model. Used by
+    run_sprint() to wire route_ticket() decisions into the implementer dispatch
+    so sprint_verdict logs accurately reflect which model actually ran.
     """
-    model = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+    model = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
     provider = _provider_for(model)
     if provider == "anthropic":
         text, in_tok, out_tok, lat = _call_anthropic(model, prompt, cached_system=cached_system)
@@ -284,6 +380,23 @@ def _first_verdict_line(review_out: str) -> str:
             continue
         return line
     return ""
+
+
+def _parse_review_verdict(response_text: str) -> str:
+    """
+    Extract a structured outcome string from reviewer output.
+
+    Returns one of: "review_pass", "review_fail", "error".
+    """
+    first = _first_verdict_line(response_text)
+    if not first:
+        return "error"
+    upper = first.upper()
+    if upper.startswith("PASS"):
+        return "review_pass"
+    if upper.startswith("FAIL"):
+        return "review_fail"
+    return "error"
 
 
 def _snapshot_corpus() -> dict[str, float]:
@@ -421,22 +534,45 @@ class ForgemasterRuntime:
 
         return session
 
-    def route_ticket(self, task_type: str) -> str:
+    def route_ticket(self, task_type: str) -> tuple[str, float]:
         """
-        Map a task type to a model name using the routing table from
-        ``forgemaster/AGENTS.md``.
+        Map a task type to a model name and confidence score using three-tier logic:
 
-        Complexity override: tasks whose type string contains any of the
-        ``_COMPLEX_KEYWORDS`` are promoted to ``claude-sonnet`` regardless
-        of the routing table (borrows the keyword-routing heuristic from
-        hermes-agent smart_model_routing.py).
+        1. Empirical: if >= _EMPIRICAL_MIN_SAMPLES historical outcomes exist for this
+           task_type and best-model pass rate > 0.6, use that model.
+        2. Complexity override: task_type string contains a complexity keyword → Sonnet.
+        3. Routing table + default: static prior from forgemaster/AGENTS.md.
 
-        Defaults to ``claude-sonnet`` for unknown task types.
+        Confidence values: empirical pass rate | 1.0 (keyword) | 0.9 (table) | 0.0 (default).
         """
+        global _empirical_routing_stats, _empirical_stats_loaded, _empirical_stats_loaded_at
+        now = time.monotonic()
+        if not _empirical_stats_loaded or (now - _empirical_stats_loaded_at) > _EMPIRICAL_CACHE_TTL_S:
+            _empirical_routing_stats = _load_empirical_stats()
+            _empirical_stats_loaded = True
+            _empirical_stats_loaded_at = now
+
         normalized = task_type.lower().strip()
+
+        # Tier 1: empirical model selection (model-adaptive routing)
+        if _empirical_routing_stats:
+            emp_model, emp_confidence = _compute_empirical_route(normalized, _empirical_routing_stats)
+            if emp_model and emp_confidence > 0.6:
+                logger.info(
+                    "route_ticket: empirical route task_type=%r -> %s (conf=%.3f)",
+                    normalized, emp_model, emp_confidence,
+                )
+                return emp_model, emp_confidence
+
+        # Tier 2: complexity keyword override
         if any(kw in normalized for kw in _COMPLEX_KEYWORDS):
-            return MUNINN_MODEL
-        return _ROUTING_TABLE.get(normalized, MUNINN_MODEL)
+            return MUNINN_MODEL, 1.0
+
+        # Tier 3: static routing table + default
+        keyword_match = _ROUTING_TABLE.get(normalized)
+        if keyword_match is not None:
+            return keyword_match, 0.9
+        return MUNINN_MODEL, 0.0
 
     def run_turn(
         self,
@@ -445,6 +581,7 @@ class ForgemasterRuntime:
         skill_path: str,
         prompt: str,
         cached_system: str = "",
+        model_override: str = "",
     ) -> tuple[NovaSession, str, SkillManifest]:
         """
         Execute a single agent turn with real LLM dispatch.
@@ -453,7 +590,9 @@ class ForgemasterRuntime:
         2. Parse @@verification / @@capabilities from the skill content.
         3. Build a prompt of (skill_content + '---' + prompt).
         4. Append as a user message to *session*.
-        5. Dispatch to the model assigned to *role* (see _ROLE_TO_MODEL).
+        5. Dispatch to the model assigned to *role* (see _ROLE_TO_MODEL),
+           or to model_override when provided (used by the implementer turn
+           to wire route_ticket() decisions into actual dispatch).
         6. Append the response as an assistant message.
         7. Emit a JSONL event to FORGEMASTER_EVENT_LOG if configured.
 
@@ -488,12 +627,14 @@ class ForgemasterRuntime:
         # Real dispatch.
         dispatch_error: Optional[str] = None
         try:
-            response_text, model_used, in_tok, out_tok, latency_ms = _dispatch(role, user_content, cached_system=cached_system)
+            response_text, model_used, in_tok, out_tok, latency_ms = _dispatch(
+                role, user_content, cached_system=cached_system, model_override=model_override
+            )
         except Exception as exc:
             logger.error("ForgemasterRuntime.run_turn: dispatch failed for %s — %s", role, exc)
             dispatch_error = str(exc)
             response_text = f"[DISPATCH FAILED: {exc}]"
-            model_used = _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+            model_used = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
             in_tok = out_tok = latency_ms = 0
 
         session = session.add_message_with_usage("assistant", response_text, in_tok, out_tok)
@@ -527,6 +668,7 @@ class ForgemasterRuntime:
         design_doc: str,
         shard_ids: list[str] | None = None,
         cached_system: str = "",
+        task_type: str = "",
     ) -> dict:
         """
         Execute the full Forgemaster sprint lifecycle with real LLM dispatch:
@@ -550,6 +692,17 @@ class ForgemasterRuntime:
 
         # Corpus snapshot before any writes — used by AuditLog biconditional check at end.
         corpus_before = _snapshot_corpus()     # set[str] of shard stems for audit check
+
+        # ── Routing decision (logged for calibration) ─────────────────────
+        routed_model, routing_confidence = self.route_ticket(task_type)
+        _log_event({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sprint_id": sprint_id,
+            "role": "routing",
+            "task_type": task_type,
+            "routed_model": routed_model,
+            "routing_confidence": round(routing_confidence, 4),
+        })
 
         # ── Turn 1: Orchestrator ──────────────────────────────────────────
         session, orch_out, _ = self.run_turn(
@@ -583,6 +736,9 @@ class ForgemasterRuntime:
         )
 
         # ── Turn 3: Implementer ───────────────────────────────────────────
+        # routed_model from route_ticket() is passed as model_override so the
+        # calibration loop is closed: sprint_verdict records the model that
+        # actually ran, not the static _ROLE_TO_MODEL default.
         session, impl_out, impl_skill = self.run_turn(
             session,
             role="implementer",
@@ -597,9 +753,8 @@ class ForgemasterRuntime:
                 "No markdown fences. No explanation. No prose. "
                 "Begin with the first line of the file and stop at the last."
             ),
-            # Gemini handles the implementer lane — cached_system is Anthropic-only
-            # but run_turn guards it inside _dispatch so it's safe to pass through.
             cached_system=cached_system,
+            model_override=routed_model,
         )
 
         # Write implementer output to disk if a target file is named in the design doc.
@@ -721,6 +876,19 @@ class ForgemasterRuntime:
         # ── Outcome-based reinforcement ───────────────────────────────────
         review_head = _first_verdict_line(review_out)
         sprint_passed = review_head.upper().startswith("PASS")
+
+        # Emit structured verdict event for calibration tooling (Component 2+).
+        _log_event({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sprint_id": sprint_id,
+            "role": "outcome",
+            "event": "sprint_verdict",
+            "outcome": _parse_review_verdict(review_out),
+            "review_head": review_head,
+            "task_type": task_type,
+            "routed_model": routed_model,
+            "routing_confidence": round(routing_confidence, 4),
+        })
         contributing_shards = shard_ids or []
 
         if sprint_passed and contributing_shards:

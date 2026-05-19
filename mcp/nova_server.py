@@ -90,7 +90,7 @@ from schemas import (
     ShardConsolidateInput, ShardGetFullInput, GraphQueryInput, GraphRelationInput,
     SessionFlushInput, SessionLoadInput, SessionListInput,
     ForgemasterSprintInput, ShardStateQueryInput, ObsidianExportInput,
-    CachePrewarmInput,
+    CachePrewarmInput, CalibrateRoutingInput,
 )
 from store import (
     sanitize_filename, get_unique_filename,
@@ -131,6 +131,7 @@ from nidhogg import register_nidhogg_tools
 from evolve import register_evolve_tools
 from wiki_tools import register_wiki_tools
 from facts import register_facts_tools, search_facts
+from calibrate import register_calibrate_tools
 
 # Bootstrap
 os.makedirs(SHARD_DIR, exist_ok=True)
@@ -261,6 +262,7 @@ register_nidhogg_tools(mcp)
 register_evolve_tools(mcp)
 register_wiki_tools(mcp)
 register_facts_tools(mcp)
+register_calibrate_tools(mcp)
 
 # ═══════════════════════════════════════════════════════════
 # PERMISSION HELPERS
@@ -1553,7 +1555,7 @@ async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
     op_ok = False
     try:
         try:
-            summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list, cached_system=params.cached_system)
+            summary = runtime.run_sprint(params.sprint_id, params.design_doc, shard_id_list, cached_system=params.cached_system, task_type=params.task_type)
         except Exception as exc:
             return json.dumps({"error": str(exc)}, indent=2)
 

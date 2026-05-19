@@ -32,7 +32,7 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (36 total)
+## Tools (37 total)
 
 ### Core shard + graph + session (21)
 
