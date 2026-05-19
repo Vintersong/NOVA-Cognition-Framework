@@ -22,6 +22,7 @@ from config import (
     DECAY_RATE,
     DECAY_INTERVAL_DAYS,
     MERGE_SIMILARITY_THRESHOLD,
+    MEMORY_KIND_DECAY_RATES,
 )
 from timeutils import parse_iso, now_utc
 
@@ -43,6 +44,7 @@ def apply_confidence_decay(shard_data: dict) -> float:
     """
     Decay confidence for shards not accessed in DECAY_INTERVAL_DAYS.
     Formula: MAX(0.1, confidence * (1 - decay_rate))
+    Uses per-intent rate from MEMORY_KIND_DECAY_RATES; falls back to DECAY_RATE.
     Returns new confidence value.
     """
     meta = shard_data.setdefault("meta_tags", {})
@@ -56,12 +58,15 @@ def apply_confidence_decay(shard_data: dict) -> float:
     if last_used is None:
         return current_confidence
 
+    intent = meta.get("intent", "reflection")
+    decay_rate = MEMORY_KIND_DECAY_RATES.get(intent, DECAY_RATE)
+
     days_since = (now_utc() - last_used).days
     if days_since >= DECAY_INTERVAL_DAYS:
         periods = days_since // DECAY_INTERVAL_DAYS
         new_confidence = current_confidence
         for _ in range(periods):
-            new_confidence = max(0.1, new_confidence * (1.0 - DECAY_RATE))
+            new_confidence = max(0.1, new_confidence * (1.0 - decay_rate))
         meta["confidence"] = round(new_confidence, 4)
         return new_confidence
 

@@ -237,6 +237,7 @@ class ArrowShardCache:
         now: datetime,
         decay_rate: float,
         interval_days: int,
+        kind_rates: "dict[str, float] | None" = None,
         forgotten_tag: str = "forgotten",
     ) -> list[tuple[str, float, float]]:
         """Identify shards whose confidence should be decayed.
@@ -245,6 +246,9 @@ class ArrowShardCache:
         Arrow ``confidence`` / ``last_used`` / ``tags`` columns. Returns
         ``[(shard_id, old_confidence, new_confidence), ...]`` for rows where
         ``new < old`` AND ``forgotten_tag`` is not in tags.
+
+        When ``kind_rates`` is provided, each row's ``intent`` field is used to
+        look up a per-kind rate; unknown intents fall back to ``decay_rate``.
 
         NÓTT iterates this list and writes back via store.load_shard /
         store.save_shard so long-tail meta_tags fields are preserved.
@@ -260,10 +264,11 @@ class ArrowShardCache:
         last_used_np = table["last_used"].to_numpy(zero_copy_only=False)
         shard_ids = table["shard_id"].to_pylist()
         tags_col = table["tags"].to_pylist()
+        intent_col = table["intent"].to_pylist() if kind_rates else None
 
         now_naive_utc = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo else now
         now_np = np.datetime64(now_naive_utc, "us")
-        decay_factor = 1.0 - decay_rate
+        default_factor = 1.0 - decay_rate
 
         results: list[tuple[str, float, float]] = []
         for i, sid in enumerate(shard_ids):
@@ -279,8 +284,13 @@ class ArrowShardCache:
             periods = delta_days // interval_days
             old_conf = float(confidence_col[i])
             new_conf = old_conf
+            if kind_rates and intent_col is not None:
+                row_intent = intent_col[i] or "reflection"
+                eff_factor = 1.0 - kind_rates.get(row_intent, decay_rate)
+            else:
+                eff_factor = default_factor
             for _ in range(periods):
-                new_conf = max(0.1, new_conf * decay_factor)
+                new_conf = max(0.1, new_conf * eff_factor)
             if new_conf < old_conf:
                 results.append((sid, old_conf, new_conf))
         return results
