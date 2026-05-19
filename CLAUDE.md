@@ -240,23 +240,49 @@ For all other domains see `forgemaster/SKILL_LIBRARY.md` (25 categories, 324 ski
 
 ## Session Handoff Protocol
 
-Before ending any session, write to NOVA:
+**Default: do not write a handoff.** A handoff is information you cannot
+recover from `git log`, the PR body, the codebase, or open issues. Most
+sessions produce no such information.
 
-```python
-nova_shard_update(
-    shard_id="[project-shard-id]",
-    user_message="Session handoff",
-    ai_response="""
-    CURRENT STATE: [branch, last completed ticket, test status]
-    IN PROGRESS: [what was started, what remains]
-    DECISIONS MADE: [key architectural choices and why]
-    NEXT ACTION: [exactly what to do first next session]
-    """
-)
-```
+Write a handoff **only** when one or more applies:
+
+1. **Suspended work** — the session ends mid-task with state that is not
+   committed and not obvious from the working tree. Record: branch, exact
+   resume point, what was tried and rejected.
+2. **Architectural decision** — a non-trivial choice was made whose
+   *reasoning* isn't in a commit message, PR description, or ADR. Record:
+   the choice, the alternatives considered, why the others lost. (If it's
+   worth writing here, ask whether it should also be an ADR.)
+3. **Discovered constraint** — something true about the system, a
+   dependency, an external stakeholder, or production state that the next
+   session would otherwise have to rediscover.
+4. **Cross-session continuity** — work the user has explicitly said will
+   resume in another session, with context that won't be in their prompt.
+
+**Skip the handoff** when the session was:
+- A code change that landed in a commit or PR (the commit message IS the handoff)
+- A bug fix where the fix and its cause are visible in the diff
+- A research/explanation task with no resulting artifact
+- A configuration tweak, dep bump, or doc edit
+
+**Where to write:**
+- Update the most specific project shard, not `nova_infrastructure_handoff`.
+  Search first; create a new shard only if no relevant one exists.
+- One shard per *project*, not per session. Multiple sessions append.
+
+**What to write:**
+- One field minimum, four fields maximum, from: CURRENT STATE,
+  IN PROGRESS, DECISIONS MADE, NEXT ACTION.
+- Skip any field that's empty or git-recoverable. A handoff with just
+  DECISIONS MADE is fine. A handoff with all four fields padded is bad.
+- Cap each field at ~5 lines. If you need more, you're writing prose
+  that belongs in an ADR or PR description.
+
+**Self-test before writing:**
+*"If I read `git log dev..HEAD` and the PR body next session, would I
+still need this shard?"* If no, don't write it.
 
 Next session starts with `nova_shard_interact(message="[project name] current state")`.
-This is not optional. Without this, every session starts from zero.
 
 ---
 

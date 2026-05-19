@@ -29,6 +29,9 @@ STAGE_ORDER = [
     "muninn_local",
     "muninn_llm",
     "spreading_activation_inner",
+    "spreading_graph_load",
+    "spreading_community_detect",
+    "spreading_bfs",
     "cluster_collapse_offpath",
 ]
 
@@ -113,6 +116,11 @@ def main(jsonl_path: str = DEFAULT_PATH) -> int:
             if not bucket:
                 continue
             _print_row(stage, bucket)
+        # Confidence-gate summary lives on huginn_llm rows. Surface what
+        # fraction of queries would trigger MUNINN at the configured
+        # threshold — answers "is the gate doing anything?" at a glance.
+        huginn_bucket = grouped.get((size, "huginn_llm"), [])
+        _print_gate_summary(huginn_bucket)
         print()
 
     if has_inner:
@@ -128,6 +136,33 @@ def main(jsonl_path: str = DEFAULT_PATH) -> int:
         print()
 
     return 0
+
+
+def _print_gate_summary(bucket: list[dict]) -> None:
+    """Print confidence-gate fire rate + mean huginn confidence for a
+    huginn_llm bucket. Skip silently if the rows pre-date the gate fields."""
+    triggers = [
+        bool(r["muninn_triggered"]) for r in bucket
+        if r.get("muninn_triggered") is not None
+    ]
+    confidences = [
+        r["huginn_max_confidence"] for r in bucket
+        if r.get("huginn_max_confidence") is not None
+    ]
+    if not triggers:
+        return
+    thresholds = {
+        r.get("confidence_threshold") for r in bucket
+        if r.get("confidence_threshold") is not None
+    }
+    thr = next(iter(thresholds)) if len(thresholds) == 1 else None
+    rate = sum(triggers) / len(triggers)
+    mean_conf = _mean(confidences)
+    thr_str = f"thr={thr:.2f}" if thr is not None else "thr=?"
+    print(
+        f"  gate: {thr_str}  fired={sum(triggers)}/{len(triggers)} "
+        f"({rate:.1%})  mean_huginn_conf={mean_conf:.3f}"
+    )
 
 
 def _print_row(stage: str, bucket: list[dict]) -> None:

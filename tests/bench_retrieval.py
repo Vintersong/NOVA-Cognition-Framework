@@ -27,6 +27,7 @@ import pytest
 from bench_corpus import (
     BenchTimer,
     Corpus,
+    annotate_activation_recall,
     build_corpus,
     disable_arrow_cache,
     install_anthropic_stub,
@@ -64,13 +65,15 @@ def bench_log_path(tmp_path_factory) -> Path:
 # ── Common monkeypatching ─────────────────────────────────────────────────────
 
 def _patch_environment(monkeypatch, corpus: Corpus, tmp_path: Path, log_path: Path,
-                       huginn_latency: float, muninn_latency: float) -> None:
+                       huginn_latency: float, muninn_latency: float,
+                       confidence_jitter: float = 0.0) -> None:
     """Apply all bench-scope patches: Anthropic stub, embedding stub,
     Arrow disable, synthetic graph, NOVA_BENCH inner-timer env, and
     point the facts index at a non-existent tmp path so search_facts()
     deterministically takes its empty-corpus early-return (facts.py:50)
     instead of opening/creating facts_index.db in the repo root."""
-    install_anthropic_stub(monkeypatch, huginn_latency, muninn_latency)
+    install_anthropic_stub(monkeypatch, huginn_latency, muninn_latency,
+                            confidence_jitter=confidence_jitter)
     install_embedding_stub(monkeypatch)
     disable_arrow_cache(monkeypatch)
     monkeypatch.setattr("graph.load_graph", lambda: corpus.graph, raising=False)
@@ -140,6 +143,10 @@ async def probe_huginn_llm(query: str, expected_cluster: str, corpus: Corpus,
     """Stage 3: HUGINN end-to-end (local pre-filter + Haiku LLM rescore).
 
     Returns the RetrievalResult so the MUNINN probes can chain off it.
+    Also records the confidence-gate decision: with the bench corpus's
+    realistic score distribution, what fraction of queries would the
+    gate at nova_server.py:425 route to MUNINN? `muninn_triggered=True`
+    means HUGINN's confidence fell below threshold, so MUNINN would run.
     """
     candidates_in = len(corpus.index)
     with BenchTimer(log_path, candidates_in, "huginn_llm", query_id) as t:
@@ -149,6 +156,9 @@ async def probe_huginn_llm(query: str, expected_cluster: str, corpus: Corpus,
         t.extra["huginn_called"] = result.used_llm
         t.extra["recall_at_5"] = recall_at_k(result.shard_ids, expected_cluster, corpus.index, 5)
         t.extra["recall_at_10"] = recall_at_k(result.shard_ids, expected_cluster, corpus.index, 10)
+        t.extra["huginn_max_confidence"] = round(result.max_confidence, 4)
+        t.extra["confidence_threshold"] = huginn.confidence_threshold
+        t.extra["muninn_triggered"] = not result.is_confident(huginn.confidence_threshold)
     return result
 
 
@@ -223,11 +233,31 @@ async def _run_sweep(corpus: Corpus, huginn: ravens.Huginn, muninn: ravens.Munin
         probe_cluster_collapse(query, expected_cluster, corpus, muninn_result,
                                log_path, query_id)
 
+    # Post-process: fill recall@k for spreading_activation_inner rows
+    # using the pre/post ID lists ravens emitted. Has to happen here —
+    # ravens has no ground truth.
+    annotate_activation_recall(log_path, corpus.queries, corpus.index)
+
 
 # Latencies for the LLM stubs. Set to 0 in the smoke test so it stays under
 # the 5s target. For the real sweep these approximate observed p50 round-trip.
 _REAL_HUGINN_LATENCY_S = 0.4
 _REAL_MUNINN_LATENCY_S = 1.2
+
+# HUGINN confidence depression for the real sweep. With threshold=0.7 the
+# fake LLM otherwise pegs every query at 1.0 and the gate never fires.
+# 0.4 makes ~50% of queries fall below threshold so the gate-fire metric
+# carries signal. The smoke test stays at 0 so its assertions on
+# deterministic scores remain stable.
+_REAL_CONFIDENCE_JITTER = 0.4
+
+# Corpus realism for the real sweep. graph_only_ratio = fraction of
+# on-topic shards whose embeddings are randomized — MUNINN cosine misses
+# them, but the cluster graph reaches them, so spreading activation
+# recovers them. graph_cross_cluster_ratio = small fraction of relations
+# linking different clusters (acts as activation noise).
+_REAL_GRAPH_ONLY_RATIO = 0.15
+_REAL_CROSS_CLUSTER_RATIO = 0.05
 
 
 @pytest.mark.benchmark
@@ -251,10 +281,40 @@ def test_bench_smoke(monkeypatch, tmp_path, bench_log_path: Path) -> None:
         "muninn_llm",
         "cluster_collapse_offpath",
         "spreading_activation_inner",
+        # Spreading activation sub-stage timers. graph_load always runs
+        # in the bench; community_detect + bfs only run when the synthetic
+        # graph clears NOVA_ACTIVATION_MIN_EDGES (build_corpus seeds enough
+        # edges per cluster that the smoke run satisfies this).
+        "spreading_graph_load",
+        "spreading_community_detect",
+        "spreading_bfs",
     }
     observed_stages = {r["stage"] for r in rows}
     missing = expected_stages - observed_stages
     assert not missing, f"missing stage rows: {missing}"
+
+    # Gate-decision fields populated only on huginn_llm rows.
+    huginn_rows = [r for r in rows if r["stage"] == "huginn_llm"]
+    assert huginn_rows, "no huginn_llm rows"
+    for r in huginn_rows:
+        assert r["huginn_max_confidence"] is not None
+        assert r["confidence_threshold"] == 0.7
+        assert isinstance(r["muninn_triggered"], bool)
+
+    # Activation recall fields filled by annotate_activation_recall.
+    inner_rows = [r for r in rows if r["stage"] == "spreading_activation_inner"]
+    assert inner_rows, "no spreading_activation_inner rows"
+    for r in inner_rows:
+        assert isinstance(r.get("pre_activation_ids"), list)
+        assert isinstance(r.get("post_activation_ids"), list)
+        # Recall is filled when the query_id is recognized (always true in
+        # the smoke test since _run_sweep tags every query). Must be in
+        # range when present.
+        for rk in ("recall_at_5", "recall_at_10",
+                   "pre_activation_recall_at_5", "pre_activation_recall_at_10"):
+            v = r.get(rk)
+            if v is not None:
+                assert 0.0 <= v <= 1.0, f"{rk} out of range on inner row: {v}"
 
     required_fields = {"corpus_size", "stage", "duration_ms", "in_live_pipeline"}
     for r in rows:
@@ -279,12 +339,27 @@ def test_bench_smoke(monkeypatch, tmp_path, bench_log_path: Path) -> None:
 @pytest.mark.parametrize("n_shards", [50, 200, 500, 1000])
 def test_bench_sweep(monkeypatch, tmp_path, bench_log_path: Path, n_shards: int) -> None:
     """The real sweep. ~20 queries × 6 stages × 4 sizes with stubbed
-    LLM latencies — expect ~8 min total wall clock."""
-    corpus = build_corpus(tmp_path, n_shards=n_shards)
+    LLM latencies — expect ~8 min total wall clock.
+
+    Builds a more realistic corpus than the smoke test: a fraction of
+    shards are graph-only (random embeddings; only reachable via the
+    graph), the graph has a few cross-cluster relations, and HUGINN's
+    confidence is jittered so the gate-fire-rate metric has signal.
+    Without these, gate fires 0% and activation contributes ~0 to
+    recall on every query — the instrumentation works but reads as
+    "nothing happens."
+    """
+    corpus = build_corpus(
+        tmp_path,
+        n_shards=n_shards,
+        graph_only_ratio=_REAL_GRAPH_ONLY_RATIO,
+        graph_cross_cluster_ratio=_REAL_CROSS_CLUSTER_RATIO,
+    )
     _patch_environment(
         monkeypatch, corpus, tmp_path, bench_log_path,
         huginn_latency=_REAL_HUGINN_LATENCY_S,
         muninn_latency=_REAL_MUNINN_LATENCY_S,
+        confidence_jitter=_REAL_CONFIDENCE_JITTER,
     )
     huginn, muninn = _make_ravens(corpus, tmp_path)
     asyncio.run(_run_sweep(corpus, huginn, muninn, bench_log_path))
