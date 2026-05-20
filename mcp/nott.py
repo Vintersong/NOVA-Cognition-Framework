@@ -263,12 +263,13 @@ class Nott:
 
         if ARROW_AVAILABLE:
             try:
-                from config import DECAY_RATE, DECAY_INTERVAL_DAYS
+                from config import DECAY_RATE, DECAY_INTERVAL_DAYS, MEMORY_KIND_DECAY_RATES
                 cache = get_arrow_cache()
                 candidates = cache.decay_candidates(
                     now=now_utc(),
                     decay_rate=DECAY_RATE,
                     interval_days=DECAY_INTERVAL_DAYS,
+                    kind_rates=MEMORY_KIND_DECAY_RATES,
                 )
                 decayed: list[dict] = []
                 for shard_id, old_conf, new_conf in candidates:

@@ -39,6 +39,24 @@ DECAY_RATE          = float(os.environ.get("NOVA_DECAY_RATE",      "0.05"))
 DECAY_INTERVAL_DAYS = int(os.environ.get("NOVA_DECAY_DAYS",        "7"))
 MERGE_SIMILARITY_THRESHOLD = float(os.environ.get("NOVA_MERGE_THRESHOLD", "0.85"))
 
+# ── Per-intent decay rates ────────────────────────────────────────────────────
+# Halflives: halflife_days = DECAY_INTERVAL_DAYS * ln(2) / rate
+# "reflection" matches the legacy uniform rate exactly — existing shards unchanged.
+# Override the whole dict via NOVA_KIND_DECAY_RATES (JSON string).
+import json as _json
+_default_kind_rates: dict[str, float] = {
+    "session":      0.10,   # halflife ~49d  — transient session notes
+    "event":        0.07,   # halflife ~69d
+    "reflection":   0.05,   # halflife ~97d  — current default
+    "research":     0.03,   # halflife ~162d
+    "project":      0.02,   # halflife ~243d
+    "decision":     0.015,  # halflife ~324d — architectural decisions persist
+    "architecture": 0.015,  # halflife ~324d
+}
+MEMORY_KIND_DECAY_RATES: dict[str, float] = _json.loads(
+    os.environ.get("NOVA_KIND_DECAY_RATES", _json.dumps(_default_kind_rates))
+)
+
 # ── Confidence bands ─────────────────────────────────────────────────────────
 CONFIDENCE_LOW_THRESHOLD = float(os.environ.get("NOVA_CONFIDENCE_LOW", "0.4"))
 
