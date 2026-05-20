@@ -34,7 +34,7 @@ _KNOWN_CAPABILITIES: frozenset[str] = frozenset({
 # Valid categories. Each maps 1:1 to a module that registers tools.
 _KNOWN_CATEGORIES: frozenset[str] = frozenset({
     "shard", "graph", "session", "forgemaster",
-    "wiki", "facts", "nidhogg", "evolve", "gemini", "calibrate",
+    "wiki", "facts", "nidhogg", "evolve", "gemini", "retrieval",
 })
 
 
@@ -119,8 +119,10 @@ _REGISTRY: dict[str, ToolSpec] = dict([
     # ── Gemini (2) ───────────────────────────────────────────────────────
     _spec("gemini_execute_ticket",  "spawn.proc",     "gemini", irreversible=True),
     _spec("gemini_load_file",       "spawn.proc",     "gemini"),
-    # ── Calibrate (1) ────────────────────────────────────────────────────
-    _spec("nova_calibrate_routing", "fs.read",        "calibrate"),
+    # ── External retrieval deliberation (1) ──────────────────────────────
+    # net.egress: fires Anthropic API calls (Haiku + Sonnet/Opus).
+    # Reversible: shard writes can be undone via nova_shard_archive/forget.
+    _spec("nova_external_retrieval", "net.egress",    "retrieval"),
 ])
 
 

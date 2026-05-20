@@ -143,6 +143,14 @@ EMBEDDING_INTEGRITY_LOG = os.environ.get(
     "NOVA_EMBEDDING_INTEGRITY_LOG", str(_REPO_ROOT / "embedding_integrity.jsonl")
 )
 
+# ── External retrieval deliberation pipeline ──────────────────────────────────
+# Fires when HUGINN internal retrieval confidence falls below threshold.
+NOVA_EXTERNAL_RETRIEVAL_THRESHOLD = float(os.environ.get("NOVA_EXTERNAL_RETRIEVAL_THRESHOLD", "0.6"))
+NOVA_EXTERNAL_COST_CAP            = float(os.environ.get("NOVA_EXTERNAL_COST_CAP",            "0.10"))
+NOVA_EXTERNAL_RETRIEVAL_TIMEOUT   = float(os.environ.get("NOVA_EXTERNAL_RETRIEVAL_TIMEOUT",   "30.0"))
+NOVA_EXTERNAL_ARBITER_MODEL       = os.environ.get("NOVA_EXTERNAL_ARBITER_MODEL",             "claude-sonnet-4-6")
+NOVA_EXTERNAL_ARBITER_TIMEOUT     = float(os.environ.get("NOVA_EXTERNAL_ARBITER_TIMEOUT",     "90.0"))
+
 # ── Skill verification layer ──────────────────────────────────────────────────
 # SQLite audit log for HITL lifecycle events (irreversible.request/decision/executed,
 # capability.denied) and post-session biconditional checks.

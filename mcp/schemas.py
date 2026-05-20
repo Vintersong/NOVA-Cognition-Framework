@@ -1,5 +1,5 @@
 """
-schemas.py — Pydantic input models for all 37 NOVA MCP tools.
+schemas.py — Pydantic input models for all 36 NOVA MCP tools.
 
 Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 """
@@ -212,7 +212,6 @@ class ForgemasterSprintInput(BaseModel):
     design_doc: str = Field(..., min_length=1)
     shard_ids: Optional[str] = Field(default=None)
     cached_system: str = Field(default="", description="System prompt from nova_cache_prewarm — passed to every Anthropic turn for cache reads")
-    task_type: str = Field(default="", description="Task type hint for model routing (e.g. 'implementation', 'research', 'architecture'). Drives route_ticket() and is logged for empirical calibration.")
 
 
 class CachePrewarmInput(BaseModel):
@@ -265,19 +264,9 @@ class WikiLintInput(BaseModel):
     deep: bool = Field(default=False, description="Run LLM contradiction check across pages")
 
 
-# ── Calibrate tools ───────────────────────────────────────────────────────────
+# ── External retrieval deliberation pipeline ──────────────────────────────────
 
-class CalibrateRoutingInput(BaseModel):
+class ExternalRetrievalInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
-    sample_size: int = Field(
-        default=100, ge=10, le=500,
-        description="Number of recent HUGINN log entries to sample for consistency analysis.",
-    )
-    k_runs: int = Field(
-        default=5, ge=2, le=10,
-        description="Minimum repeated-query occurrences required to count as consistent.",
-    )
-    include_forgemaster: bool = Field(
-        default=True,
-        description="Also parse FORGEMASTER_EVENT_LOG for routing success rates per model.",
-    )
+    query: str = Field(..., min_length=1, max_length=500, description="The search query to deliberate on")
+    context: Optional[str] = Field(default=None, max_length=2000, description="Optional additional context passed to debate agents")
