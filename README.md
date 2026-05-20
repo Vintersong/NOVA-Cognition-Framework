@@ -46,7 +46,7 @@ Agents run in parallel sandboxed lanes. NOVA is Forgemaster's memory backplane: 
 
 **Key capabilities:**
 - Task decomposition from design docs into typed, routable tickets
-- Model routing by task type and confidence score, with complexity-keyword override
+- Three-tier model-adaptive routing: empirical pass rate history → complexity-keyword override → static routing table; calibrated via `nova_calibrate_routing`
 - Parallel sandboxed execution lanes
 - Sprint pipeline writes implementer output to disk when the design doc names a `Target file:`
 - Per-call JSONL event log via `FORGEMASTER_EVENT_LOG`
@@ -89,7 +89,7 @@ You (design doc / feature request)
 
 ```mermaid
 graph TD
-    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"36 tool calls"| B["nova_server.py\nMCP Adapter"]
+    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"37 tool calls"| B["nova_server.py\nMCP Adapter"]
 
     B --> C
     B -->|"nova_shard_interact"| R
@@ -255,7 +255,7 @@ The bench measures each stage independently: SQLite facts pre-filter → HUGINN 
 NOVA-Cognition-Framework/
   mcp/
     # Core server
-    nova_server.py           ← ACTIVE MCP server (registers all 36 tools)
+    nova_server.py           ← ACTIVE MCP server (registers all 37 tools)
     config.py                ← all env vars and defaults (single source of truth)
     schemas.py               ← Pydantic input models
     models.py                ← shared dataclasses (UsageSummary)
@@ -321,6 +321,7 @@ NOVA-Cognition-Framework/
     build_summary_index.py   ← batch-build summary_index.json via Haiku
     adversarial.py           ← adversarial shard contradiction testing
     ternary_net.py           ← ternary epistemic memory encoder (experimental)
+    calibrate.py             ← nova_calibrate_routing: HUGINN threshold + Forgemaster routing calibration
 
     # Tests (run with pytest from repo root)
     test_nova.py             ← memory-explorer CLI (not pytest — run directly)
@@ -359,7 +360,7 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (36)
+## NOVA MCP Tools (37)
 
 ### Core shard + graph + session (22)
 
@@ -437,6 +438,12 @@ Registered into `nova_server` via `mcp/Gemini/gemini_mcp.py`:
 | `gemini_execute_ticket` | Send a structured ticket to Gemini Flash |
 | `gemini_load_file` | Load a file from disk as codebase context |
 
+### Calibrate (1)
+
+| Tool | Description |
+|---|---|
+| `nova_calibrate_routing` | Analyse HUGINN consistency per confidence bucket and Forgemaster sprint pass rates by model; suggests threshold adjustments. Read-only — no state changes. |
+
 ### MCP Resources
 
 Read-only resources exposed alongside the tools:
@@ -465,7 +472,8 @@ Read-only resources exposed alongside the tools:
 | `hooks.py` | Event-driven hook registry (SESSION_START, POST_SPRINT, COUNT_THRESHOLD) |
 | `usage.py` | JSONL operation logging |
 | `session_store.py` | Session CRUD and flush-to-disk |
-| `forgemaster_runtime.py` | Sprint orchestration — routes tickets to model lanes, writes output |
+| `forgemaster_runtime.py` | Sprint orchestration — three-tier adaptive model routing, dispatch, outcome + routing event logging |
+| `calibrate.py` | HUGINN threshold calibration + Forgemaster routing stats — analyses `nova_usage.jsonl` and sprint event logs, suggests threshold adjustments |
 | `ravens.py` | HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank) |
 | `spreading_activation.py` | Damped BFS over the knowledge graph — MUNINN third retrieval pass with cluster-boundary penalties |
 | `recall.py` | Hook recall + cache prewarm + cluster-aware top-k walk (collapses same-cluster results, collects siblings over 2×top_k window) |
@@ -538,6 +546,7 @@ Read-only resources exposed alongside the tools:
 | `NIDHOGG_MANIFEST_FILE` | `nidhogg_manifest.json` | Ingested-hash manifest |
 | `NIDHOGG_SIMILARITY_THRESHOLD` | `0.55` | Shard-match threshold for annotation |
 | `FORGEMASTER_EVENT_LOG` | — | Override path for sprint JSONL event log |
+| `NOVA_EMPIRICAL_CACHE_TTL_S` | `300` | Empirical routing stats cache TTL (seconds); lower this to pick up new sprint outcomes faster in long-running servers |
 | `NOVA_RECALL_CACHE_TTL` | `300` | In-memory recall cache TTL in seconds |
 | `NOVA_ACTIVATION_MIN_EDGES` | `10` | Minimum graph edges required to run spreading activation |
 | `NOVA_EMBEDDING_HMAC_KEY` | — | Hex or UTF-8 secret for HMAC-SHA256 embedding signing; if unset, signing is skipped |
