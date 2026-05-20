@@ -262,3 +262,11 @@ class WikiListInput(BaseModel):
 class WikiLintInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
     deep: bool = Field(default=False, description="Run LLM contradiction check across pages")
+
+
+# ── External retrieval deliberation pipeline ──────────────────────────────────
+
+class ExternalRetrievalInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    query: str = Field(..., min_length=1, max_length=500, description="The search query to deliberate on")
+    context: Optional[str] = Field(default=None, max_length=2000, description="Optional additional context passed to debate agents")

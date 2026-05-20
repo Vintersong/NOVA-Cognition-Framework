@@ -131,6 +131,7 @@ from nidhogg import register_nidhogg_tools
 from evolve import register_evolve_tools
 from wiki_tools import register_wiki_tools
 from facts import register_facts_tools, search_facts
+from external_retrieval import register_external_retrieval_tools
 
 # Bootstrap
 os.makedirs(SHARD_DIR, exist_ok=True)
@@ -261,6 +262,7 @@ register_nidhogg_tools(mcp)
 register_evolve_tools(mcp)
 register_wiki_tools(mcp)
 register_facts_tools(mcp)
+register_external_retrieval_tools(mcp)
 
 # ═══════════════════════════════════════════════════════════
 # PERMISSION HELPERS
