@@ -178,11 +178,25 @@ def _compute_replay_divergence(sample: list[dict], k_runs: int) -> dict:
     """
     Detect replay divergence in HUGINN retrieval.
 
-    For every query that appears ``>= k_runs`` times, check whether the top-1
-    shard changed across runs. The rate of such queries is a proxy for the
-    "replay divergence" failure mode from Srinivasan 2026 (arXiv 2605.20173,
-    §5.1): the same input produces different downstream outputs across runtime
-    conditions (model version, prompt revision, retrieval index update).
+    For every query that appears ``>= k_runs`` times, observe the top-1
+    result of each run, where "result" is the top-1 shard_id string or
+    ``None`` for a miss (no shard_ids returned). The query is **divergent**
+    iff the set of observed results has more than one distinct element.
+
+    Two semantic refinements over a naive "compare top-1 strings" version:
+
+    - Queries whose every run is a miss are **excluded** from the
+      denominator (cannot be divergent — there is no positive signal to
+      compare). They are surfaced separately as ``queries_zero_hit`` so
+      the operator can see what was filtered.
+    - A "miss" is treated as a distinct result, not silently dropped. A
+      run sequence of ``['s1'], [], ['s1']`` is divergent (the retrieval
+      sometimes hits and sometimes doesn't), even though the hits agree.
+
+    The rate is a proxy for the "replay divergence" failure mode from
+    Srinivasan 2026 (arXiv 2605.20173, §5.1): the same input produces
+    different downstream outputs across runtime conditions (model version,
+    prompt revision, retrieval index update).
 
     For NOVA specifically the runtime conditions that drift are:
       - confidence decay across calendar time (NOVA_DECAY_RATE),
@@ -191,10 +205,11 @@ def _compute_replay_divergence(sample: list[dict], k_runs: int) -> dict:
 
     Returns:
       {
-        "queries_repeated":    int,   # queries with >= k_runs runs
-        "queries_divergent":   int,   # subset whose top-1 changed at least once
-        "divergence_rate":     float, # divergent / repeated (0.0 if none)
-        "examples":            list,  # up to 5 query hashes and their top-1 set
+        "queries_repeated":    int,   # queries with >= k_runs runs AND at least one hit
+        "queries_zero_hit":    int,   # queries with >= k_runs runs but all misses (excluded)
+        "queries_divergent":   int,   # subset of repeated whose result varied across runs
+        "divergence_rate":     float, # divergent / repeated (0.0 if repeated == 0)
+        "examples":            list,  # up to 5 divergent query hashes and their distinct results
         "note":                str,
       }
     """
@@ -205,21 +220,37 @@ def _compute_replay_divergence(sample: list[dict], k_runs: int) -> dict:
             by_hash[qhash].append(entry)
 
     repeated = 0
+    zero_hit = 0
     divergent = 0
     examples: list[dict] = []
     for qhash, entries in by_hash.items():
         if len(entries) < k_runs:
             continue
+
+        # Each run contributes either its top-1 shard_id or None (miss).
+        per_run_top1: list[str | None] = [
+            (e["shard_ids"][0] if e.get("shard_ids") else None)
+            for e in entries
+        ]
+
+        # All-miss queries cannot be divergent — exclude from the denominator
+        # and report separately so the operator sees the filter.
+        if all(r is None for r in per_run_top1):
+            zero_hit += 1
+            continue
+
         repeated += 1
-        top1s = [e["shard_ids"][0] if e.get("shard_ids") else "(none)" for e in entries]
-        unique_top1 = sorted(set(top1s))
-        if len(unique_top1) > 1:
+        distinct_results = set(per_run_top1)
+        if len(distinct_results) > 1:
             divergent += 1
             if len(examples) < 5:
                 examples.append({
                     "query_sha256_16": qhash,
                     "runs": len(entries),
-                    "distinct_top1": unique_top1,
+                    # Sorted with misses (None) first for stable JSON output.
+                    "distinct_top1": sorted(
+                        distinct_results, key=lambda r: (r is not None, r or "")
+                    ),
                     "max_confidence": max(
                         (e.get("max_confidence", 0.0) for e in entries),
                         default=0.0,
@@ -229,8 +260,9 @@ def _compute_replay_divergence(sample: list[dict], k_runs: int) -> dict:
     rate = round(divergent / max(repeated, 1), 3)
     if repeated == 0:
         note = (
-            "No queries repeated >= k_runs times — divergence cannot be measured. "
-            "Increase sample_size or lower k_runs."
+            "No queries had >= k_runs runs with at least one hit — divergence "
+            "cannot be measured. Increase sample_size, lower k_runs, or check "
+            "queries_zero_hit if it is high (HUGINN may be missing the corpus)."
         )
     elif rate >= 0.20:
         note = (
@@ -248,6 +280,7 @@ def _compute_replay_divergence(sample: list[dict], k_runs: int) -> dict:
 
     return {
         "queries_repeated": repeated,
+        "queries_zero_hit": zero_hit,
         "queries_divergent": divergent,
         "divergence_rate": rate,
         "examples": examples,
