@@ -669,6 +669,7 @@ class ForgemasterRuntime:
         shard_ids: list[str] | None = None,
         cached_system: str = "",
         task_type: str = "",
+        runtime_class: str = "auto",
     ) -> dict:
         """
         Execute the full Forgemaster sprint lifecycle with real LLM dispatch:
@@ -700,6 +701,7 @@ class ForgemasterRuntime:
             "sprint_id": sprint_id,
             "role": "routing",
             "task_type": task_type,
+            "runtime_class": runtime_class,
             "routed_model": routed_model,
             "routing_confidence": round(routing_confidence, 4),
         })
@@ -886,6 +888,7 @@ class ForgemasterRuntime:
             "outcome": _parse_review_verdict(review_out),
             "review_head": review_head,
             "task_type": task_type,
+            "runtime_class": runtime_class,
             "routed_model": routed_model,
             "routing_confidence": round(routing_confidence, 4),
         })
@@ -924,6 +927,9 @@ class ForgemasterRuntime:
             "review_head": review_head,
             "status": "complete",
             "outcome": "pass" if sprint_passed else "fail",
+            "task_type": task_type,
+            "runtime_class": runtime_class,
+            "routed_model": routed_model,
             "corroborated_shards": contributing_shards if sprint_passed else [],
             "biconditional_check": biconditional_result,
         }

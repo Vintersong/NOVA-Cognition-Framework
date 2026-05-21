@@ -212,6 +212,20 @@ class ForgemasterSprintInput(BaseModel):
     design_doc: str = Field(..., min_length=1)
     shard_ids: Optional[str] = Field(default=None)
     cached_system: str = Field(default="", description="System prompt from nova_cache_prewarm — passed to every Anthropic turn for cache reads")
+    task_type: str = Field(
+        default="",
+        description="Task category for empirical routing (e.g. 'architecture', 'implementation', 'review').",
+    )
+    runtime_class: Literal["conversational", "autonomous", "long_horizon", "auto"] = Field(
+        default="auto",
+        description=(
+            "Runtime class per Srinivasan 2026 §2.1. 'conversational' = seconds, "
+            "user waiting; 'autonomous' = minutes, scheduled/queued; "
+            "'long_horizon' = hours-days, world changes mid-flight. "
+            "Recorded in sprint events for downstream pattern selection. "
+            "'auto' leaves it unspecified."
+        ),
+    )
 
 
 class CachePrewarmInput(BaseModel):
@@ -270,3 +284,29 @@ class ExternalRetrievalInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
     query: str = Field(..., min_length=1, max_length=500, description="The search query to deliberate on")
     context: Optional[str] = Field(default=None, max_length=2000, description="Optional additional context passed to debate agents")
+
+
+# ── Calibration ───────────────────────────────────────────────────────────────
+
+class CalibrateRoutingInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    sample_size: int = Field(
+        default=200, ge=10, le=10000,
+        description="Number of recent HUGINN entries to analyse",
+    )
+    k_runs: int = Field(
+        default=3, ge=2, le=50,
+        description="Minimum repeat count per query before consistency is computed",
+    )
+    include_forgemaster: bool = Field(
+        default=True,
+        description="Include sprint pass-rate analysis from forgemaster event logs",
+    )
+    include_replay_divergence: bool = Field(
+        default=True,
+        description=(
+            "Compute replay-divergence stats: queries whose top-1 shard changed "
+            "across repeated runs (proxy for model-version drift in retrieval, "
+            "the P3 failure mode from Srinivasan 2026)."
+        ),
+    )

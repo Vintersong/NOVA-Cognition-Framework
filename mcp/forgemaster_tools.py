@@ -60,11 +60,21 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
                     params.design_doc,
                     shard_id_list,
                     cached_system=params.cached_system,
+                    task_type=params.task_type,
+                    runtime_class=params.runtime_class,
                 )
             except Exception as exc:
                 return json.dumps({"error": str(exc)}, indent=2)
 
-            log_operation("nova_forgemaster_sprint", shard_id_list, {"sprint_id": params.sprint_id})
+            log_operation(
+                "nova_forgemaster_sprint",
+                shard_id_list,
+                {
+                    "sprint_id": params.sprint_id,
+                    "task_type": params.task_type,
+                    "runtime_class": params.runtime_class,
+                },
+            )
             op_ok = True
             return json.dumps(summary, indent=2)
         finally:
