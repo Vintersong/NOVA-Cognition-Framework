@@ -1,0 +1,154 @@
+"""
+reject.py — typed reject signal for NOVA's stochastic-deterministic boundary.
+
+Inspired by the SDB contract from Srinivasan, "A Methodology for Selecting and
+Composing Runtime Architecture Patterns for Production LLM Agents" (arXiv
+2605.20173). The paper identifies the reject signal as a load-bearing part of
+the four-part SDB contract (proposer / verifier / commit / reject). NOVA tools
+already verify and commit; this module formalises the reject envelope so the
+LLM proposer receives a machine-readable signal it can act on instead of
+guessing from a free-text "message" field.
+
+The envelope shape:
+
+    {
+        "status":     "rejected",
+        "code":       "<machine code, see RejectCode>",
+        "message":    "<human-readable reason>",
+        "retryable":  bool,
+        "hint":       "<next action the proposer can take>",
+        "target":     "<optional target, e.g. shard_id>",
+    }
+
+Tool handlers call ``reject_payload`` and return the resulting JSON string.
+Existing ``{"status": "error", "message": ...}`` callers continue to work;
+this is the typed successor, not a replacement of the legacy "error" shape
+which is reserved for unexpected exceptions.
+"""
+
+from __future__ import annotations
+
+import json
+from enum import Enum
+from typing import Optional
+
+
+class RejectCode(str, Enum):
+    """Machine-readable reject codes returned to the LLM proposer."""
+
+    SHARD_NOT_FOUND = "shard_not_found"
+    WIKI_PAGE_NOT_FOUND = "wiki_page_not_found"
+    INVALID_INPUT = "invalid_input"
+    PERMISSION_DENIED = "permission_denied"
+    GATE_DENIED = "gate_denied"
+    QUARANTINED = "quarantined"
+    LOW_CONFIDENCE = "low_confidence"
+    DUPLICATE = "duplicate"
+    DEPENDENCY_MISSING = "dependency_missing"
+    PRECONDITION_FAILED = "precondition_failed"
+    NOT_IMPLEMENTED = "not_implemented"
+
+
+# Per-code defaults so call sites can stay terse. Override per call by
+# passing explicit ``retryable`` / ``hint`` arguments.
+_DEFAULTS: dict[RejectCode, tuple[bool, str]] = {
+    RejectCode.SHARD_NOT_FOUND: (
+        False,
+        "Use nova_shard_search or nova_shard_index to find the right shard_id.",
+    ),
+    RejectCode.WIKI_PAGE_NOT_FOUND: (
+        False,
+        "Use nova_wiki_list or nova_wiki_query to discover existing pages.",
+    ),
+    RejectCode.INVALID_INPUT: (
+        True,
+        "Re-issue the call with input that satisfies the tool's schema.",
+    ),
+    RejectCode.PERMISSION_DENIED: (
+        False,
+        "This tool is blocked in the current permission context.",
+    ),
+    RejectCode.GATE_DENIED: (
+        False,
+        "A capability gate refused the operation. Inspect the audit log.",
+    ),
+    RejectCode.QUARANTINED: (
+        True,
+        "Target is quarantined until QUARANTINE_HOURS elapses. Retry later or "
+        "call nova_shard_query_state to confirm release.",
+    ),
+    RejectCode.LOW_CONFIDENCE: (
+        True,
+        "Pass include_low_confidence=True to override the confidence floor.",
+    ),
+    RejectCode.DUPLICATE: (
+        False,
+        "A shard with this content already exists; do not re-create.",
+    ),
+    RejectCode.DEPENDENCY_MISSING: (
+        False,
+        "Install the required dependency or set the missing env var.",
+    ),
+    RejectCode.PRECONDITION_FAILED: (
+        True,
+        "Resolve the precondition and retry. See message for the specific check.",
+    ),
+    RejectCode.NOT_IMPLEMENTED: (
+        False,
+        "This branch of the tool is not yet implemented.",
+    ),
+}
+
+
+def reject_payload(
+    code: RejectCode,
+    message: str,
+    *,
+    retryable: Optional[bool] = None,
+    hint: Optional[str] = None,
+    target: Optional[str] = None,
+    extra: Optional[dict] = None,
+) -> str:
+    """Return a typed reject envelope as a JSON string.
+
+    Args:
+        code: Machine-readable reject category from :class:`RejectCode`.
+        message: Human-readable explanation for the proposer.
+        retryable: If None, falls back to the per-code default.
+        hint: If None, falls back to the per-code default. Pass an empty
+            string to suppress the hint entirely.
+        target: Optional identifier of the rejected target (shard_id, slug,
+            sprint_id, etc.). Surfaces in the envelope as the ``target`` key.
+        extra: Additional fields to merge into the envelope. Reserved keys
+            (status / code / message / retryable / hint / target) are not
+            overwritten.
+    """
+    default_retryable, default_hint = _DEFAULTS.get(code, (True, ""))
+    if retryable is None:
+        retryable = default_retryable
+    if hint is None:
+        hint = default_hint
+
+    payload: dict = {
+        "status": "rejected",
+        "code": code.value,
+        "message": message,
+        "retryable": retryable,
+        "hint": hint,
+    }
+    if target is not None:
+        payload["target"] = target
+    if extra:
+        for k, v in extra.items():
+            payload.setdefault(k, v)
+
+    return json.dumps(payload, indent=2)
+
+
+def shard_not_found(shard_id: str) -> str:
+    """Shortcut for the most common reject path."""
+    return reject_payload(
+        RejectCode.SHARD_NOT_FOUND,
+        f"Shard '{shard_id}' not found.",
+        target=shard_id,
+    )

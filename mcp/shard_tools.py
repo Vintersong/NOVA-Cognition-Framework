@@ -39,6 +39,7 @@ from hooks import NovaHookEvent
 from maintenance import confidence_weighted_score
 from nott import NottTrigger
 from nova_embeddings_local import enrich_shard
+from reject import RejectCode, reject_payload, shard_not_found
 from schemas import (
     ObsidianExportInput,
     ShardArchiveInput,
@@ -372,7 +373,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             try:
                 data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
             except FileNotFoundError:
-                return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
+                return shard_not_found(params.shard_id)
 
             data.setdefault("conversation_history", []).append({
                 "timestamp": datetime.now().isoformat(),
@@ -716,11 +717,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         try:
             data, _ = await loop.run_in_executor(None, load_shard, params.shard_id)
         except FileNotFoundError:
-            return json.dumps({
-                "status": "error",
-                "shard_id": params.shard_id,
-                "message": f"Shard '{params.shard_id}' not found."
-            }, indent=2)
+            return shard_not_found(params.shard_id)
 
         return json.dumps(data, indent=2)
 
@@ -733,11 +730,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         try:
             data, _ = await loop.run_in_executor(None, load_shard, params.shard_id)
         except FileNotFoundError:
-            return json.dumps({
-                "status": "error",
-                "shard_id": params.shard_id,
-                "message": f"Shard '{params.shard_id}' not found."
-            }, indent=2)
+            return shard_not_found(params.shard_id)
 
         body = data.get("conversation_history") or data.get("turns") or []
         return json.dumps({
@@ -764,7 +757,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                 merged_history.extend(data.get("conversation_history", []))
                 source_questions.append(f"{sid}: {data.get('guiding_question', '')}")
             except FileNotFoundError:
-                return json.dumps({"status": "error", "message": f"Shard '{sid}' not found."}, indent=2)
+                return shard_not_found(sid)
 
         merged_history.sort(key=lambda x: x.get("timestamp", ""))
 
@@ -839,7 +832,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             try:
                 data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
             except FileNotFoundError:
-                return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
+                return shard_not_found(params.shard_id)
 
             data.setdefault("meta_tags", {})["intent"] = "archived"
             data["meta_tags"]["archived_at"] = datetime.now().isoformat()
@@ -875,7 +868,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             try:
                 data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
             except FileNotFoundError:
-                return json.dumps({"status": "error", "message": f"Shard '{params.shard_id}' not found."}, indent=2)
+                return shard_not_found(params.shard_id)
 
             data.setdefault("meta_tags", {})["intent"] = "forgotten"
             data["meta_tags"]["forgotten_at"] = datetime.now().isoformat()

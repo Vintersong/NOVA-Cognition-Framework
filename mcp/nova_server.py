@@ -49,6 +49,7 @@ from tool_registry import all_names as _registry_all_names
 
 # Tool-category registration entry points.
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Gemini"))
+from calibrate import register_calibrate_tools
 from evolve import register_evolve_tools
 from external_retrieval import register_external_retrieval_tools
 from facts import register_facts_tools
@@ -88,6 +89,7 @@ register_evolve_tools(mcp)
 register_wiki_tools(mcp)
 register_facts_tools(mcp)
 register_external_retrieval_tools(mcp)
+register_calibrate_tools(mcp)
 
 # NOVA-core tool modules (extracted from this file during the refactor).
 _shard_handlers = register_shard_tools(mcp, ctx)

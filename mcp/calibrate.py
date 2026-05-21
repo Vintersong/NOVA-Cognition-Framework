@@ -174,6 +174,87 @@ def _suggest_threshold(bucket_stats: dict[str, dict], min_consistency: float = 0
     return HUGINN_CONFIDENCE_THRESHOLD
 
 
+def _compute_replay_divergence(sample: list[dict], k_runs: int) -> dict:
+    """
+    Detect replay divergence in HUGINN retrieval.
+
+    For every query that appears ``>= k_runs`` times, check whether the top-1
+    shard changed across runs. The rate of such queries is a proxy for the
+    "replay divergence" failure mode from Srinivasan 2026 (arXiv 2605.20173,
+    §5.1): the same input produces different downstream outputs across runtime
+    conditions (model version, prompt revision, retrieval index update).
+
+    For NOVA specifically the runtime conditions that drift are:
+      - confidence decay across calendar time (NOVA_DECAY_RATE),
+      - HUGINN model version changes,
+      - new shards entering the corpus shifting top-1 ranking.
+
+    Returns:
+      {
+        "queries_repeated":    int,   # queries with >= k_runs runs
+        "queries_divergent":   int,   # subset whose top-1 changed at least once
+        "divergence_rate":     float, # divergent / repeated (0.0 if none)
+        "examples":            list,  # up to 5 query hashes and their top-1 set
+        "note":                str,
+      }
+    """
+    by_hash: dict[str, list[dict]] = defaultdict(list)
+    for entry in sample:
+        qhash = entry.get("query_sha256_16", "")
+        if qhash:
+            by_hash[qhash].append(entry)
+
+    repeated = 0
+    divergent = 0
+    examples: list[dict] = []
+    for qhash, entries in by_hash.items():
+        if len(entries) < k_runs:
+            continue
+        repeated += 1
+        top1s = [e["shard_ids"][0] for e in entries if e.get("shard_ids")]
+        unique_top1 = sorted(set(top1s))
+        if len(unique_top1) > 1:
+            divergent += 1
+            if len(examples) < 5:
+                examples.append({
+                    "query_sha256_16": qhash,
+                    "runs": len(entries),
+                    "distinct_top1": unique_top1,
+                    "max_confidence": max(
+                        (e.get("max_confidence", 0.0) for e in entries),
+                        default=0.0,
+                    ),
+                })
+
+    rate = round(divergent / max(repeated, 1), 3)
+    if repeated == 0:
+        note = (
+            "No queries repeated >= k_runs times — divergence cannot be measured. "
+            "Increase sample_size or lower k_runs."
+        )
+    elif rate >= 0.20:
+        note = (
+            "HIGH replay divergence (>= 20%): retrieval is unstable across runs. "
+            "Consider pinning HUGINN_MODEL, lowering NOVA_DECAY_RATE, or migrating "
+            "the affected lookup path to a deterministic CAS-shaped store."
+        )
+    elif rate >= 0.05:
+        note = (
+            "Moderate replay divergence (5–20%). Track over time — a rising trend "
+            "is the trigger to investigate spine choice for affected queries."
+        )
+    else:
+        note = "Replay divergence below 5% — retrieval is stable for repeated queries."
+
+    return {
+        "queries_repeated": repeated,
+        "queries_divergent": divergent,
+        "divergence_rate": rate,
+        "examples": examples,
+        "note": note,
+    }
+
+
 def _compute_forgemaster_stats(events: list[dict]) -> dict[str, dict]:
     """
     Compute sprint pass rates grouped by "task_type:routed_model".
@@ -221,6 +302,9 @@ def _run_calibration(params: CalibrateRoutingInput) -> dict:
             ),
         }
     }
+
+    if params.include_replay_divergence:
+        result["replay_divergence"] = _compute_replay_divergence(huginn_sample, params.k_runs)
 
     if params.include_forgemaster:
         event_log = os.environ.get("FORGEMASTER_EVENT_LOG", "")
