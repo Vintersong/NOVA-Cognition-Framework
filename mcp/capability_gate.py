@@ -114,8 +114,15 @@ class _InteractiveBroker:
         # msvcrt polling keeps everything in the calling thread — no daemon
         # thread is left blocked after a timeout, so no stale reader can
         # consume a future operator approval.
+        import sys
         import msvcrt  # Windows-only stdlib; conditional branch (os.name == "nt")
         import time
+
+        # Headless guard: when stdin is a pipe (MCP stdio transport) msvcrt.kbhit()
+        # polls the pipe handle and getwche() would consume JSON-RPC bytes, corrupting
+        # the server's message stream. Deny immediately in non-interactive processes.
+        if not sys.stdin.isatty():
+            return False
 
         try:
             with open("CONOUT$", "w") as cout:
