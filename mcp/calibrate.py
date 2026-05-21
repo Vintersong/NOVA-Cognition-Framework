@@ -211,7 +211,7 @@ def _compute_replay_divergence(sample: list[dict], k_runs: int) -> dict:
         if len(entries) < k_runs:
             continue
         repeated += 1
-        top1s = [e["shard_ids"][0] for e in entries if e.get("shard_ids")]
+        top1s = [e["shard_ids"][0] if e.get("shard_ids") else "(none)" for e in entries]
         unique_top1 = sorted(set(top1s))
         if len(unique_top1) > 1:
             divergent += 1
