@@ -12,7 +12,7 @@ Pipeline:
     4. Cosine match against shard embeddings → ranked candidates
     5. Haiku structured analysis — entities, concepts, relationships, contradictions
        (skipped gracefully if CLAUDE_API_KEY is absent)
-    6. Append nidhogg block to each matched shard (file-locked via store.save_shard)
+    6. Append nidhogg block to each matched shard (atomic via store.mutate_shard)
     7. Flag similarity >= MERGE_SIMILARITY_THRESHOLD as merge candidates for NÓTT
 
 Architecture:
@@ -21,7 +21,7 @@ Architecture:
     - Manifest (nidhogg_manifest.json) tracks ingested file hashes — idempotent
 
 Registration:
-    register_nidhogg_tools(mcp)  — called once in nova_server.py
+    register_nidhogg_tools(mcp, ctx)  — called once in nova_server.py
 
 MCP Tools (3):
     nidhogg_ingest   — ingest a single file by path
@@ -37,6 +37,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from filelock import FileLock
 from pydantic import BaseModel, Field, ConfigDict
@@ -48,12 +49,16 @@ from config import (
     SHARD_DIR,
     MERGE_SIMILARITY_THRESHOLD,
 )
+from gate_helpers import gate_check, log_executed
 from graph import add_corroborated_by, load_graph, save_graph
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
 from tool_registry import nova_tool
-from store import load_index, load_shard, save_shard
+from store import load_index, mutate_shard
+
+if TYPE_CHECKING:
+    from server_context import ServerContext
 
 # ── Paths (env-overridable, no changes to config.py required) ─────────────────
 _REPO_ROOT = Path(__file__).parent.parent
@@ -317,11 +322,12 @@ def _append_nidhogg_block(
 ) -> None:
     """
     Append a nidhogg provenance block to a shard.
-    Uses store.load_shard / store.save_shard — file-locked, safe.
-    Never modifies any existing shard field.
-    """
-    shard_data, filepath = load_shard(shard_id)
 
+    Uses store.mutate_shard — re-reads the shard under its FileLock and appends
+    to that fresh copy, so a turn appended by a concurrent nova_shard_update (or
+    a field written by a NÓTT pass) survives instead of being clobbered by a
+    stale whole-object write. Never modifies any existing shard field.
+    """
     block = {
         "source_file": os.path.basename(source_file),
         "source_path": source_file,
@@ -344,10 +350,9 @@ def _append_nidhogg_block(
     if "analysis_error" in analysis:
         block["analysis_note"] = f"error: {analysis['analysis_error']}"
 
-    nidhogg_list = shard_data.setdefault("nidhogg", [])
-    nidhogg_list.append(block)
-
-    save_shard(filepath, shard_data)
+    # Append-only on a fresh read; a vanished shard is a graceful no-op
+    # (mutate_shard returns False) rather than the old FileNotFoundError.
+    mutate_shard(shard_id, lambda fresh: fresh.setdefault("nidhogg", []).append(block))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -488,9 +493,14 @@ def _resolve_allowed_ingest_path(file_path: str) -> str:
 # TOOL REGISTRATION
 # ═══════════════════════════════════════════════════════════
 
-def register_nidhogg_tools(mcp) -> None:
+def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
     """Register Nidhogg ingestion tools onto an existing FastMCP instance.
     Called once in nova_server.py after server init — same pattern as Gemini.
+
+    Both ingest and scan irreversibly append provenance blocks to matched
+    shards, so they route through the capability gate (``gate_check``) before
+    writing and emit one ``log_executed`` audit record per annotated shard —
+    the same contract the shard_tools writers use.
     """
 
     @nova_tool(mcp, name="nidhogg_ingest")
@@ -503,7 +513,14 @@ def register_nidhogg_tools(mcp) -> None:
         """
         if is_blocked("nidhogg_ingest"):
             return denial_payload("nidhogg_ingest")
+        gate_err, request_id = await gate_check(ctx, "nidhogg_ingest", params.file_path)
+        if gate_err:
+            return gate_err
         result = _ingest_file(params.file_path, params.source_type, params.top_n)
+        for match in result.get("matches", []):
+            shard_id = match.get("shard_id")
+            if shard_id:
+                log_executed(ctx, request_id, "nidhogg_ingest", shard_id, ok=True)
         return json.dumps(result, indent=2)
 
     @nova_tool(mcp, name="nidhogg_scan")
@@ -529,9 +546,17 @@ def register_nidhogg_tools(mcp) -> None:
                 "intake_dir": NIDHOGG_INTAKE_DIR,
             }, indent=2)
 
+        gate_err, request_id = await gate_check(ctx, "nidhogg_scan", NIDHOGG_INTAKE_DIR)
+        if gate_err:
+            return gate_err
+
         results = []
         for file_path in sorted(pending):
             result = _ingest_file(str(file_path), params.source_type, params.top_n)
+            for match in result.get("matches", []):
+                shard_id = match.get("shard_id")
+                if shard_id:
+                    log_executed(ctx, request_id, "nidhogg_scan", shard_id, ok=True)
             results.append(result)
 
         summary = {

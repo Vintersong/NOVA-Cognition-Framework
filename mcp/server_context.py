@@ -48,7 +48,10 @@ from permissions import ToolPermissionContext, set_active as _set_active_permiss
 from ravens import Huginn, Muninn
 from session_store import SessionStore
 from skill_manifest import SkillManifest
-from store import load_index, load_shard, save_shard, update_index
+from store import (
+    load_index, load_shard, save_shard, update_index,
+    mutate_shard, mutate_shard_fields, shard_revision,
+)
 
 if TYPE_CHECKING:
     pass
@@ -186,6 +189,9 @@ class ServerContext:
             load_graph_fn=load_graph,
             save_graph_fn=save_graph,
             pre_compact_fn=_pre_compact_stub,
+            mutate_fields_fn=mutate_shard_fields,
+            mutate_cas_fn=lambda sid, mut, rev: mutate_shard(sid, mut, expect_revision=rev),
+            revision_fn=shard_revision,
         )
 
         ctx = cls(

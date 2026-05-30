@@ -20,6 +20,24 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _workspace_env = Path(os.environ.get("GEMINI_OUTPUT_DIR", str(_REPO_ROOT / "workspace"))).resolve()
 _WORKSPACE_DIR = _workspace_env if _workspace_env.is_relative_to(_REPO_ROOT) else _REPO_ROOT / "workspace"
 
+# Secret/credential files that must never be read into Gemini context and
+# egressed to the API, even though they live under _REPO_ROOT. Being inside the
+# repo root is necessary but not sufficient — these are denied on top of it.
+_SECRET_BASENAMES: frozenset[str] = frozenset({
+    ".env", "shard_index.json", "shard_graph.json",
+})
+_SECRET_SUFFIXES: tuple[str, ...] = (".key", ".pem", ".p12", ".pfx")
+
+
+def _is_secret_path(path: Path) -> bool:
+    """True if *path* names a credential/secret file that must not be egressed."""
+    name = path.name.lower()
+    return (
+        name in _SECRET_BASENAMES
+        or name.startswith(".env")          # .env, .env.local, .env.prod, ...
+        or name.endswith(_SECRET_SUFFIXES)
+    )
+
 
 def get_client() -> genai.Client:
     """Lazy-initialize the Gemini client so the key is read at first use,
@@ -201,6 +219,8 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
             resolved = Path(params.filepath).resolve()
             if not resolved.is_relative_to(_REPO_ROOT):
                 return json.dumps({"status": "error", "message": "Access denied: path is outside the allowed directory."})
+            if _is_secret_path(resolved):
+                return json.dumps({"status": "error", "message": "Access denied: refusing to read a credential/secret file."})
             with open(resolved, "r", encoding="utf-8") as f:
                 content = f.read()
             return json.dumps({"status": "success", "filepath": str(resolved), "content": content})

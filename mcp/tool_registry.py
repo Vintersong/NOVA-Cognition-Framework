@@ -35,6 +35,7 @@ _KNOWN_CAPABILITIES: frozenset[str] = frozenset({
 _KNOWN_CATEGORIES: frozenset[str] = frozenset({
     "shard", "graph", "session", "forgemaster",
     "wiki", "facts", "nidhogg", "evolve", "gemini", "retrieval",
+    "calibrate",
 })
 
 
@@ -111,18 +112,30 @@ _REGISTRY: dict[str, ToolSpec] = dict([
     _spec("nova_facts_search",      "fs.read",        "facts"),
     _spec("nova_facts_rebuild",     "fs.write.rev",   "facts"),
     # ── Nidhogg (3) ──────────────────────────────────────────────────────
-    _spec("nidhogg_ingest",         "net.egress",     "nidhogg", irreversible=True),
-    _spec("nidhogg_scan",           "net.egress",     "nidhogg"),
+    # Nidhogg does no network I/O — it reads local files, embeds them with the
+    # local MiniLM model, and appends provenance blocks to matched shards. Both
+    # ingest and scan irreversibly mutate shards (scan is just batch ingest), so
+    # both are fs.write.irrev. nidhogg_status is a read-only manifest view.
+    _spec("nidhogg_ingest",         "fs.write.irrev", "nidhogg", irreversible=True),
+    _spec("nidhogg_scan",           "fs.write.irrev", "nidhogg", irreversible=True),
     _spec("nidhogg_status",         "fs.read",        "nidhogg"),
     # ── Evolve (1) ───────────────────────────────────────────────────────
     _spec("nova_evolve",            "memory.write",   "evolve", irreversible=True),
     # ── Gemini (2) ───────────────────────────────────────────────────────
-    _spec("gemini_execute_ticket",  "spawn.proc",     "gemini", irreversible=True),
-    _spec("gemini_load_file",       "spawn.proc",     "gemini"),
+    # The Gemini tools spawn no process — they call the Gemini API over the
+    # network. execute_ticket always egresses the prompt/context to Google and
+    # may write generated output; the egress can't be unsent → net.egress +
+    # irreversible. load_file only reads a local repo file → fs.read.
+    _spec("gemini_execute_ticket",  "net.egress",     "gemini", irreversible=True),
+    _spec("gemini_load_file",       "fs.read",        "gemini"),
     # ── External retrieval deliberation (1) ──────────────────────────────
     # net.egress: fires Anthropic API calls (Haiku + Sonnet/Opus).
     # Reversible: shard writes can be undone via nova_shard_archive/forget.
     _spec("nova_external_retrieval", "net.egress",    "retrieval"),
+    # ── Calibrate (1) ────────────────────────────────────────────────────
+    # Read-only: only reads nova_usage.jsonl + forgemaster run logs and
+    # reports findings. Suggested thresholds are applied by hand via env var.
+    _spec("nova_calibrate_routing",  "fs.read",       "calibrate"),
 ])
 
 

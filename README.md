@@ -89,7 +89,7 @@ You (design doc / feature request)
 
 ```mermaid
 graph TD
-    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"37 tool calls"| B["nova_server.py\nMCP Adapter"]
+    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"38 tool calls"| B["nova_server.py\nMCP Adapter"]
 
     B --> C
     B -->|"nova_shard_interact"| R
@@ -255,7 +255,7 @@ The bench measures each stage independently: SQLite facts pre-filter → HUGINN 
 NOVA-Cognition-Framework/
   mcp/
     # Core server
-    nova_server.py           ← ACTIVE MCP server (registers all 37 tools)
+    nova_server.py           ← ACTIVE MCP server (registers all 38 tools)
     config.py                ← all env vars and defaults (single source of truth)
     schemas.py               ← Pydantic input models
     models.py                ← shared dataclasses (UsageSummary)
@@ -264,7 +264,7 @@ NOVA-Cognition-Framework/
     ONBOARDING.md            ← fresh-install flow (triggered when no shards exist)
 
     # Shard I/O & persistence
-    store.py                 ← shard JSON read/write, index management, summary-index layer
+    store.py                 ← shard JSON read/write, index/summary layer, atomic mutate_shard (lock-safe read-modify-write)
     nova_shard_db.py         ← SQLite-backed shard index (nova_shard_index.db)
     shard_format.py          ← shard serialisation helpers (.json ↔ .shard)
     shard_parser.py          ← shard parsing (used by facts.py)
@@ -275,7 +275,7 @@ NOVA-Cognition-Framework/
 
     # Maintenance & lifecycle
     maintenance.py           ← confidence decay, compaction, cosine similarity, merge
-    nott.py                  ← NÓTT daemon: decay, compact, merge, graph sync
+    nott.py                  ← NÓTT daemon: decay, compact, merge, graph sync (lock-safe shard writes via store.mutate_shard)
 
     # Retrieval & ranking
     ravens.py                ← HUGINN (Haiku fast retrieval) + MUNINN (Sonnet deep rerank)
@@ -326,7 +326,7 @@ NOVA-Cognition-Framework/
     # Tests (run with pytest from repo root)
     test_nova.py             ← memory-explorer CLI (not pytest — run directly)
     test_adversarial.py / test_clustering.py / test_quarantine.py
-    test_recall.py / test_state_gating.py
+    test_recall.py / test_state_gating.py / test_shard_concurrency.py
 
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
@@ -360,7 +360,7 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (37)
+## NOVA MCP Tools (38)
 
 ### Core shard + graph + session (22)
 
@@ -412,7 +412,7 @@ Wiki pages live in `wiki/` as markdown with YAML frontmatter and `[[wikilinks]]`
 | `nidhogg_scan` | Scan `intake/` and ingest all pending files |
 | `nidhogg_status` | Show manifest of ingested file hashes |
 
-Nidhogg is non-destructive: it appends a `nidhogg` block to matched shards and never rewrites existing fields. Idempotent via SHA256 manifest.
+Nidhogg is non-destructive: it appends a `nidhogg` block to matched shards (atomically, via `store.mutate_shard`, so a concurrent conversation turn is never clobbered) and never rewrites existing fields. `ingest`/`scan` are irreversible-write tools and route through the capability gate. Idempotent via SHA256 manifest.
 
 ### Facts (2)
 
@@ -421,13 +421,19 @@ Nidhogg is non-destructive: it appends a `nidhogg` block to matched shards and n
 | `nova_facts_search` | Search the SQLite-backed `.shard` facts corpus |
 | `nova_facts_rebuild` | Rebuild the facts index from shard sources |
 
+### External retrieval (1)
+
+| Tool | Description |
+|---|---|
+| `nova_external_retrieval` | Multi-agent external-knowledge deliberation: Haiku retrieval + parallel validate/challenge/synthesize, Sonnet arbiter (ACCEPT/PARTIAL/REJECT). On ACCEPT/PARTIAL writes a claim shard + debate-log shard linked by a `references` edge. A cost guard aborts before any API call if the estimate exceeds `NOVA_EXTERNAL_COST_CAP` (default $0.10). |
+
 ### Evolution (1)
 
 | Tool | Description |
 |---|---|
 | `nova_evolve` | Run one self-evolution cycle: analyze → verify → commit → govern → plan |
 
-> ⚠ **Side effect:** `nova_evolve` runs `git add` and `git commit` locally when tests pass. On test failure it runs `git checkout -- .` to roll back the staged changes. Nothing is pushed to a remote. Use `dry_run=true` if you just want the director prompt. If `mcp/` changed, it writes `.sdd/runtime/restart_requested`.
+> ⚠ **Side effect:** `nova_evolve` runs `git add` and `git commit` locally when tests pass, staging only allowlisted paths (`EVOLVE_COMMIT_ROOTS`, default `mcp/ forgemaster/ tests/ docs/`). On test failure it rolls the changes back with `git stash push` (recoverable via `git stash list`), not a destructive `checkout`. Nothing is pushed to a remote. As an irreversible-write tool it routes through the capability gate (HITL on an unverified skill). Use `dry_run=true` for just the director prompt — a dry run is ungated and mutates nothing. If `mcp/` changed, it writes `.sdd/runtime/restart_requested`.
 
 ### Gemini (2)
 
@@ -436,7 +442,7 @@ Registered into `nova_server` via `mcp/Gemini/gemini_mcp.py`:
 | Tool | Description |
 |---|---|
 | `gemini_execute_ticket` | Send a structured ticket to Gemini Flash |
-| `gemini_load_file` | Load a file from disk as codebase context |
+| `gemini_load_file` | Load a file from disk as codebase context (repo-root scoped; refuses credential/secret files such as `.env`, `*.key`, `*.pem`) |
 
 ### Calibrate (1)
 
@@ -465,7 +471,7 @@ Read-only resources exposed alongside the tools:
 | `schemas.py` | Pydantic input models for core + wiki tools |
 | `models.py` | Shared dataclasses (UsageSummary) |
 | `tool_registry.py` | Canonical `ToolSpec` registry — `@nova_tool` validates names at import, feeds permissions/audit/docs |
-| `store.py` | Shard filesystem I/O, index, summary-index layer, path-traversal guards |
+| `store.py` | Shard filesystem I/O, index, summary-index layer, path-traversal guards; `mutate_shard`/`mutate_shard_fields` give lock-safe read-modify-write (fresh read inside the FileLock) plus revision-guarded CAS, closing the NÓTT ↔ tool-write lost-update race |
 | `graph.py` | Knowledge graph load/save/query/relate/transitive BFS |
 | `maintenance.py` | Confidence decay, auto-compaction, cosine similarity, merge candidates |
 | `permissions.py` | Env-driven tool allow/deny |
@@ -478,9 +484,9 @@ Read-only resources exposed alongside the tools:
 | `spreading_activation.py` | Damped BFS over the knowledge graph — MUNINN third retrieval pass with cluster-boundary penalties |
 | `recall.py` | Hook recall + cache prewarm + cluster-aware top-k walk (collapses same-cluster results, collects siblings over 2×top_k window) |
 | `embedding_integrity.py` | HMAC-SHA256 signing at ingestion, signature verification before MUNINN cosine reranking, adversarial event log |
-| `nott.py` | NÓTT daemon — scheduled decay, compact, merge, graph sync (dedicated `ThreadPoolExecutor`, isolated from default executor) |
+| `nott.py` | NÓTT daemon — scheduled decay, compact, merge, graph sync (dedicated `ThreadPoolExecutor`, isolated from default executor); every pass writes via `store.mutate_shard`, so background maintenance never clobbers a concurrent tool write (compaction uses a revision-guarded CAS) |
 | `nova_embeddings_local.py` | Local embeddings + heuristic compaction summaries (non-blocking `get_embedding_model_if_ready()` used on enrichment path) |
-| `capability_gate.py` | HITL gate — capability membership check + HITL broker (interactive on Unix, `msvcrt` polling on Windows) |
+| `capability_gate.py` | HITL gate — capability membership check + HITL broker (interactive on Unix, `msvcrt` polling on Windows). Every irreversible-write tool routes through it, including the externally-registered modules (`nova_evolve`, `nidhogg_ingest`/`scan`, `gemini_execute_ticket`); their executions emit audit records covered by the biconditional corpus check |
 | `audit_log.py` | SQLite HITL audit log — four-state lifecycle + biconditional corpus check |
 | `skill_manifest.py` | Parses `@@verification` / `@@capabilities` from skill file headers |
 | `evolve.py` | Self-evolution loop, adaptive governor, auto-commit |

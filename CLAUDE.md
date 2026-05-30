@@ -125,7 +125,7 @@ NOVA-Whitepaper/
 
 ---
 
-## NOVA MCP Tools (37 total)
+## NOVA MCP Tools (38 total)
 
 ### Core shard ops (`nova_server.py`, 22)
 
@@ -192,6 +192,12 @@ NOVA-Whitepaper/
 |---|---|
 | `gemini_execute_ticket` | Run an implementation ticket on Gemini Flash |
 | `gemini_load_file` | Load a file into the Gemini worker's context |
+
+### External retrieval (`external_retrieval.py`, 1)
+
+| Tool | Purpose |
+|---|---|
+| `nova_external_retrieval` | Fire Haiku + Sonnet/Opus deliberation over external sources; writes findings back as shards (reversible via archive/forget) |
 
 ### Calibrate (`calibrate.py`, 1)
 

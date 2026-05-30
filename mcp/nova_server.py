@@ -84,8 +84,8 @@ mcp = FastMCP("nova_mcp_v2")
 
 # External (non-NOVA-core) tool modules.
 register_gemini_tools(mcp, gate=ctx.capability_gate, audit_log=ctx.skill_audit_log)
-register_nidhogg_tools(mcp)
-register_evolve_tools(mcp)
+register_nidhogg_tools(mcp, ctx)
+register_evolve_tools(mcp, ctx)
 register_wiki_tools(mcp)
 register_facts_tools(mcp)
 register_external_retrieval_tools(mcp)

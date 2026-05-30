@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import threading
+from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -66,6 +67,8 @@ from store import (
     group_rows_by_theme,
     load_index,
     load_shard,
+    mutate_shard,
+    mutate_shard_fields,
     patch_index_entry,
     rebuild_summary_indexes,
     refresh_summary_index_entry,
@@ -369,21 +372,32 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
 
         loop = asyncio.get_running_loop()
         shard_lock = ctx.get_shard_lock(params.shard_id)
+
+        turn = {
+            "timestamp": datetime.now().isoformat(),
+            "user": params.user_message,
+            "ai": params.ai_response,
+        }
+
+        # The append must land on the *current* on-disk shard, not a snapshot
+        # loaded before a concurrent NÓTT pass ran. mutate_shard re-reads under
+        # the shard FileLock and applies the append there, so a confidence/tag
+        # change written by NÓTT in between is preserved instead of clobbered.
+        holder: dict = {}
+
+        def _append(fresh: dict) -> None:
+            fresh.setdefault("conversation_history", []).append(turn)
+            update_shard_usage(fresh)
+            fresh.setdefault("meta_tags", {})["enrichment_status"] = "pending"
+            holder["data"] = fresh
+
         async with shard_lock:
-            try:
-                data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
-            except FileNotFoundError:
+            written = await loop.run_in_executor(
+                None, lambda: mutate_shard(params.shard_id, _append)
+            )
+            if not written:
                 return shard_not_found(params.shard_id)
-
-            data.setdefault("conversation_history", []).append({
-                "timestamp": datetime.now().isoformat(),
-                "user": params.user_message,
-                "ai": params.ai_response
-            })
-            update_shard_usage(data)
-
-            data.setdefault("meta_tags", {})["enrichment_status"] = "pending"
-            await loop.run_in_executor(None, save_shard, filepath, data)
+            data = holder["data"]
             await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
         ctx.hooks.emit(NovaHookEvent.POST_SPRINT)
@@ -393,9 +407,14 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         loop = asyncio.get_running_loop()
 
         async def _background_enrich_and_persist() -> None:
+            # Enrich a snapshot, then field-merge only the enrichment delta so a
+            # turn appended (or NÓTT field write) between now and persist survives.
+            before = deepcopy(data)
             await loop.run_in_executor(None, enrich_shard, params.shard_id, data)
             async with shard_lock:
-                await loop.run_in_executor(None, save_shard, filepath, data)
+                await loop.run_in_executor(
+                    None, lambda: mutate_shard_fields(params.shard_id, before, data)
+                )
                 await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
         asyncio.create_task(_background_enrich_and_persist())

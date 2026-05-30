@@ -31,6 +31,7 @@ import atexit
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -154,6 +155,14 @@ class Nott:
         load_graph_fn: Callable[[], dict],
         save_graph_fn: Callable[[dict], None],
         pre_compact_fn: Optional[Callable[[dict, str], None]] = None,
+        # Atomic shard-mutation primitives (mcp/store.py). When omitted, a
+        # non-atomic load+save fallback is synthesised so existing tests and
+        # ad-hoc constructions keep working — production injects the real ones
+        # so every pass closes the lost-update race against concurrent tool
+        # writes (see store.mutate_shard).
+        mutate_fields_fn: Optional[Callable[[str, dict, dict], bool]] = None,
+        mutate_cas_fn: Optional[Callable[[str, Callable[[dict], None], str], bool]] = None,
+        revision_fn: Optional[Callable[[dict], str]] = None,
     ):
         self.shard_dir = shard_dir
         self.graph_file = graph_file
@@ -169,6 +178,34 @@ class Nott:
         self._load_graph = load_graph_fn
         self._save_graph = save_graph_fn
         self._pre_compact = pre_compact_fn  # optional: extract facts before compacting
+
+        # ── Atomic shard mutation (with non-atomic fallbacks) ──────────────
+        if mutate_fields_fn is not None:
+            self._mutate_fields = mutate_fields_fn
+        else:
+            def _fallback_mutate_fields(shard_id: str, before: dict, after: dict) -> bool:
+                try:
+                    _, fp = self._load_shard(shard_id)
+                except FileNotFoundError:
+                    return False
+                self._save_shard(fp, after)
+                return True
+            self._mutate_fields = _fallback_mutate_fields
+
+        if mutate_cas_fn is not None:
+            self._mutate_cas = mutate_cas_fn
+        else:
+            def _fallback_mutate_cas(shard_id: str, mutator: Callable[[dict], None], _rev: str) -> bool:
+                try:
+                    data, fp = self._load_shard(shard_id)
+                except FileNotFoundError:
+                    return False
+                mutator(data)
+                self._save_shard(fp, data)
+                return True
+            self._mutate_cas = _fallback_mutate_cas
+
+        self._revision = revision_fn if revision_fn is not None else (lambda _d: "")
 
         # Dedicated thread pool so NÓTT's long passes never contend with
         # request-path work (ravens retrieval, background enrichment, etc.
@@ -273,18 +310,21 @@ class Nott:
                 )
                 decayed: list[dict] = []
                 for shard_id, old_conf, new_conf in candidates:
-                    try:
-                        data, filepath = self._load_shard(shard_id)
-                    except FileNotFoundError:
-                        continue
-                    data.setdefault("meta_tags", {})["confidence"] = round(new_conf, 4)
+                    nc = round(new_conf, 4)
                     decayed.append({
                         "shard_id": shard_id,
                         "old_confidence": round(old_conf, 4),
-                        "new_confidence": round(new_conf, 4),
+                        "new_confidence": nc,
                     })
                     if not dry_run:
-                        self._save_shard(filepath, data)
+                        # Field-merge onto a fresh read so a concurrent body
+                        # append survives. old_conf differs from nc (decay
+                        # candidate), so the diff always writes the new value.
+                        self._mutate_fields(
+                            shard_id,
+                            {"meta_tags": {"confidence": round(old_conf, 4)}},
+                            {"meta_tags": {"confidence": nc}},
+                        )
                 return decayed
             except Exception:
                 # Any failure in the Arrow fast path falls through to the
@@ -301,8 +341,9 @@ class Nott:
             except FileNotFoundError:
                 continue
 
+            before = deepcopy(data)
             old_confidence = data.get("meta_tags", {}).get("confidence", 1.0)
-            new_confidence = self._decay(data)
+            new_confidence = self._decay(data)  # mutates data["meta_tags"]["confidence"]
 
             if new_confidence < old_confidence:
                 decayed.append({
@@ -311,7 +352,7 @@ class Nott:
                     "new_confidence": round(new_confidence, 4),
                 })
                 if not dry_run:
-                    self._save_shard(filepath, data)
+                    self._mutate_fields(shard_id, before, data)
 
         return decayed
 
@@ -335,6 +376,11 @@ class Nott:
             except FileNotFoundError:
                 continue
 
+            # Capture the on-disk revision BEFORE the hook/compaction mutate the
+            # snapshot, so the conditional write below can detect a concurrent
+            # tool write and skip rather than clobber it.
+            revision = self._revision(data)
+
             # Pre-compact hook: extract key facts before turns are summarised away
             if self._pre_compact is not None:
                 try:
@@ -344,9 +390,21 @@ class Nott:
 
             was_compacted = self._compact(data, shard_id)
             if was_compacted:
-                compacted.append(shard_id)
                 if not dry_run:
-                    self._save_shard(filepath, data)
+                    # Compaction rewrites the body, so a plain field-merge can't
+                    # protect it. Apply the compacted snapshot only if the shard
+                    # is unchanged since `revision` (optimistic CAS) — otherwise
+                    # a turn appended mid-compaction would be lost; skip and let
+                    # the next cycle re-compact the newer body.
+                    compacted_body = data
+
+                    def _replace(fresh: dict, body: dict = compacted_body) -> None:
+                        fresh.clear()
+                        fresh.update(body)
+
+                    written = self._mutate_cas(shard_id, _replace, revision)
+                    if not written:
+                        continue  # shard changed under us — don't report it compacted
                     # Lazy migration: convert to YAML+MD format after compaction.
                     # Only converts .json shards — already-.md shards are a no-op.
                     if filepath.endswith(".json"):
@@ -355,6 +413,7 @@ class Nott:
                             convert_shard_file(filepath, delete_json=True)
                         except Exception:
                             pass  # never abort compaction on migration failure
+                compacted.append(shard_id)
 
         return compacted
 
@@ -411,8 +470,9 @@ class Nott:
                                 add_corroborated_by(b, a)
                                 for sid in (a, b):
                                     data, fp = self._load_shard(sid)
+                                    before = deepcopy(data)
                                     apply_confidence_corroboration(data)
-                                    self._save_shard(fp, data)
+                                    self._mutate_fields(sid, before, data)
                             except Exception:
                                 pass
                     return results
@@ -490,6 +550,7 @@ class Nott:
             except FileNotFoundError:
                 continue
 
+            before = deepcopy(data)
             shard_meta = data.setdefault("meta_tags", {})
             shard_meta["quarantine_until"] = None
 
@@ -502,7 +563,7 @@ class Nott:
                 outcome = "graduated"
 
             if not dry_run:
-                self._save_shard(filepath, data)
+                self._mutate_fields(shard_id, before, data)
 
             results.append({"shard_id": shard_id, "outcome": outcome})
 
@@ -559,13 +620,14 @@ class Nott:
             except FileNotFoundError:
                 continue
 
+            before = deepcopy(data)
             shard_meta = data.setdefault("meta_tags", {})
             old_conf = shard_meta.get("confidence", 1.0)
             new_conf = round(max(0.1, old_conf - DECAY_ON_READ_PENALTY), 4)
             shard_meta["confidence"] = new_conf
 
             if not dry_run:
-                self._save_shard(filepath, data)
+                self._mutate_fields(shard_id, before, data)
 
             results.append({
                 "shard_id": shard_id,
@@ -613,9 +675,10 @@ class Nott:
             except FileNotFoundError:
                 continue
 
+            before = deepcopy(data)
             data.setdefault("meta_tags", {})["cluster_id"] = cluster_id
             if not dry_run:
-                self._save_shard(filepath, data)
+                self._mutate_fields(shard_id, before, data)
             assigned += 1
 
         if not dry_run:
@@ -849,12 +912,13 @@ class Nott:
                 except FileNotFoundError:
                     continue
 
+                before = deepcopy(data)
                 meta = data.setdefault("meta_tags", {})
                 meta["valence"] = valence
                 meta["arousal"] = arousal
 
                 if not dry_run:
-                    self._save_shard(filepath, data)
+                    self._mutate_fields(sid, before, data)
                     # Sync updated state vector to SQLite
                     try:
                         confidence = float(meta.get("confidence", 1.0))

@@ -40,9 +40,13 @@ logger = logging.getLogger(__name__)
 # Includes "graph" because nova_graph_relate's target is a source shard ID:
 # excluding it would cause run_biconditional_check to misclassify graph
 # audit records as file-path phantoms.
+# Includes "nidhogg" because nidhogg_ingest/scan append provenance blocks to
+# matched shards and emit one executed record per shard ID — same target shape
+# as the shard tools. (Evolve is deliberately excluded: its targets are git
+# file paths, so its records belong to the file partition, not the shard one.)
 _SHARD_TOOL_NAMES: frozenset[str] = frozenset(
     name for name in irreversible_tools()
-    if _get_spec(name).category in ("shard", "graph")
+    if _get_spec(name).category in ("shard", "graph", "nidhogg")
 )
 
 

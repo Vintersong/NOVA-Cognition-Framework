@@ -64,22 +64,39 @@ def load_shard(shard_id: str) -> tuple[dict, str]:
     return load_shard_file(shard_id, SHARD_DIR)
 
 
-def save_shard(filepath: str, data: dict):
-    from shard_format import md_path_for, shard_to_md, is_md_shard
+def _resolve_write_path(filepath: str) -> str:
+    """Resolve the on-disk path a write should target.
 
-    # If the shard has already been migrated to .md, write .md instead of .json.
+    If the shard has already been migrated to .md, writes go to .md even when
+    the caller passes the legacy .json path. The returned path also determines
+    the lock path (``<path>.lock``), so every writer of a given shard agrees on
+    the same mutex.
+    """
+    from shard_format import md_path_for, is_md_shard
     if not is_md_shard(filepath):
         md = md_path_for(filepath)
         if md.exists():
-            filepath = str(md)
+            return str(md)
+    return filepath
 
-    lock_path = filepath + ".lock"
+
+def _write_shard_locked(filepath: str, data: dict) -> str:
+    """Write the shard body to *filepath*. Caller MUST hold ``filepath + '.lock'``.
+
+    Returns the path actually written (may switch .json → .md). Does not touch
+    the Arrow cache or SQLite index — see :func:`_post_write_sync`.
+    """
+    from shard_format import shard_to_md, is_md_shard
+    filepath = _resolve_write_path(filepath)
     if is_md_shard(filepath):
-        with FileLock(lock_path, timeout=5):
-            Path(filepath).write_text(shard_to_md(data), encoding="utf-8")
+        Path(filepath).write_text(shard_to_md(data), encoding="utf-8")
     else:
-        with FileLock(lock_path, timeout=5):
-            atomic_write_json(filepath, data)
+        atomic_write_json(filepath, data)
+    return filepath
+
+
+def _post_write_sync(filepath: str, data: dict) -> None:
+    """Best-effort secondary-store sync after a shard write. Never raises."""
     # Invalidate the Arrow cache so the next MUNINN rerank / NÓTT pass sees the
     # write. No-op when pyarrow isn't installed (ARROW_AVAILABLE = False).
     try:
@@ -96,6 +113,97 @@ def save_shard(filepath: str, data: dict):
         get_nova_shard_db().upsert_from_shard(data, mtime_ns)
     except Exception as exc:
         _record_error("save_shard_sync_sqlite", exc)
+
+
+def save_shard(filepath: str, data: dict):
+    filepath = _resolve_write_path(filepath)
+    with FileLock(filepath + ".lock", timeout=5):
+        written = _write_shard_locked(filepath, data)
+    _post_write_sync(written, data)
+
+
+def shard_revision(data: dict) -> str:
+    """Cheap change-signature for optimistic concurrency control.
+
+    Two reads of the same shard return the same revision iff no field changed
+    in between. Used by :func:`mutate_shard` (``expect_revision``) so a body
+    rewrite (e.g. NÓTT compaction) can be skipped when the shard was modified
+    out from under the computation that produced the new body.
+    """
+    import hashlib
+    blob = json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _apply_field_diff(fresh: dict, before: dict, after: dict) -> None:
+    """Overlay the (before → after) delta onto *fresh*, one level deep.
+
+    Only keys the caller actually changed are written, so fields a concurrent
+    writer touched on *fresh* (notably the conversation body) are preserved.
+    Nested dicts (e.g. ``meta_tags``) are merged per sub-key rather than wholesale
+    so a concurrent ``meta_tags`` change isn't clobbered either.
+    """
+    for key in set(before) | set(after):
+        bv, av = before.get(key), after.get(key)
+        if bv == av:
+            continue
+        if isinstance(bv, dict) and isinstance(av, dict) and isinstance(fresh.get(key), dict):
+            for sk in set(bv) | set(av):
+                if bv.get(sk) == av.get(sk):
+                    continue
+                if sk in av:
+                    fresh[key][sk] = av[sk]
+                else:
+                    fresh[key].pop(sk, None)
+        elif key in after:
+            fresh[key] = av
+        else:
+            fresh.pop(key, None)
+
+
+def mutate_shard(shard_id: str, mutator, *, expect_revision: str | None = None) -> bool:
+    """Atomically load → mutate → write a shard under its FileLock.
+
+    The authoritative read happens *inside* the lock, so a concurrent writer's
+    changes to fields *mutator* does not touch are preserved. This closes the
+    NÓTT ↔ tool-write lost-update race where a stale whole-object write would
+    silently drop a freshly-appended conversation turn.
+
+    *mutator* receives the fresh shard dict and mutates it in place.
+    *expect_revision* (from :func:`shard_revision`) makes the write conditional:
+    if the shard changed since the revision was taken, the write is skipped and
+    ``False`` is returned. Use it for body-rewriting passes (compaction) whose
+    new body was computed outside the lock.
+
+    Returns ``True`` if written, ``False`` if the shard was missing or the
+    revision guard failed.
+    """
+    try:
+        _, filepath = load_shard(shard_id)
+    except FileNotFoundError:
+        return False
+    filepath = _resolve_write_path(filepath)
+    with FileLock(filepath + ".lock", timeout=5):
+        try:
+            data, filepath = load_shard(shard_id)
+        except FileNotFoundError:
+            return False
+        if expect_revision is not None and shard_revision(data) != expect_revision:
+            return False
+        mutator(data)
+        written = _write_shard_locked(filepath, data)
+    _post_write_sync(written, data)
+    return True
+
+
+def mutate_shard_fields(shard_id: str, before: dict, after: dict) -> bool:
+    """Atomically apply the (before → after) field delta to a shard.
+
+    Convenience wrapper over :func:`mutate_shard` for the common case where a
+    caller loaded a snapshot, mutated some metadata fields, and wants only those
+    fields written onto the current on-disk shard. Returns ``True`` if written.
+    """
+    return mutate_shard(shard_id, lambda fresh: _apply_field_diff(fresh, before, after))
 
 
 def update_shard_usage(data: dict):

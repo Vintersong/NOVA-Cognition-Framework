@@ -22,7 +22,7 @@ Pipeline per cycle:
   6. LOG      — append to evolve_cycles.jsonl
 
 Registration:
-    register_evolve_tools(mcp)  — called once in nova_server.py
+    register_evolve_tools(mcp, ctx)  — called once in nova_server.py
 
 MCP Tools (1):
     nova_evolve — run one evolve cycle (dry_run supported)
@@ -38,16 +38,20 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from filelock import FileLock
 from pydantic import BaseModel, Field, ConfigDict
 
 from atomic_io import atomic_write_json
 from config import SHARD_DIR, USAGE_LOG_FILE, MERGE_SIMILARITY_THRESHOLD
+from gate_helpers import gate_check, log_executed
 from permissions import is_blocked, denial_payload
 from store import load_index, load_shard
 from tool_registry import nova_tool
+
+if TYPE_CHECKING:
+    from server_context import ServerContext
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _REPO_ROOT = Path(__file__).parent.parent
@@ -744,6 +748,7 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
         "health": health.summary(),
         "tests": f"passed={tests.passed} failed={tests.failed} ran={tests.ran}",
         "commit": commit.reason,
+        "committed": commit.committed,
         "restart_requested": commit.restart_requested,
         "weight_reason": weight_reason,
         "consecutive_empty": new_consecutive_empty,
@@ -757,7 +762,7 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
 # TOOL REGISTRATION
 # ═══════════════════════════════════════════════════════════
 
-def register_evolve_tools(mcp) -> None:
+def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
     """Register the nova_evolve tool onto an existing FastMCP instance.
     Called once in nova_server.py — same pattern as Gemini and Nidhogg.
     """
@@ -779,5 +784,21 @@ def register_evolve_tools(mcp) -> None:
         """
         if is_blocked("nova_evolve"):
             return denial_payload("nova_evolve")
+
+        # A dry run mutates nothing — skip the irreversible-write gate entirely.
+        # A live cycle may git-commit allowlisted source, so pre-authorise the
+        # irreversible capability before running and record the real outcome.
+        request_id = None
+        if not params.dry_run:
+            gate_err, request_id = await gate_check(ctx, "nova_evolve", "evolve_auto_commit")
+            if gate_err:
+                return gate_err
+
         result = run_evolve_cycle(dry_run=params.dry_run, force=params.force)
+
+        if not params.dry_run:
+            log_executed(
+                ctx, request_id, "nova_evolve",
+                "evolve_auto_commit", ok=bool(result.get("committed")),
+            )
         return json.dumps(result, indent=2)
