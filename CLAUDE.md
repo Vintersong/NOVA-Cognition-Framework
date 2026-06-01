@@ -99,6 +99,7 @@ NOVA-Whitepaper/
     shard_compact.py         ← manual compaction helper
     theme_analyzer.py        ← theme distribution analysis
     backfill_source_summary.py ← backfill source_summary field on shards
+    backfill_provenance.py   ← backfill epistemic_provenance record on shards
     build_nova_shard_db.py   ← one-shot SQLite shard DB builder
     check_tool_docs.py       ← verify tool docstrings against schema
     convert_shards_to_md.py  ← export shards as plain markdown
@@ -125,15 +126,16 @@ NOVA-Whitepaper/
 
 ---
 
-## NOVA MCP Tools (38 total)
+## NOVA MCP Tools (39 total)
 
-### Core shard ops (`nova_server.py`, 22)
+### Core shard ops (`nova_server.py`, 23)
 
 | Tool | Purpose |
 |---|---|
 | `nova_shard_interact` | Load shards into context — start every session with this |
 | `nova_shard_create` | Create new shard with guiding question |
 | `nova_shard_update` | Append conversation turn to existing shard |
+| `nova_shard_validate` | Record an epistemic validation event (source_type, validator, mechanism, confidence delta, supersession) on a shard's provenance record |
 | `nova_shard_search` | Search by keyword with confidence weighting |
 | `nova_shard_query_state` | Inspect computed shard state (confidence, tags, decay) without loading body |
 | `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault |
