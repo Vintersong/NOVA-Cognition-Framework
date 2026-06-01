@@ -9,6 +9,10 @@ import os
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
+# Data root: defaults to CWD so the server is project-agnostic when registered
+# globally. Override with NOVA_DATA_ROOT to pin to a specific directory, or set
+# individual NOVA_* path vars for per-path control.
+_DATA_ROOT = Path(os.environ.get("NOVA_DATA_ROOT", str(Path.cwd())))
 
 
 def parse_bool_env(key: str, default: bool = False) -> bool:
@@ -19,14 +23,14 @@ def parse_bool_env(key: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-SHARD_DIR      = os.environ.get("NOVA_SHARD_DIR",     str(_REPO_ROOT / "shards"))
-INDEX_FILE     = os.environ.get("NOVA_INDEX_FILE",    str(_REPO_ROOT / "shard_index.json"))
-GRAPH_FILE     = os.environ.get("NOVA_GRAPH_FILE",    str(_REPO_ROOT / "shard_graph.json"))
-SUMMARY_INDEX_FILE = os.environ.get("NOVA_SUMMARY_INDEX_FILE", str(_REPO_ROOT / "summary_index.json"))
-SUMMARY_MARKDOWN_FILE = os.environ.get("NOVA_SUMMARY_MARKDOWN_FILE", str(_REPO_ROOT / "summary_index.md"))
-USAGE_LOG_FILE = os.environ.get("NOVA_USAGE_LOG",     str(_REPO_ROOT / "nova_usage.jsonl"))
+SHARD_DIR      = os.environ.get("NOVA_SHARD_DIR",     str(_DATA_ROOT /"shards"))
+INDEX_FILE     = os.environ.get("NOVA_INDEX_FILE",    str(_DATA_ROOT /"shard_index.json"))
+GRAPH_FILE     = os.environ.get("NOVA_GRAPH_FILE",    str(_DATA_ROOT /"shard_graph.json"))
+SUMMARY_INDEX_FILE = os.environ.get("NOVA_SUMMARY_INDEX_FILE", str(_DATA_ROOT /"summary_index.json"))
+SUMMARY_MARKDOWN_FILE = os.environ.get("NOVA_SUMMARY_MARKDOWN_FILE", str(_DATA_ROOT /"summary_index.md"))
+USAGE_LOG_FILE = os.environ.get("NOVA_USAGE_LOG",     str(_DATA_ROOT /"nova_usage.jsonl"))
 SESSION_STORE_DIR = os.environ.get(
-    "NOVA_SESSION_STORE_DIR", str(_REPO_ROOT / "nova_sessions")
+    "NOVA_SESSION_STORE_DIR", str(_DATA_ROOT /"nova_sessions")
 )
 
 # ── Context window / fragment limits ─────────────────────────────────────────
@@ -78,7 +82,7 @@ NOVA_PROJECT_CONTEXT = os.environ.get("NOVA_PROJECT_CONTEXT", "")
 # ── Decay on read ─────────────────────────────────────────────────────────────
 # Shards retrieved more than THRESHOLD times in WINDOW_DAYS without a new
 # corroborated_by edge receive a confidence penalty of PENALTY per NÓTT pass.
-ACCESS_LOG_FILE          = os.environ.get("NOVA_ACCESS_LOG",              str(_REPO_ROOT / "shard_access.jsonl"))
+ACCESS_LOG_FILE          = os.environ.get("NOVA_ACCESS_LOG",              str(_DATA_ROOT /"shard_access.jsonl"))
 DECAY_ON_READ_THRESHOLD  = int(os.environ.get("NOVA_DECAY_ON_READ_THRESHOLD",   "5"))
 DECAY_ON_READ_WINDOW_DAYS = int(os.environ.get("NOVA_DECAY_ON_READ_WINDOW_DAYS", "7"))
 DECAY_ON_READ_PENALTY    = float(os.environ.get("NOVA_DECAY_ON_READ_PENALTY",   "0.05"))
@@ -125,13 +129,13 @@ SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # ── Facts corpus (shard_parser SQLite pre-filter) ────────────────────────────
 # Curated `.shard` files indexed by SQLite for HUGINN's pre-filter pass. Discrete
 # {-1, 0, 1} confidence — distinct from the float-confidence JSON shard store.
-FACTS_DIR        = os.environ.get("NOVA_FACTS_DIR",        str(_REPO_ROOT / "facts"))
-FACTS_INDEX_FILE = os.environ.get("NOVA_FACTS_INDEX_FILE", str(_REPO_ROOT / "facts_index.db"))
+FACTS_DIR        = os.environ.get("NOVA_FACTS_DIR",        str(_DATA_ROOT /"facts"))
+FACTS_INDEX_FILE = os.environ.get("NOVA_FACTS_INDEX_FILE", str(_DATA_ROOT /"facts_index.db"))
 
 # ── Wiki layer ────────────────────────────────────────────────────────────────
-WIKI_DIR          = os.environ.get("NOVA_WIKI_DIR",     str(_REPO_ROOT / "wiki"))
-WIKI_SCHEMA_FILE  = os.environ.get("NOVA_WIKI_SCHEMA",  str(_REPO_ROOT / "wiki_schema.json"))
-WIKI_INDEX_FILE   = os.environ.get("NOVA_WIKI_INDEX",   str(_REPO_ROOT / "wiki_index.json"))
+WIKI_DIR          = os.environ.get("NOVA_WIKI_DIR",     str(_DATA_ROOT /"wiki"))
+WIKI_SCHEMA_FILE  = os.environ.get("NOVA_WIKI_SCHEMA",  str(_DATA_ROOT /"wiki_schema.json"))
+WIKI_INDEX_FILE   = os.environ.get("NOVA_WIKI_INDEX",   str(_DATA_ROOT /"wiki_index.json"))
 WIKI_ROUTING_MODEL   = os.environ.get("NOVA_WIKI_ROUTING_MODEL",   "claude-haiku-4-5-20251001")
 WIKI_SYNTHESIS_MODEL = os.environ.get("NOVA_WIKI_SYNTHESIS_MODEL", "claude-sonnet-4-6")
 
@@ -140,7 +144,7 @@ WIKI_SYNTHESIS_MODEL = os.environ.get("NOVA_WIKI_SYNTHESIS_MODEL", "claude-sonne
 # Unset → signing disabled; existing deployments are unaffected.
 NOVA_EMBEDDING_HMAC_KEY = os.environ.get("NOVA_EMBEDDING_HMAC_KEY", "")
 EMBEDDING_INTEGRITY_LOG = os.environ.get(
-    "NOVA_EMBEDDING_INTEGRITY_LOG", str(_REPO_ROOT / "embedding_integrity.jsonl")
+    "NOVA_EMBEDDING_INTEGRITY_LOG", str(_DATA_ROOT /"embedding_integrity.jsonl")
 )
 
 # ── External retrieval deliberation pipeline ──────────────────────────────────
@@ -155,7 +159,7 @@ NOVA_EXTERNAL_ARBITER_TIMEOUT     = float(os.environ.get("NOVA_EXTERNAL_ARBITER_
 # SQLite audit log for HITL lifecycle events (irreversible.request/decision/executed,
 # capability.denied) and post-session biconditional checks.
 SKILL_AUDIT_LOG_FILE = os.environ.get(
-    "NOVA_SKILL_AUDIT_LOG", str(_REPO_ROOT / "skill_audit.db")
+    "NOVA_SKILL_AUDIT_LOG", str(_DATA_ROOT /"skill_audit.db")
 )
 # NOVA_HITL_BROKER: "interactive" (terminal prompt, dev default) | "policy" (always-deny)
 HITL_BROKER    = os.environ.get("NOVA_HITL_BROKER",    "interactive")
