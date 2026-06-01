@@ -36,6 +36,7 @@ _FRONTMATTER_FIELDS = [
     "shard_id", "guiding_question", "confidence", "theme", "intent",
     "source", "tags", "last_used", "usage_count", "quarantine_until",
     "valence", "arousal", "provenance", "cluster_id",
+    "epistemic_provenance",
     "context_topics", "context_summary",
     "enrichment_status", "last_compacted",
     "embedding_sig",
@@ -67,6 +68,7 @@ def shard_to_md(data: dict) -> str:
         "arousal":         meta.get("arousal"),
         "provenance":      meta.get("provenance", "en|WEIRD|LLM"),
         "cluster_id":      meta.get("cluster_id"),
+        "epistemic_provenance": meta.get("epistemic_provenance"),
         "context_topics":  context.get("topics", []),
         "context_summary": context.get("summary", ""),
         "enrichment_status": meta.get("enrichment_status", "pending"),
@@ -162,6 +164,8 @@ def md_to_shard(text: str, shard_id: str = "") -> dict:
         meta_tags["valence"] = fm["valence"]
     if fm.get("arousal") is not None:
         meta_tags["arousal"] = fm["arousal"]
+    if fm.get("epistemic_provenance") is not None:
+        meta_tags["epistemic_provenance"] = fm["epistemic_provenance"]
     # Remove None values for cleanliness
     meta_tags = {k: v for k, v in meta_tags.items() if v is not None}
 
