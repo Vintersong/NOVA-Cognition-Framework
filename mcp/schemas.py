@@ -1,5 +1,5 @@
 """
-schemas.py — Pydantic input models for all 38 NOVA MCP tools.
+schemas.py — Pydantic input models for all 39 NOVA MCP tools.
 
 Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 """
@@ -16,6 +16,14 @@ from config import SESSION_ID_PATTERN
 RelationType = Literal[
     "influences", "depends_on", "contradicts", "extends", "references",
     "merged_from", "supersedes", "corroborated_by",
+]
+
+
+# Epistemic authority taxonomy for the provenance record. Mirrors
+# provenance.SOURCE_TYPES (kept in sync the same way the `source` origin enum
+# below is mirrored). Ordered weakest → strongest authority.
+SourceType = Literal[
+    "self_inferred", "peer_validated", "authority_validated", "externally_published",
 ]
 
 
@@ -75,6 +83,18 @@ class ShardCreateInput(BaseModel):
         default=None,
         description="ISO 8601 timestamp — shard is excluded from retrieval after this date.",
     )
+    prov_source_type: Optional[SourceType] = Field(
+        default=None,
+        description="Initial epistemic authority of this shard. Derived from `source` when omitted.",
+    )
+    prov_validator: Optional[str] = Field(
+        default=None,
+        description="Identity of who validated this memory (person handle or shard_id), if any.",
+    )
+    prov_mechanism: Optional[str] = Field(
+        default=None,
+        description="Validation mechanism (rubric, peer_review, market_signal, convergence_evidence, …).",
+    )
 
     @model_validator(mode="after")
     def _require_reason_for_supersedes(self) -> "ShardCreateInput":
@@ -90,6 +110,36 @@ class ShardUpdateInput(BaseModel):
     shard_id: str = Field(..., min_length=1)
     user_message: str = Field(default="")
     ai_response: str = Field(default="")
+
+
+class ShardValidateInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    shard_id: str = Field(..., min_length=1)
+    source_type: SourceType = Field(
+        ..., description="Epistemic authority established by this validation event."
+    )
+    validator: Optional[str] = Field(
+        default=None, description="Who validated it (person handle or shard_id)."
+    )
+    mechanism: str = Field(
+        default="", description="Validation mechanism (rubric, peer_review, market_signal, …)."
+    )
+    confidence_delta: float = Field(
+        default=0.0, ge=0.0, le=1.0,
+        description="Confidence to add via the corroboration path. Positive-only; confidence may only rise.",
+    )
+    superseded: bool = Field(
+        default=False, description="Mark this memory as superseded/contradicted by a higher-authority source."
+    )
+    superseded_by: Optional[str] = Field(
+        default=None, description="shard_id of the superseding higher-authority memory."
+    )
+
+    @model_validator(mode="after")
+    def _require_superseded_by(self) -> "ShardValidateInput":
+        if self.superseded and not self.superseded_by:
+            raise ValueError("'superseded_by' is required when superseded=True")
+        return self
 
 
 class ShardSearchInput(BaseModel):

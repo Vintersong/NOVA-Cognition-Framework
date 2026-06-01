@@ -31,6 +31,7 @@ from config import (
 from facts import search_facts
 from gate_helpers import gate_check, log_executed, permission_error
 from graph import (
+    add_corroborated_by,
     add_relation,
     add_shard_to_graph,
     add_supersedes,
@@ -40,6 +41,7 @@ from hooks import NovaHookEvent
 from maintenance import confidence_weighted_score
 from nott import NottTrigger
 from nova_embeddings_local import enrich_shard
+import provenance
 from reject import RejectCode, reject_payload, shard_not_found
 from schemas import (
     ObsidianExportInput,
@@ -56,6 +58,7 @@ from schemas import (
     ShardSearchInput,
     ShardStateQueryInput,
     ShardUpdateInput,
+    ShardValidateInput,
 )
 from server_context import _update_graph_entity_confidence
 from store import (
@@ -289,6 +292,12 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                     if params.validity_start or params.validity_end else None
                 ),
                 "superseded_by": None,
+                "epistemic_provenance": provenance.build_initial(
+                    params.source,
+                    source_type=params.prov_source_type,
+                    validator=params.prov_validator,
+                    mechanism=params.prov_mechanism,
+                ),
             }
         }
 
@@ -438,6 +447,66 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             "total_entries": len(data["conversation_history"]),
             "nott_scheduled": True,
             "enrichment_status": "pending",
+        }, indent=2)
+
+    @nova_tool(mcp, name="nova_shard_validate")
+    async def nova_shard_validate(params: ShardValidateInput) -> str:
+        """Record an epistemic validation event on a shard.
+
+        Sets the shard's authority chain (source_type, validator, mechanism),
+        optionally raises confidence via the sanctioned corroboration path, and
+        can mark the memory as superseded by a higher-authority source. Writes
+        a corroborated_by graph edge when a positive delta is attributed to
+        another shard. Mirrors nova_shard_update's atomic mutate-under-lock path.
+        """
+        if ctx.permission_context.blocks("nova_shard_validate"):
+            return permission_error("nova_shard_validate")
+
+        loop = asyncio.get_running_loop()
+        shard_lock = ctx.get_shard_lock(params.shard_id)
+        holder: dict = {}
+
+        def _validate(fresh: dict) -> None:
+            record = provenance.apply_validation_event(
+                fresh,
+                source_type=params.source_type,
+                validator=params.validator,
+                mechanism=params.mechanism,
+                confidence_delta=params.confidence_delta,
+                superseded=params.superseded,
+                superseded_by=params.superseded_by,
+            )
+            holder["record"] = record
+            holder["data"] = fresh
+
+        async with shard_lock:
+            try:
+                written = await loop.run_in_executor(
+                    None, lambda: mutate_shard(params.shard_id, _validate)
+                )
+            except ValueError as exc:
+                return reject_payload(RejectCode.INVALID_INPUT, str(exc))
+            if not written:
+                return shard_not_found(params.shard_id)
+            data = holder["data"]
+            await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
+
+        # If a positive delta was attributed to another shard, record the
+        # corroborating edge so the authority chain stays queryable in the graph.
+        if params.confidence_delta > 0 and params.validator:
+            graph = await loop.run_in_executor(None, load_graph)
+            if params.validator in graph.get("entities", {}):
+                await loop.run_in_executor(
+                    None, add_corroborated_by, params.shard_id, params.validator
+                )
+
+        log_operation("nova_shard_validate", [params.shard_id])
+
+        return json.dumps({
+            "status": "validated",
+            "shard_id": params.shard_id,
+            "confidence": data.get("meta_tags", {}).get("confidence"),
+            "epistemic_provenance": holder.get("record"),
         }, indent=2)
 
     @nova_tool(mcp, name="nova_shard_search")

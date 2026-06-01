@@ -72,10 +72,11 @@ def _spec(name: str, capability: str, category: str, irreversible: bool = False)
 # Single source of truth. Order is preserved by dict insertion → maps to the
 # order tools appear in `_ALL_TOOL_NAMES` (which CLAUDE.md mirrors).
 _REGISTRY: dict[str, ToolSpec] = dict([
-    # ── Shard core (15) ──────────────────────────────────────────────────
+    # ── Shard core (16) ──────────────────────────────────────────────────
     _spec("nova_shard_interact",    "fs.read",        "shard"),
     _spec("nova_shard_create",      "fs.write.rev",   "shard"),
     _spec("nova_shard_update",      "fs.write.rev",   "shard"),
+    _spec("nova_shard_validate",    "fs.write.rev",   "shard"),
     _spec("nova_shard_search",      "fs.read",        "shard"),
     _spec("nova_shard_query_state", "fs.read",        "shard"),
     _spec("nova_obsidian_export",   "fs.write.rev",   "shard"),
