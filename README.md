@@ -14,6 +14,8 @@
 
 A unified repository containing **NOVA** (persistent AI memory) and **Forgemaster** (multi-agent orchestration). NOVA is the memory layer. Forgemaster is the execution layer. They share one repo and one data store.
 
+Currently in active use as the documentation and knowledge-management backbone for multiple projects — each project keeps its own shard set with cross-project relationships tracked through the knowledge graph.
+
 ---
 
 ## What is NOVA?
@@ -255,7 +257,8 @@ The bench measures each stage independently: SQLite facts pre-filter → HUGINN 
 NOVA-Cognition-Framework/
   mcp/
     # Core server
-    nova_server.py           ← ACTIVE MCP server (registers all 38 tools)
+    nova_server.py           ← ACTIVE MCP server — bootstrap + wiring (registers all 38 tools)
+    server_context.py        ← process-scoped singletons (ravens, NÓTT, hooks, gate, audit, session); all handlers read through ServerContext instead of module globals
     config.py                ← all env vars and defaults (single source of truth)
     schemas.py               ← Pydantic input models
     models.py                ← shared dataclasses (UsageSummary)
@@ -312,10 +315,19 @@ NOVA-Cognition-Framework/
     skill_manifest.py        ← @@verification / @@capabilities header parser
     skill_verification.py    ← biconditional post-run audit (Phase 4)
 
+    # Tool handler modules (split from nova_server.py god-object)
+    shard_tools.py           ← 15 shard CRUD/lifecycle handlers (interact, create, update, search, index, summary, list, get, get_full, merge, archive, forget, consolidate, query_state, obsidian_export)
+    graph_tools.py           ← nova_graph_query + nova_graph_relate handlers
+    session_tools.py         ← nova_session_flush / load / list handlers
+    forgemaster_tools.py     ← nova_forgemaster_sprint + nova_cache_prewarm handlers
+    gate_helpers.py          ← permission_error / gate_check / log_executed plumbing shared across handler modules
+    reject.py                ← typed reject envelope (SDB-contract machine-readable signals; RejectCode enum + reject_payload())
+
     # MCP tool modules
     evolve.py                ← nova_evolve self-improvement loop
     nidhogg.py               ← nidhogg_ingest/scan/status tools
     facts.py                 ← nova_facts_search / nova_facts_rebuild
+    external_retrieval.py    ← nova_external_retrieval: multi-agent deliberation pipeline with cost guard
     wiki.py / wiki_ingest.py / wiki_tools.py  ← wiki layer model, pipeline, MCP tools
     obsidian_export.py       ← Obsidian vault export logic
     build_summary_index.py   ← batch-build summary_index.json via Haiku
@@ -323,16 +335,23 @@ NOVA-Cognition-Framework/
     ternary_net.py           ← ternary epistemic memory encoder (experimental)
     calibrate.py             ← nova_calibrate_routing: HUGINN threshold + Forgemaster routing calibration
 
-    # Tests (run with pytest from repo root)
+    # Tests (run with pytest from mcp/ — memory-explorer only, not pytest)
     test_nova.py             ← memory-explorer CLI (not pytest — run directly)
-    test_adversarial.py / test_clustering.py / test_quarantine.py
-    test_recall.py / test_state_gating.py / test_shard_concurrency.py
 
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
 
-  tests/                     ← main pytest suite (17 test files)
+  tests/                     ← main pytest suite (21 files: 18 test_*, conftest.py, bench_corpus.py, bench_retrieval.py)
   utilities/                 ← migration helpers, diagnostics, ad-hoc maintenance
+    # Export converters (import existing AI conversation history into NOVA)
+    chatgpt_to_nova.py       ← ChatGPT conversation export → shards
+    claude_to_nova.py        ← Claude (Anthropic) conversation export → shards
+    gemini_to_nova.py        ← Gemini MyActivity (Google Takeout) → shards
+    grok_to_nova.py          ← Grok (xAI) export → shards
+    lechat_to_nova.py        ← Le Chat (Mistral) export → shards
+    perplexity_to_nova.py    ← Perplexity exported threads → shards
+    docs_to_nova.py          ← standalone documents (design docs, papers) → reference shards
+    backfill_graph_entities.py ← register legacy / imported shards as graph entities
   docker/
     entrypoint.sh            ← seeds dummy shard on first boot, starts server
     seed/
@@ -350,6 +369,11 @@ NOVA-Cognition-Framework/
     skills/                  ← core orchestration skills (12 files)
     library/                 ← domain skill library (324 files, 25 categories)
     agents/                  ← agent persona definitions (221 personas, 18 divisions)
+    rules/                   ← coding standards and hook rules
+    slash-commands/          ← slash command definitions (commit, create-pr, brainstorm, etc.)
+    templates/               ← project templates (DEBUG.md, UAT.md, UI-SPEC.md, VALIDATION.md, etc.)
+    workflows/               ← reusable workflow definitions (add-phase, audit-milestone, etc.)
+    docs/                    ← forgemaster reference docs
   docs/                      ← reference and roadmap documents
   Donors/                    ← reference implementations
   Dockerfile                 ← builds the MCP server image
@@ -470,7 +494,14 @@ Read-only resources exposed alongside the tools:
 | `config.py` | Single source for all env vars and defaults |
 | `schemas.py` | Pydantic input models for core + wiki tools |
 | `models.py` | Shared dataclasses (UsageSummary) |
+| `server_context.py` | Process-scoped singleton container (`ServerContext`); `bootstrap()` constructs all components in dependency order and wires hook bus — handler modules read singletons through `ctx` instead of module globals |
 | `tool_registry.py` | Canonical `ToolSpec` registry — `@nova_tool` validates names at import, feeds permissions/audit/docs |
+| `shard_tools.py` | 15 shard CRUD/lifecycle MCP tool handlers — `register_shard_tools(mcp, ctx)` wires them; reads singletons through `ServerContext` |
+| `graph_tools.py` | `nova_graph_query` + `nova_graph_relate` handlers — `register_graph_tools(mcp, ctx)` |
+| `session_tools.py` | `nova_session_flush` / `nova_session_load` / `nova_session_list` handlers — `register_session_tools(mcp, ctx)` |
+| `forgemaster_tools.py` | `nova_forgemaster_sprint` + `nova_cache_prewarm` handlers — `register_forgemaster_tools(mcp, ctx)` |
+| `gate_helpers.py` | `permission_error` / `gate_check` / `log_executed` — shared capability-gate plumbing for all handler modules |
+| `reject.py` | Typed reject envelope: `RejectCode` enum + `reject_payload()`. Implements the SDB-contract reject signal so LLM proposers receive machine-readable error codes rather than free-text messages |
 | `store.py` | Shard filesystem I/O, index, summary-index layer, path-traversal guards; `mutate_shard`/`mutate_shard_fields` give lock-safe read-modify-write (fresh read inside the FileLock) plus revision-guarded CAS, closing the NÓTT ↔ tool-write lost-update race |
 | `graph.py` | Knowledge graph load/save/query/relate/transitive BFS |
 | `maintenance.py` | Confidence decay, auto-compaction, cosine similarity, merge candidates |
@@ -489,6 +520,7 @@ Read-only resources exposed alongside the tools:
 | `capability_gate.py` | HITL gate — capability membership check + HITL broker (interactive on Unix, `msvcrt` polling on Windows). Every irreversible-write tool routes through it, including the externally-registered modules (`nova_evolve`, `nidhogg_ingest`/`scan`, `gemini_execute_ticket`); their executions emit audit records covered by the biconditional corpus check |
 | `audit_log.py` | SQLite HITL audit log — four-state lifecycle + biconditional corpus check |
 | `skill_manifest.py` | Parses `@@verification` / `@@capabilities` from skill file headers |
+| `external_retrieval.py` | `nova_external_retrieval` — Haiku retrieval + parallel validate/challenge/synthesize + Sonnet arbiter with ACCEPT/PARTIAL/REJECT verdict; cost-guard aborts if estimate exceeds `NOVA_EXTERNAL_COST_CAP` |
 | `evolve.py` | Self-evolution loop, adaptive governor, auto-commit |
 | `nidhogg.py` | Document ingestion with provenance |
 | `wiki.py` / `wiki_ingest.py` / `wiki_tools.py` | Wiki layer model, pipeline, and MCP tools |
@@ -518,7 +550,8 @@ Read-only resources exposed alongside the tools:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `NOVA_SHARD_DIR` | `shards` | Path to shard JSON files |
+| `NOVA_DATA_ROOT` | `cwd` | Root directory for all data files (shards, sessions, summary index, usage log). Override to pin to a specific directory; all relative paths in `config.py` resolve under this root |
+| `NOVA_SHARD_DIR` | `shards` | Path to shard JSON files (resolved under `NOVA_DATA_ROOT`) |
 | `CLAUDE_API_KEY` | — | Powers HUGINN + MUNINN + wiki + summary generation |
 | `HUGINN_MODEL` | `claude-haiku-4-5-20251001` | Fast retrieval pass |
 | `MUNINN_MODEL` | `claude-sonnet-4-6` | Deep rerank pass |
@@ -534,13 +567,20 @@ Read-only resources exposed alongside the tools:
 | `NOVA_COMPACT_KEEP` | `15` | Recent turns retained after compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |
 | `NOVA_DECAY_DAYS` | `7` | Days per decay period |
+| `NOVA_DECAY_ON_READ_WINDOW_DAYS` | `7` | Window (days) for the decay-on-read pass; shards accessed more recently than this are exempt |
 | `NOVA_MERGE_THRESHOLD` | `0.85` | Cosine similarity floor for merge suggestions |
 | `NOVA_CONFIDENCE_LOW` | `0.4` | Below this → `low_confidence` tag |
 | `NOVA_RECENT_DAYS` | `3` | Within N days → `recent` tag |
 | `NOVA_STALE_DAYS` | `14` | Not accessed N days → `stale` tag |
 | `NOTT_COUNT_THRESHOLD` | `100` | Shard count triggering NÓTT merge scan |
+| `NOVA_QUARANTINE_HOURS` | `48` | Hours a shard remains quarantined after failing the adversarial pass |
+| `NOVA_QUARANTINE_PENALTY` | `0.5` | Retrieval score multiplier applied to quarantined shards |
+| `NOVA_ADVERSARIAL_INTERVAL_DAYS` | `7` | Minimum days between adversarial passes on the same shard |
+| `NOVA_HITL_BROKER` | `interactive` | HITL broker mode: `interactive` (terminal prompt) or `policy` (always-deny — set in Docker image by default) |
+| `NOVA_HITL_TIMEOUT_S` | `30` | Seconds before an unanswered HITL prompt auto-denies |
 | `NOVA_DENIED_TOOLS` | — | Comma-separated tool names to block |
 | `NOVA_DENIED_PREFIXES` | — | Comma-separated prefixes to block |
+| `NOVA_PROJECT_CONTEXT` | — | Freeform project context string injected into sprint prompts |
 | `NOVA_SUMMARY_INDEX_FILE` | `summary_index.json` | Path to summary index |
 | `NOVA_SUMMARY_MARKDOWN_FILE` | `summary_index.md` | Path to summary markdown |
 | `NOVA_WIKI_DIR` | `wiki` | Wiki pages directory |
@@ -555,6 +595,8 @@ Read-only resources exposed alongside the tools:
 | `NOVA_EMPIRICAL_CACHE_TTL_S` | `300` | Empirical routing stats cache TTL (seconds); lower this to pick up new sprint outcomes faster in long-running servers |
 | `NOVA_RECALL_CACHE_TTL` | `300` | In-memory recall cache TTL in seconds |
 | `NOVA_ACTIVATION_MIN_EDGES` | `10` | Minimum graph edges required to run spreading activation |
+| `NOVA_EXTERNAL_COST_CAP` | `0.10` | USD cost ceiling for `nova_external_retrieval`; request is aborted before any API call if the estimate exceeds this |
+| `NOVA_EXTERNAL_RETRIEVAL_THRESHOLD` | `0.6` | Minimum confidence score before external retrieval is considered worth firing |
 | `NOVA_EMBEDDING_HMAC_KEY` | — | Hex or UTF-8 secret for HMAC-SHA256 embedding signing; if unset, signing is skipped |
 | `NOVA_EMBEDDING_INTEGRITY_LOG` | `embedding_integrity.jsonl` | Path for adversarial embedding event log |
 
@@ -595,3 +637,4 @@ Original named concepts in this repository: **shard** (memory unit), **HUGINN/MU
 - `.env` contains API keys — never commit it
 - `test_nova.py` is a memory-explorer CLI, not a pytest suite — run it with `python mcp/test_nova.py`
 - See `CLAUDE.md` for operational instructions and sprint workflow; see `docs/ROADMAP.md` for shipped-vs-planned split
+- See `KNOWN_ISSUES.md` for open and resolved bugs with workarounds
