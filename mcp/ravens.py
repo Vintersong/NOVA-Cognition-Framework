@@ -254,6 +254,7 @@ class Huginn:
                     client = anthropic.Anthropic(
                         api_key=CLAUDE_API_KEY,
                         timeout=httpx.Timeout(_RAVEN_API_TIMEOUT, connect=5.0),
+                        max_retries=0,
                     )
                     response = client.messages.create(
                         model=HUGINN_MODEL,
@@ -470,6 +471,7 @@ class Muninn:
                     client = anthropic.Anthropic(
                         api_key=CLAUDE_API_KEY,
                         timeout=httpx.Timeout(_RAVEN_API_TIMEOUT, connect=5.0),
+                        max_retries=0,
                     )
                     response = client.messages.create(
                         model=MUNINN_MODEL,
