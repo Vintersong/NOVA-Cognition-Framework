@@ -38,6 +38,9 @@ output/
 # Keep .env.example — it's the template
 !.env.example
 
+# C extension build artifacts
+*.so
+
 # Binary assets (tracked in docs/ but not committed)
 *.pdf
 *.pptx
