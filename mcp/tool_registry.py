@@ -137,6 +137,10 @@ _REGISTRY: dict[str, ToolSpec] = dict([
     # Read-only: only reads nova_usage.jsonl + forgemaster run logs and
     # reports findings. Suggested thresholds are applied by hand via env var.
     _spec("nova_calibrate_routing",  "fs.read",       "calibrate"),
+    # ── HUGINN pre-filter (1) ─────────────────────────────────────────────
+    # Read-only: keyword + confidence pre-filter over the shard index.
+    # Returns a small candidate list ready to paste into a HUGINN agent prompt.
+    _spec("nova_huginn_candidates",  "fs.read",       "shard"),
 ])
 
 

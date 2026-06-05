@@ -116,17 +116,16 @@ NOVA-Whitepaper/
     AGENTS.md                ← orchestration config and model routing
     SKILL_LIBRARY.md         ← index of all skills across 15 domains
     STANDARDS.md             ← authoring standard for all forgemaster content
-    skills/                  ← core orchestration skills (12 files)
-    library/                 ← domain skill library (324 files, 25 categories)
+    skills/                  ← core orchestration skills (14 files)
+    library/                 ← domain skill library (218 files, 25 categories)
     agents/                  ← agent persona definitions (221 personas + 99 reference files, 18 divisions)
   docs/                      ← reference and roadmap documents
-  Donors/                    ← reference implementations (hermes-agent, OpenHarness)
   .env                       ← API keys (never commit)
 ```
 
 ---
 
-## NOVA MCP Tools (39 total)
+## NOVA MCP Tools (40 total)
 
 ### Core shard ops (`nova_server.py`, 23)
 
@@ -207,6 +206,12 @@ NOVA-Whitepaper/
 |---|---|
 | `nova_calibrate_routing` | Analyse HUGINN consistency and Forgemaster sprint pass rates to suggest routing threshold adjustments |
 
+### HUGINN orchestration (`huginn_tools.py`, 1)
+
+| Tool | Purpose |
+|---|---|
+| `nova_huginn_candidates` | Keyword + confidence pre-filter over the shard index — returns a small candidate list ready to paste into a HUGINN agent prompt, no LLM required |
+
 ---
 
 ## Forgemaster Core Skills
@@ -228,7 +233,7 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
 | `forgemaster-emotional-state-routing` | Routing hook: escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
-For all other domains see `forgemaster/SKILL_LIBRARY.md` (25 categories, 324 skills).
+For all other domains see `forgemaster/SKILL_LIBRARY.md` (25 categories, 218 skills).
 
 ---
 

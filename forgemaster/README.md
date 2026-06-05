@@ -10,10 +10,10 @@ Forgemaster does not think for you — it scaffolds how specialized models colla
 |---|---|
 | `AGENTS.md` | Orchestration config: agent roles, model routing, tool allowlist |
 | `STANDARDS.md` | Authoring standard for every skill, agent, and template |
-| `SKILL_LIBRARY.md` | Master index of ~200 skills across 15 domains |
-| `skills/` | 10 core orchestration skills (always loaded first) |
-| `library/` | Domain skill library (15 categories) — load per-ticket |
-| `agents/` | 18 divisions, ~319 agent persona definitions (see `agents/README.md`) |
+| `SKILL_LIBRARY.md` | Master index of 218 skills across 25 domains |
+| `skills/` | 14 core orchestration skills (always loaded first) |
+| `library/` | Domain skill library (25 categories) — load per-ticket |
+| `agents/` | 18 divisions, ~321 agent persona definitions (see `agents/README.md`) |
 | `templates/` | Starters for CLAUDE.md, agents, skills |
 | `docs/` | Internal reference and operating notes |
 

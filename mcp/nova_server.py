@@ -51,6 +51,7 @@ from tool_registry import all_names as _registry_all_names
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Gemini"))
 from calibrate import register_calibrate_tools
 from evolve import register_evolve_tools
+from huginn_tools import register_huginn_tools
 from external_retrieval import register_external_retrieval_tools
 from facts import register_facts_tools
 from forgemaster_tools import register_forgemaster_tools
@@ -86,6 +87,7 @@ mcp = FastMCP("nova_mcp_v2")
 register_gemini_tools(mcp, gate=ctx.capability_gate, audit_log=ctx.skill_audit_log)
 register_nidhogg_tools(mcp, ctx)
 register_evolve_tools(mcp, ctx)
+register_huginn_tools(mcp, ctx)
 register_wiki_tools(mcp)
 register_facts_tools(mcp)
 register_external_retrieval_tools(mcp)

@@ -32,15 +32,16 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (38 total)
+## Tools (40 total — verified)
 
-### Core shard + graph + session (21)
+### Core shard + graph + session (23)
 
 | Tool | Purpose |
 |---|---|
 | `nova_shard_interact` | Load shards into context. Auto-selects by confidence-weighted relevance. Start here. |
 | `nova_shard_create` | Create shard. Triggers enrichment hook. Registers in graph. |
 | `nova_shard_update` | Append to shard. Triggers enrichment hook. Auto-compacts at 30 turns. |
+| `nova_shard_validate` | Record an epistemic validation event on a shard's provenance record. |
 | `nova_shard_search` | Search with confidence weighting. High-confidence shards rank higher. |
 | `nova_shard_query_state` | Inspect computed shard state (confidence, tags, decay) without loading body. |
 | `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault. |
@@ -80,6 +81,10 @@ Principle Library (reasoning methodology)
 ### Gemini (2)
 
 `gemini_execute_ticket`, `gemini_load_file`
+
+### Calibrate (1)
+
+`nova_calibrate_routing` — analyse HUGINN consistency and sprint pass rates to suggest routing threshold adjustments.
 
 ---
 

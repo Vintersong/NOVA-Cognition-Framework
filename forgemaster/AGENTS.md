@@ -61,7 +61,7 @@ Every 3 sprints: nova_shard_consolidate (maintain memory health)
 
 ## Skill Library
 The full skill library is indexed at `forgemaster/SKILL_LIBRARY.md`.
-It covers 27 specialization domains with 324 skills across the workspace.
+It covers 25 specialization domains with 218 skills across the workspace.
 Always consult it when a task falls outside Forgemaster's core domain.
 
 ## Repository Layout — Personas vs. Reference Material

@@ -45,6 +45,14 @@ import anthropic
 from config import parse_bool_env, NOVA_AGENT_INFERENCE_WEIGHT, NOVA_PROJECT_CONTEXT, QUARANTINE_PENALTY
 from store import passes_state_gate
 
+try:
+    from nova_hotpool import lookup as _hp_lookup, insert as _hp_insert
+    _HOTPOOL_AVAILABLE = True
+except ImportError:
+    _hp_lookup = None
+    _hp_insert = None
+    _HOTPOOL_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 _error_counts: Counter[str] = Counter()
 
@@ -283,6 +291,16 @@ class Huginn:
                 _record_error("huginn_llm_rescore", exc)
 
         max_conf = max(scores.values()) if scores else 0.0
+
+        if _HOTPOOL_AVAILABLE and shard_ids:
+            for sid in shard_ids:
+                _entry = index.get(sid, {})
+                _hp_insert(
+                    sid,
+                    _entry.get("confidence", 1.0),
+                    _entry.get("meta", {}).get("intent", "reflection"),
+                )
+
         result = RetrievalResult(
             shard_ids=shard_ids,
             scores=scores,
@@ -315,7 +333,8 @@ class Huginn:
             if not passes_state_gate(entry, NOVA_PROJECT_CONTEXT):
                 continue
 
-            confidence = entry.get("confidence", 1.0)
+            cached_conf = _hp_lookup(shard_id) if _HOTPOOL_AVAILABLE else None
+            confidence = cached_conf if cached_conf is not None else entry.get("confidence", 1.0)
             # trust_score: boosted by access frequency, reduced on low-confidence updates
             trust = entry.get("trust_score", 1.0)
 
