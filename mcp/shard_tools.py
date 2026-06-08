@@ -199,10 +199,11 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         _loop_for_load = asyncio.get_running_loop()
         for sid in shard_ids:
             try:
-                data, filepath = await _loop_for_load.run_in_executor(None, load_shard, sid)
+                data, _ = await _loop_for_load.run_in_executor(None, load_shard, sid)
+                before = deepcopy(data)
                 update_shard_usage(data)
                 meta = data.setdefault("meta_tags", {})
-                await _loop_for_load.run_in_executor(None, save_shard, filepath, data)
+                await _loop_for_load.run_in_executor(None, mutate_shard_fields, sid, before, data)
 
                 fragments = extract_fragments(data, sid, max_turns=MAX_FRAGMENTS)
 
@@ -834,77 +835,83 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         """Merge multiple shards into a meta-shard. Updates knowledge graph relations."""
         if ctx.permission_context.blocks("nova_shard_merge"):
             return permission_error("nova_shard_merge")
-        loop = asyncio.get_running_loop()
-        merged_history = []
-        source_questions = []
-        shard_ids_list = [s.strip() for s in params.shard_ids.split(",") if s.strip()]
+        gate_err, request_id = await gate_check(ctx, "nova_shard_merge", params.shard_ids)
+        if gate_err:
+            return gate_err
+        op_ok = False
+        try:
+            loop = asyncio.get_running_loop()
+            merged_history = []
+            source_questions = []
+            shard_ids_list = [s.strip() for s in params.shard_ids.split(",") if s.strip()]
 
-        for sid in shard_ids_list:
-            try:
-                data, _ = await loop.run_in_executor(None, load_shard, sid)
-                merged_history.extend(data.get("conversation_history", []))
-                source_questions.append(f"{sid}: {data.get('guiding_question', '')}")
-            except FileNotFoundError:
-                return shard_not_found(sid)
-
-        merged_history.sort(key=lambda x: x.get("timestamp", ""))
-
-        base_name = sanitize_filename(f"{params.new_theme}_merged")
-        filename = get_unique_filename(base_name)
-        filepath = os.path.join(SHARD_DIR, filename)
-        new_id = filename.replace(".json", "")
-
-        meta_shard = {
-            "shard_id": new_id,
-            "guiding_question": params.new_guiding_question,
-            "conversation_history": merged_history,
-            "meta_tags": {
-                "intent": "meta_synthesis",
-                "theme": params.new_theme,
-                "usage_count": 1,
-                "last_used": datetime.now().isoformat(),
-                "confidence": 1.0,
-                "merged_from": shard_ids_list,
-                "source_questions": source_questions
-            }
-        }
-
-        meta_shard.setdefault("meta_tags", {})["enrichment_status"] = "pending"
-        await loop.run_in_executor(None, save_shard, filepath, meta_shard)
-        await loop.run_in_executor(None, patch_index_entry, new_id, meta_shard)
-        add_shard_to_graph(new_id, meta_shard)
-
-        if params.archive_originals:
             for sid in shard_ids_list:
                 try:
-                    data, fp = await loop.run_in_executor(None, load_shard, sid)
-                    data.setdefault("meta_tags", {})["intent"] = "archived"
-                    data["meta_tags"]["archived_at"] = datetime.now().isoformat()
-                    await loop.run_in_executor(None, save_shard, fp, data)
+                    data, _ = await loop.run_in_executor(None, load_shard, sid)
+                    merged_history.extend(data.get("conversation_history", []))
+                    source_questions.append(f"{sid}: {data.get('guiding_question', '')}")
                 except FileNotFoundError:
-                    pass
+                    return shard_not_found(sid)
 
-        loop = asyncio.get_running_loop()
+            merged_history.sort(key=lambda x: x.get("timestamp", ""))
 
-        async def _background_enrich_and_persist() -> None:
-            await loop.run_in_executor(None, enrich_shard, new_id, meta_shard)
+            base_name = sanitize_filename(f"{params.new_theme}_merged")
+            filename = get_unique_filename(base_name)
+            filepath = os.path.join(SHARD_DIR, filename)
+            new_id = filename.replace(".json", "")
+
+            meta_shard = {
+                "shard_id": new_id,
+                "guiding_question": params.new_guiding_question,
+                "conversation_history": merged_history,
+                "meta_tags": {
+                    "intent": "meta_synthesis",
+                    "theme": params.new_theme,
+                    "usage_count": 1,
+                    "last_used": datetime.now().isoformat(),
+                    "confidence": 1.0,
+                    "merged_from": shard_ids_list,
+                    "source_questions": source_questions
+                }
+            }
+
+            meta_shard.setdefault("meta_tags", {})["enrichment_status"] = "pending"
             await loop.run_in_executor(None, save_shard, filepath, meta_shard)
             await loop.run_in_executor(None, patch_index_entry, new_id, meta_shard)
+            add_shard_to_graph(new_id, meta_shard)
 
-        asyncio.create_task(_background_enrich_and_persist())
+            if params.archive_originals:
+                for sid in shard_ids_list:
+                    try:
+                        data, fp = await loop.run_in_executor(None, load_shard, sid)
+                        data.setdefault("meta_tags", {})["intent"] = "archived"
+                        data["meta_tags"]["archived_at"] = datetime.now().isoformat()
+                        await loop.run_in_executor(None, save_shard, fp, data)
+                    except FileNotFoundError:
+                        pass
 
-        for sid in shard_ids_list:
-            add_relation(sid, new_id, "extends", "merged into meta-shard")
+            async def _background_enrich_and_persist() -> None:
+                await loop.run_in_executor(None, enrich_shard, new_id, meta_shard)
+                await loop.run_in_executor(None, save_shard, filepath, meta_shard)
+                await loop.run_in_executor(None, patch_index_entry, new_id, meta_shard)
 
-        log_operation("nova_shard_merge", shard_ids_list + [new_id])
+            asyncio.create_task(_background_enrich_and_persist())
 
-        return json.dumps({
-            "status": "merged",
-            "new_shard_id": new_id,
-            "sources": shard_ids_list,
-            "total_entries": len(merged_history),
-            "originals_archived": params.archive_originals
-        }, indent=2)
+            for sid in shard_ids_list:
+                add_relation(sid, new_id, "extends", "merged into meta-shard")
+
+            log_operation("nova_shard_merge", shard_ids_list + [new_id])
+
+            op_ok = True
+            return json.dumps({
+                "status": "merged",
+                "new_shard_id": new_id,
+                "sources": shard_ids_list,
+                "total_entries": len(merged_history),
+                "originals_archived": params.archive_originals
+            }, indent=2)
+        finally:
+            log_executed(ctx, request_id, "nova_shard_merge", params.shard_ids, op_ok)
 
     @nova_tool(mcp, name="nova_shard_archive")
     async def nova_shard_archive(params: ShardArchiveInput) -> str:

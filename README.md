@@ -316,7 +316,6 @@ NOVA-Cognition-Framework/
 
     # Skill verification
     skill_manifest.py        ← @@verification / @@capabilities header parser
-    skill_verification.py    ← biconditional post-run audit (Phase 4)
 
     # Tool handler modules (split from nova_server.py god-object)
     shard_tools.py           ← 15 shard CRUD/lifecycle handlers (interact, create, update, search, index, summary, list, get, get_full, merge, archive, forget, consolidate, query_state, obsidian_export)
