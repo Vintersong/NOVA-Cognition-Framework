@@ -31,6 +31,9 @@ NOVA-Whitepaper/
     # Knowledge graph
     graph.py                 ← inter-shard knowledge graph ops
 
+    # Epistemic provenance
+    provenance.py            ← chain-of-custody records (source_type, validator, mechanism, confidence_delta, supersession) backing nova_shard_validate
+
     # Maintenance & lifecycle
     maintenance.py           ← confidence decay, compaction, merge
     nott.py                  ← NOTT daemon: decay, compact, merge, graph sync
@@ -41,12 +44,24 @@ NOVA-Whitepaper/
     nova_embeddings_local.py ← local all-MiniLM-L6-v2 embeddings
     clustering.py            ← shard clustering utilities
     arrow_cache.py           ← Arrow-format embedding cache
+    spreading_activation.py  ← graph-based score propagation, MUNINN third pass
+    embedding_integrity.py   ← HMAC-SHA256 signing/verification of shard embeddings
 
     # Permissions, gating & audit
-    permissions.py           ← env-driven tool gating (_ALL_TOOL_NAMES whitelist)
+    permissions.py           ← env-driven tool allow/deny (NOVA_DENIED_TOOLS / NOVA_DENIED_PREFIXES)
     capability_gate.py       ← runtime capability gating (imported by nova_server.py)
     audit_log.py             ← per-tool audit trail (imported by nova_server.py)
     access_log.py            ← shard access logging
+
+    # Tool registry & handler modules (split from the nova_server.py god-object)
+    tool_registry.py         ← canonical ToolSpec registry; @nova_tool validates names at import
+    server_context.py        ← process-scoped ServerContext singleton; bootstrap() wires components + hook bus
+    shard_tools.py           ← shard CRUD/lifecycle handlers (interact, create, update, validate, search, …)
+    graph_tools.py           ← nova_graph_query / nova_graph_relate handlers
+    session_tools.py         ← nova_session_flush / load / list handlers
+    forgemaster_tools.py     ← nova_forgemaster_sprint / nova_cache_prewarm handlers
+    gate_helpers.py          ← permission_error / gate_check / log_executed plumbing shared across handler modules
+    reject.py                ← typed reject envelope (RejectCode enum + reject_payload())
 
     # Session & sprint
     session_store.py         ← session persistence
@@ -74,10 +89,12 @@ NOVA-Whitepaper/
     wiki_tools.py            ← nova_wiki_* MCP tools
     obsidian_export.py       ← Obsidian vault export logic
     build_summary_index.py   ← summary index builder
+    external_retrieval.py    ← nova_external_retrieval multi-agent deliberation pipeline
+    calibrate.py             ← nova_calibrate_routing
+    adversarial.py           ← adversarial shard contradiction testing — wired into NÓTT quarantine
 
     # Experimental
-    ternary_net.py           ← ternary epistemic memory encoder (2026-05-14)
-    adversarial.py           ← adversarial shard testing module
+    ternary_net.py           ← ternary epistemic memory encoder (not yet wired into retrieval)
 
     # Tests
     test_nova.py             ← integration smoke tests
@@ -86,20 +103,31 @@ NOVA-Whitepaper/
     test_recall.py           ← recall pipeline tests
     test_quarantine.py       ← quarantine/isolation tests
     test_state_gating.py     ← capability gate tests
+    test_provenance.py       ← provenance record + nova_shard_validate tests
+    test_shard_concurrency.py ← lock-safe read-modify-write / CAS tests
 
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
       output_event_bus.lua   ← Lua event bus for Gemini output routing
 
+  tests/                     ← main pytest suite (run from repo root)
   utilities/
     chatgpt_to_nova.py       ← ChatGPT export migration
+    claude_to_nova.py        ← Claude (Anthropic) conversation export → shards
+    gemini_to_nova.py        ← Gemini MyActivity (Google Takeout) → shards
+    grok_to_nova.py          ← Grok (xAI) export → shards
+    lechat_to_nova.py        ← Le Chat (Mistral) export → shards
+    perplexity_to_nova.py    ← Perplexity exported threads → shards
+    docs_to_nova.py          ← standalone documents (design docs, papers) → reference shards
     shard_index.py           ← rebuild shard index manually
     dedup_json.py            ← duplicate shard detection
     autoresearch.py          ← automated research loop
     shard_compact.py         ← manual compaction helper
     theme_analyzer.py        ← theme distribution analysis
     backfill_source_summary.py ← backfill source_summary field on shards
-    backfill_provenance.py   ← backfill epistemic_provenance record on shards
+    backfill_provenance.py   ← seed epistemic_provenance records on pre-existing shards
+    backfill_graph_entities.py ← register legacy/imported shards as graph entities
+    bench_report.py          ← benchmark report generation
     build_nova_shard_db.py   ← one-shot SQLite shard DB builder
     check_tool_docs.py       ← verify tool docstrings against schema
     convert_shards_to_md.py  ← export shards as plain markdown
@@ -110,6 +138,9 @@ NOVA-Whitepaper/
     test_shards.py           ← shard integrity test suite
 
   shards/                    ← live shard data — never modify directly
+  wiki/                      ← curated markdown pages (YAML frontmatter + [[wikilinks]])
+  intake/                    ← drop zone for nidhogg_scan
+  facts/                     ← curated .shard files for the SQLite facts pre-filter
   nova_sessions/             ← flushed MCP session state
   output/                    ← built artifacts (games, experiments)
   forgemaster/
