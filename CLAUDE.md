@@ -78,7 +78,6 @@ NOVA-Whitepaper/
 
     # Skill system
     skill_manifest.py        ← skill manifest parsing (imported by nova_server.py)
-    skill_verification.py    ← skill schema verification
 
     # MCP tool modules
     evolve.py                ← nova_evolve tool (self-improvement loop)

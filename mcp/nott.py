@@ -532,7 +532,12 @@ class Nott:
         now = now_utc()
         graph = self._load_graph()
         relations = graph.get("relations", [])
-        contradicted_ids = {r["target"] for r in relations if r["type"] == "contradicts"}
+        # `contradicts` is a symmetric relation type — graph.add_relation
+        # canonicalises its endpoints by sorting, so the contradicted shard
+        # may be stored as either `source` or `target`. Check both.
+        contradicted_ids = {
+            r[k] for r in relations if r["type"] == "contradicts" for k in ("source", "target")
+        }
 
         results = []
         for shard_id, entry in list(index.items()):
