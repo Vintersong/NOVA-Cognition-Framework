@@ -276,6 +276,9 @@ NOVA-Cognition-Framework/
     # Knowledge graph
     graph.py                 ← inter-shard graph ops (entities, relations, transitive BFS)
 
+    # Epistemic provenance
+    provenance.py            ← chain-of-custody records (source_type, validator, mechanism, confidence_delta, supersession)
+
     # Maintenance & lifecycle
     maintenance.py           ← confidence decay, compaction, cosine similarity, merge
     nott.py                  ← NÓTT daemon: decay, compact, merge, graph sync (lock-safe shard writes via store.mutate_shard)
@@ -352,6 +355,7 @@ NOVA-Cognition-Framework/
     perplexity_to_nova.py    ← Perplexity exported threads → shards
     docs_to_nova.py          ← standalone documents (design docs, papers) → reference shards
     backfill_graph_entities.py ← register legacy / imported shards as graph entities
+    backfill_provenance.py   ← seed epistemic_provenance records on shards that predate provenance.py
   docker/
     entrypoint.sh            ← seeds dummy shard on first boot, starts server
     seed/
@@ -384,15 +388,16 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (38)
+## NOVA MCP Tools (39)
 
-### Core shard + graph + session (22)
+### Core shard + graph + session (23)
 
 | Tool | Description |
 |---|---|
 | `nova_shard_interact` | Load shards into context — HUGINN fast pass, MUNINN deep rerank |
-| `nova_shard_create` | Create shard with post-write embedding enrichment |
+| `nova_shard_create` | Create shard with post-write embedding enrichment; accepts `prov_source_type` / `prov_validator` / `prov_mechanism` to seed its epistemic provenance record |
 | `nova_shard_update` | Append turn — auto-compaction triggered at threshold |
+| `nova_shard_validate` | Record an epistemic validation event on a shard's provenance record (`source_type`, `validator`, `mechanism`, `confidence_delta`, supersession); positive `confidence_delta` routes through the corroboration path — confidence may only rise this way |
 | `nova_shard_search` | Confidence-weighted keyword + ravens search |
 | `nova_shard_index` | Compact browse rows, metadata only |
 | `nova_shard_summary` | Browse rows plus a short synopsis per shard |
@@ -504,6 +509,7 @@ Read-only resources exposed alongside the tools:
 | `reject.py` | Typed reject envelope: `RejectCode` enum + `reject_payload()`. Implements the SDB-contract reject signal so LLM proposers receive machine-readable error codes rather than free-text messages |
 | `store.py` | Shard filesystem I/O, index, summary-index layer, path-traversal guards; `mutate_shard`/`mutate_shard_fields` give lock-safe read-modify-write (fresh read inside the FileLock) plus revision-guarded CAS, closing the NÓTT ↔ tool-write lost-update race |
 | `graph.py` | Knowledge graph load/save/query/relate/transitive BFS |
+| `provenance.py` | Epistemic provenance records at `meta_tags.epistemic_provenance` — `source_type` authority taxonomy (`self_inferred` → `peer_validated` → `authority_validated` → `externally_published`), append-only validation-event log, supersession flags. Confidence only ever rises through `maintenance.apply_confidence_corroboration`; this module routes positive `confidence_delta` through that path and never lowers confidence directly |
 | `maintenance.py` | Confidence decay, auto-compaction, cosine similarity, merge candidates |
 | `permissions.py` | Env-driven tool allow/deny |
 | `hooks.py` | Event-driven hook registry (SESSION_START, POST_SPRINT, COUNT_THRESHOLD) |
