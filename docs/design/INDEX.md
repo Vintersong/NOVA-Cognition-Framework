@@ -99,6 +99,13 @@ Float confidence migration — every module that reads/writes `meta_tags.confide
 
 ---
 
+
+### Architecture overview
+
+| Doc | Purpose | Key callers |
+|---|---|---|
+| [NOVA_AI_ARCHITECTURE_SUMMARY](../NOVA_AI_ARCHITECTURE_SUMMARY.md) | AI-readable end-to-end architecture map covering runtime topology, data model, retrieval, maintenance, tools, Forgemaster, deployment, tests, and migration boundaries | New AI agents, maintainers, architecture reviews |
+
 ## MCP modules
 
 ### Foundation
