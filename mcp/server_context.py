@@ -117,6 +117,9 @@ class ServerContext:
     # NÓTT serialisation — only one cycle at a time.
     _nott_lock: threading.Lock = field(default_factory=threading.Lock)
 
+    # Code index refresh serialisation — only one pass at a time.
+    _code_index_lock: threading.Lock = field(default_factory=threading.Lock)
+
     def get_shard_lock(self, shard_id: str) -> asyncio.Lock:
         lock = self._shard_locks.get(shard_id)
         if lock is None:
@@ -144,6 +147,27 @@ class ServerContext:
                 return  # another cycle is already running — skip
             try:
                 asyncio.run(nott.run(trigger))
+            finally:
+                lock.release()
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def run_code_index_refresh_in_thread(self) -> None:
+        """Run a code-index refresh in an isolated background thread.
+
+        Only one refresh runs at a time — concurrent triggers are dropped.
+        Purely local hashing + embedding, no event loop needed, unlike
+        run_nott_in_thread. Unchanged files are skipped by hash, so after
+        the first (lazy) full-repo pass this is cheap on every session.
+        """
+        lock = self._code_index_lock
+
+        def _run() -> None:
+            if not lock.acquire(blocking=False):
+                return  # another refresh is already running — skip
+            try:
+                from code_index import refresh_code_index
+                refresh_code_index()
             finally:
                 lock.release()
 
@@ -226,7 +250,11 @@ class ServerContext:
         async def _refresh_session_id(**_kw: object) -> None:
             self.rotate_session_id()
 
+        async def _code_index_session_start(**_kw: object) -> None:
+            self.run_code_index_refresh_in_thread()
+
         self.hooks.register(NovaHookEvent.SESSION_START, _nott_session_start)
         self.hooks.register(NovaHookEvent.POST_SPRINT, _nott_post_sprint)
         self.hooks.register(NovaHookEvent.COUNT_THRESHOLD, _nott_count_threshold)
         self.hooks.register(NovaHookEvent.SESSION_START, _refresh_session_id)
+        self.hooks.register(NovaHookEvent.SESSION_START, _code_index_session_start)

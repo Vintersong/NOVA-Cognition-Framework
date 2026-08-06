@@ -13,6 +13,8 @@ nova_autoresearch.jsonl
 shard_access.jsonl
 bench_retrieval.jsonl
 bench/
+nidhogg_manifest.json
+code_index_manifest.json
 
 # SQLite databases — runtime artifacts, never commit
 skill_audit.db*

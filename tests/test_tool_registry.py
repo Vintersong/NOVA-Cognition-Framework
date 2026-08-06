@@ -33,6 +33,7 @@ TOOL_MODULES = [
     MCP_DIR / "wiki_tools.py",
     MCP_DIR / "nidhogg.py",
     MCP_DIR / "evolve.py",
+    MCP_DIR / "code_index.py",
     MCP_DIR / "Gemini" / "gemini_mcp.py",
 ]
 
@@ -67,9 +68,9 @@ def test_no_bare_mcp_tool_decorator_remains():
     )
 
 
-def test_registry_has_40_tools():
+def test_registry_has_41_tools():
     """Sanity floor — catches accidental deletions."""
-    assert len(tool_registry._REGISTRY) == 40
+    assert len(tool_registry._REGISTRY) == 41
 
 
 def test_registry_capabilities_are_known():

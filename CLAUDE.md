@@ -82,6 +82,7 @@ NOVA-Whitepaper/
     # MCP tool modules
     evolve.py                ← nova_evolve tool (self-improvement loop)
     nidhogg.py               ← nidhogg_ingest/scan/status tools
+    code_index.py            ← nova_code_search tool (AST-chunked semantic code search over mcp/)
     facts.py                 ← nova_facts_search / nova_facts_rebuild tools
     wiki.py                  ← wiki storage backend
     wiki_ingest.py           ← wiki ingestion pipeline
@@ -145,7 +146,7 @@ NOVA-Whitepaper/
 
 ---
 
-## NOVA MCP Tools (40 total)
+## NOVA MCP Tools (41 total)
 
 ### Core shard ops (`nova_server.py`, 23)
 
@@ -231,6 +232,12 @@ NOVA-Whitepaper/
 | Tool | Purpose |
 |---|---|
 | `nova_huginn_candidates` | Keyword + confidence pre-filter over the shard index — returns a small candidate list ready to paste into a HUGINN agent prompt, no LLM required |
+
+### Code index (`code_index.py`, 1)
+
+| Tool | Purpose |
+|---|---|
+| `nova_code_search` | Semantic search over `mcp/**/*.py` — AST-chunked at function/class granularity, embedded locally, kept warm by a SESSION_START background refresh. Use instead of Grep when you know *what* you're looking for but not the exact file/symbol |
 
 ---
 
@@ -322,7 +329,7 @@ Next session starts with `nova_shard_interact(message="[project name] current st
 ## Architecture Rules
 
 - Never modify `shards/` directly — use MCP tools only
-- Never commit `.env`, `shard_index.json`, `shard_graph.json`, `nova_usage.jsonl`
+- Never commit `.env`, `shard_index.json`, `shard_graph.json`, `nova_usage.jsonl`, `code_index_manifest.json`
 - Always use `nova_server.py` — no deprecated servers remain
 - Confidence < 0.4 → shard tagged `low_confidence`, excluded from default search. Use `include_low_confidence=True` to recall deliberately
 - After creating related shards, wire them with `nova_graph_relate`. Before dependent work, query: `nova_graph_query(target=shard_id, relation_type=depends_on)`

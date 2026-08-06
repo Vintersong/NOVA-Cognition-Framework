@@ -35,7 +35,7 @@ _KNOWN_CAPABILITIES: frozenset[str] = frozenset({
 _KNOWN_CATEGORIES: frozenset[str] = frozenset({
     "shard", "graph", "session", "forgemaster",
     "wiki", "facts", "nidhogg", "evolve", "gemini", "retrieval",
-    "calibrate",
+    "calibrate", "code_index",
 })
 
 
@@ -141,6 +141,11 @@ _REGISTRY: dict[str, ToolSpec] = dict([
     # Read-only: keyword + confidence pre-filter over the shard index.
     # Returns a small candidate list ready to paste into a HUGINN agent prompt.
     _spec("nova_huginn_candidates",  "fs.read",       "shard"),
+    # ── Code index (1) ───────────────────────────────────────────────────
+    # Read-only: cosine search over a locally-embedded AST chunk manifest of
+    # mcp/**/*.py, kept warm by a SESSION_START background refresh. No shard
+    # or network I/O.
+    _spec("nova_code_search",        "fs.read",       "code_index"),
 ])
 
 
