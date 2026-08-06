@@ -10,9 +10,14 @@ manifest.
 Pipeline (refresh_code_index, run on every SESSION_START):
     1. Walk mcp/**/*.py
     2. SHA256 each file — skip re-embedding unchanged files (idempotent)
-    3. AST-chunk changed/new files: one chunk per top-level def/class, plus
-       one "module_header" chunk covering the file's leading imports/
-       docstring/constants (everything before the first top-level def/class)
+    3. AST-chunk changed/new files (see _chunk_file / _chunk_node):
+         - one chunk per top-level def/class, unless its source exceeds
+           _MAX_CHUNK_CHARS, in which case it's split into one chunk per
+           immediate child def/method plus a "*_header" chunk for what's
+           left over (recursing further if a child is itself oversized)
+         - one or more "module_header" chunks covering every module-level
+           line not inside a top-level def/class, wherever it falls in the
+           file (not just before the first def/class)
     4. Embed each chunk via nova_embeddings_local.generate_local_embedding
     5. Write code_index_manifest.json — {version, files: {...}, chunks: {...}}
     6. Prune entries for files no longer on disk (handles deletes/renames)
@@ -58,6 +63,16 @@ CODE_INDEX_MANIFEST_FILE = os.environ.get(
 )
 
 _EXCLUDED_DIR_NAMES = {"__pycache__", ".git"}
+
+# Character-count proxy for all-MiniLM-L6-v2's ~256 word-piece limit. Text
+# beyond this is silently truncated at embed time, so any single AST node
+# whose source exceeds it gets recursively split (see _chunk_node) instead
+# of embedded as one mostly-invisible chunk. A real tokenizer count would be
+# more precise, but would force _chunk_file to depend on the (lazily loaded,
+# possibly absent) embedding model just to decide chunk boundaries — this
+# keeps chunking pure and independently testable. ~3.5 chars/word-piece is a
+# conservative estimate for code (identifiers/symbols split more than prose).
+_MAX_CHUNK_CHARS = 800
 
 _EMPTY_MANIFEST: dict = {"version": 1, "files": {}, "chunks": {}}
 
@@ -107,50 +122,166 @@ def _file_hash(path: Path) -> str:
 # AST CHUNKING
 # ═══════════════════════════════════════════════════════════
 
+def _node_span(node: ast.AST) -> tuple[int, int]:
+    """1-indexed inclusive (start, end) line range for a def/class node,
+    including any decorators (which sit above ``node.lineno``)."""
+    decorators = getattr(node, "decorator_list", [])
+    start = min([node.lineno] + [d.lineno for d in decorators]) if decorators else node.lineno
+    end = node.end_lineno or node.lineno
+    return start, end
+
+
+def _uncovered_runs(start: int, end: int, covered: set[int]) -> list[tuple[int, int]]:
+    """Contiguous (start, end) sub-ranges of [start, end] whose lines are
+    not in `covered`. Used to chunk module/function/class-level code that
+    sits *between* or *after* nested def/class nodes, not just before the
+    first one."""
+    runs: list[tuple[int, int]] = []
+    run_start: int | None = None
+    for ln in range(start, end + 1):
+        if ln in covered:
+            if run_start is not None:
+                runs.append((run_start, ln - 1))
+                run_start = None
+        elif run_start is None:
+            run_start = ln
+    if run_start is not None:
+        runs.append((run_start, end))
+    return runs
+
+
+def _split_by_size(lines: list[str], start: int, end: int) -> list[tuple[int, int]]:
+    """Greedily split [start, end] into windows that each stay within
+    _MAX_CHUNK_CHARS. Used for plain (non-def/class) line runs — module-level
+    code, or a header run left over after def/class recursion — where there's
+    no nested structure to recurse into, only a flat span to window."""
+    windows: list[tuple[int, int]] = []
+    window_start = start
+    length = 0
+    for ln in range(start, end + 1):
+        line_len = len(lines[ln - 1]) + 1  # +1 for the eventual join newline
+        if length > 0 and length + line_len > _MAX_CHUNK_CHARS:
+            windows.append((window_start, ln - 1))
+            window_start = ln
+            length = 0
+        length += line_len
+    windows.append((window_start, end))
+    return windows
+
+
+def _emit_run_chunks(
+    lines: list[str], runs: list[tuple[int, int]], kind: str, base_symbol: str
+) -> list[dict]:
+    """Turn a list of (start, end) line runs into chunk dicts, size-splitting
+    any run that exceeds _MAX_CHUNK_CHARS into further windows. Shared by
+    module-level runs (_chunk_file) and def/class header runs (_chunk_node)."""
+    chunks: list[dict] = []
+    index = 0
+    for run_start, run_end in runs:
+        text = "\n".join(lines[run_start - 1: run_end])
+        windows = (
+            [(run_start, run_end)]
+            if len(text) <= _MAX_CHUNK_CHARS
+            else _split_by_size(lines, run_start, run_end)
+        )
+        for w_start, w_end in windows:
+            index += 1
+            symbol = base_symbol if index == 1 else f"{base_symbol}#{index}"
+            chunks.append({
+                "symbol": symbol,
+                "kind": kind,
+                "start_line": w_start,
+                "end_line": w_end,
+            })
+    return chunks
+
+
+def _chunk_node(node: ast.AST, lines: list[str], qualname: str) -> list[dict]:
+    """Chunk one def/class node, recursing into its immediate child
+    defs/methods when its own source exceeds _MAX_CHUNK_CHARS.
+
+    This is what keeps large factories (e.g. a ``register_*_tools`` function
+    whose real content is a dozen nested tool handlers) and large classes
+    searchable at their actual symbol granularity instead of collapsing into
+    one chunk that only the first ~20-30 lines of ever get embedded.
+    """
+    start, end = _node_span(node)
+    text = "\n".join(lines[start - 1: end])
+    is_class = isinstance(node, ast.ClassDef)
+
+    if len(text) <= _MAX_CHUNK_CHARS:
+        return [{
+            "symbol": qualname,
+            "kind": "class" if is_class else "function",
+            "start_line": start,
+            "end_line": end,
+        }]
+
+    child_defs = [
+        child for child in node.body
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    if not child_defs:
+        # No way to split further — keep the whole (embed-truncated) chunk.
+        return [{
+            "symbol": qualname,
+            "kind": "class" if is_class else "function",
+            "start_line": start,
+            "end_line": end,
+        }]
+
+    chunks: list[dict] = []
+    covered: set[int] = set()
+    for child in child_defs:
+        c_start, c_end = _node_span(child)
+        for ln in range(c_start, c_end + 1):
+            covered.add(ln)
+        chunks.extend(_chunk_node(child, lines, f"{qualname}.{child.name}"))
+
+    header_kind = "class_header" if is_class else "function_header"
+    header_runs = _uncovered_runs(start, end, covered)
+    chunks.extend(_emit_run_chunks(lines, header_runs, header_kind, qualname))
+
+    return chunks
+
+
 def _chunk_file(source: str) -> list[dict]:
     """
-    AST-chunk one file's source into top-level def/class chunks plus one
-    module-header chunk.
-
-    The module-header chunk covers everything before the first top-level
-    def/class (module docstring, imports, top-level constants) — trailing
-    top-level code after the last def/class is not separately chunked, since
-    every file under mcp/ front-loads its module-level statements.
+    AST-chunk one file's source into top-level def/class chunks (recursing
+    into oversized ones — see _chunk_node) plus one or more module-header
+    chunks covering every module-level line not inside a top-level def/class,
+    wherever it falls in the file (imports and docstring at the top, but also
+    constants or setup code between or after top-level defs).
 
     Returns [{"symbol", "kind", "start_line", "end_line"}, ...], 1-indexed
     inclusive line ranges matching ast's lineno/end_lineno. Returns [] if the
-    source fails to parse (e.g. a syntax error).
+    source fails to parse (e.g. a syntax error) or is empty.
     """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return []
 
-    total_lines = len(source.splitlines())
-    def_nodes = [
+    lines = source.splitlines()
+    total_lines = len(lines)
+    if total_lines == 0:
+        return []
+
+    top_defs = [
         node for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     ]
 
     chunks: list[dict] = []
-    for node in def_nodes:
-        start = min([node.lineno] + [d.lineno for d in node.decorator_list])
-        end = node.end_lineno or node.lineno
-        chunks.append({
-            "symbol": node.name,
-            "kind": "class" if isinstance(node, ast.ClassDef) else "function",
-            "start_line": start,
-            "end_line": end,
-        })
+    covered: set[int] = set()
+    for node in top_defs:
+        start, end = _node_span(node)
+        for ln in range(start, end + 1):
+            covered.add(ln)
+        chunks.extend(_chunk_node(node, lines, node.name))
 
-    first_def_start = min((c["start_line"] for c in chunks), default=total_lines + 1)
-    if first_def_start > 1:
-        chunks.append({
-            "symbol": "<module>",
-            "kind": "module_header",
-            "start_line": 1,
-            "end_line": first_def_start - 1,
-        })
+    module_runs = _uncovered_runs(1, total_lines, covered)
+    chunks.extend(_emit_run_chunks(lines, module_runs, "module_header", "<module>"))
 
     return chunks
 
@@ -228,7 +359,9 @@ def refresh_code_index() -> dict:
             embedding = generate_local_embedding(text)
             if embedding is None:
                 continue
-            chunk_id = f"{relpath}::{spec['symbol']}"
+            # Suffix with start_line: qualnames aren't guaranteed unique
+            # (duplicate top-level defs, multiple module_header runs).
+            chunk_id = f"{relpath}::{spec['symbol']}:{spec['start_line']}"
             chunks_meta[chunk_id] = {
                 "file": relpath,
                 "symbol": spec["symbol"],
@@ -323,7 +456,8 @@ def register_code_index_tools(mcp, ctx) -> None:
             "query": "<query>",
             "match_count": <int>,
             "matches": [
-              {"file": "...", "symbol": "...", "kind": "function|class|module_header",
+              {"file": "...", "symbol": "...",
+               "kind": "function|class|module_header|function_header|class_header",
                "start_line": N, "end_line": N, "similarity_score": 0.XX, "source": "..."},
               ...
             ]

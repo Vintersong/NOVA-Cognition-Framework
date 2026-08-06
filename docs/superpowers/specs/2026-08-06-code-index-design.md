@@ -35,13 +35,36 @@ the shard graph — it never reads or writes `shards/`. Three parts:
 ## Chunking
 
 AST-walk each `.py` file using Python's own `ast` module (no new dependency —
-this repo is all Python and pins `>=3.11`, so `end_lineno` is reliable):
+this repo is all Python and pins `>=3.11`, so `end_lineno` is reliable).
+
+**Revised post-review (2026-08-06):** the initial implementation only chunked
+module-level code that appeared *before* the first top-level def/class, and
+embedded every top-level def/class as one chunk regardless of size. An Opus
+review caught both as real coverage gaps against the real `mcp/` tree —
+`tool_registry.py`'s entire `_REGISTRY` (100 lines, after several top-level
+defs) was unindexed, and `register_shard_tools` (924 lines) was embedded from
+only its first ~20 lines, making all 12 nested shard-tool handlers
+unsearchable. The corrected algorithm:
 
 - Each **top-level** `def`/`class` → one chunk, `kind` = `"function"` or
-  `"class"`, `symbol` = its name.
+  `"class"`, `symbol` = its name — **unless** its source exceeds
+  `_MAX_CHUNK_CHARS` (800, a character-count proxy for all-MiniLM-L6-v2's
+  ~256 word-piece limit), in which case it's split into one chunk per
+  immediate child def/method (`kind` still `"function"`/`"class"`, `symbol`
+  = dotted qualname, e.g. `register_shard_tools.nova_shard_forget`) plus a
+  `"function_header"`/`"class_header"` chunk for whatever's left over
+  (recursing further if a child is itself oversized; kept as one
+  embed-truncated chunk if there's nothing left to split into).
 - Everything else at module level (docstring, imports, constants, top-level
-  statements) → one **module-header** chunk per file, `kind` =
-  `"module_header"`, `symbol` = `"<module>"`.
+  statements between or after defs) → one or more **module-header** chunks,
+  `kind` = `"module_header"`, `symbol` = `"<module>"` (`"<module>#2"`, `"#3"`,
+  … for additional runs or size-split windows within a run).
+- Any oversized module-header run or leftover header run is windowed by the
+  same `_MAX_CHUNK_CHARS` cap (`_split_by_size`), since there's no def/class
+  structure to recurse into there.
+- Chunk IDs are `"{file}::{symbol}:{start_line}"` — the line-number suffix
+  avoids collisions between duplicate top-level names or multiple
+  module-header runs, which a bare `"{file}::{symbol}"` ID could not.
 
 ## Storage — `code_index_manifest.json`
 
@@ -51,11 +74,11 @@ this repo is all Python and pins `>=3.11`, so `end_lineno` is reliable):
   "files": {
     "nidhogg.py": {
       "hash": "sha256:...",
-      "chunk_ids": ["nidhogg.py::<module>", "nidhogg.py::_ingest_file"]
+      "chunk_ids": ["nidhogg.py::<module>:1", "nidhogg.py::_ingest_file:362"]
     }
   },
   "chunks": {
-    "nidhogg.py::_ingest_file": {
+    "nidhogg.py::_ingest_file:362": {
       "file": "nidhogg.py",
       "symbol": "_ingest_file",
       "kind": "function",
@@ -134,10 +157,17 @@ called from `nova_server.py` alongside the other `register_*_tools` calls.
 
 ## Testing
 
-`tests/test_code_index.py`:
+`tests/test_code_index.py` (14 tests):
 
 - AST chunker on a small fixture file (one function, one class with methods,
-  one module-level constant) → correct chunk boundaries and `kind` labels.
+  one module-level constant) → correct chunk boundaries and `kind` labels,
+  including the module-header run that falls *between* two top-level defs.
+- Module-level code between/after defs gets its own chunk(s), not just the
+  leading block (regression test for the post-review chunking fix).
+- An oversized top-level function recurses into its nested defs plus a
+  header chunk; one with no nested defs to split into is kept whole; an
+  oversized module-level run is size-split into contiguous windows
+  (regression tests for the post-review size-cap fix).
 - Incremental manifest behavior: unchanged file is skipped (no re-embed
   call), changed file is re-embedded and its old chunk entries replaced,
   deleted file's entries are pruned on the next refresh.
@@ -147,3 +177,22 @@ called from `nova_server.py` alongside the other `register_*_tools` calls.
 
 No dedicated test for the hook thread-spawning itself, consistent with there
 being no such test for `run_nott_in_thread` today.
+
+## Known follow-ups (from the Opus review, not yet addressed)
+
+Medium/low-severity findings that are real but out of scope for the blocking
+fix pass above — left for a future session:
+
+- Manifest load→mutate isn't lock-guarded, only the final write is; a
+  concurrent refresh (realistic since NOVA can run as a globally-registered
+  server) can lose an update.
+- `logger` is imported but unused; parse/embed failures aren't logged despite
+  the spec calling for it, and `files_failed` conflates syntax errors with
+  "embedding model unavailable" into one indistinguishable counter.
+- The tool handler does model-load + manifest-parse + cosine synchronously on
+  the event loop instead of `run_in_executor`, blocking other MCP calls
+  during a refresh.
+- `_search_chunks` re-parses the full manifest JSON on every query — no
+  mtime-keyed cache.
+- Returned snippets use stale line offsets if the file changed since the last
+  refresh; no `stale` flag when the source no longer matches.
