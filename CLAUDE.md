@@ -95,16 +95,6 @@ NOVA-Whitepaper/
     # Experimental
     ternary_net.py           ← ternary epistemic memory encoder (not yet wired into retrieval)
 
-    # Tests
-    test_nova.py             ← integration smoke tests
-    test_adversarial.py      ← adversarial module tests
-    test_clustering.py       ← clustering tests
-    test_recall.py           ← recall pipeline tests
-    test_quarantine.py       ← quarantine/isolation tests
-    test_state_gating.py     ← capability gate tests
-    test_provenance.py       ← provenance record + nova_shard_validate tests
-    test_shard_concurrency.py ← lock-safe read-modify-write / CAS tests
-
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
       output_event_bus.lua   ← Lua event bus for Gemini output routing

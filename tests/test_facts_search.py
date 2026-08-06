@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -84,8 +85,7 @@ def test_search_facts_library_call_returns_empty_when_no_corpus(tmp_path: Path, 
     assert facts_module.search_facts("anything") == []
 
 
-@pytest.mark.asyncio
-async def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPatch) -> None:
     """When NOVA_DENIED_TOOLS blocks a facts tool, the handler returns the
     denial payload instead of touching the SQLite index. Catches the gap
     Codex review flagged where _ALL_TOOL_NAMES inclusion alone wasn't
@@ -112,8 +112,12 @@ async def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPa
     )
     monkeypatch.setattr(permissions, "_active", ctx)
 
-    search_out = await mcp.tools["nova_facts_search"](facts_module.FactsSearchInput(query="x"))
-    rebuild_out = await mcp.tools["nova_facts_rebuild"](facts_module.FactsRebuildInput())
+    async def _run() -> tuple[str, str]:
+        search_out = await mcp.tools["nova_facts_search"](facts_module.FactsSearchInput(query="x"))
+        rebuild_out = await mcp.tools["nova_facts_rebuild"](facts_module.FactsRebuildInput())
+        return search_out, rebuild_out
+
+    search_out, rebuild_out = asyncio.run(_run())
 
     assert "not permitted" in json.loads(search_out)["error"]
     assert "not permitted" in json.loads(rebuild_out)["error"]

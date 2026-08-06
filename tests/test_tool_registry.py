@@ -67,9 +67,9 @@ def test_no_bare_mcp_tool_decorator_remains():
     )
 
 
-def test_registry_has_37_tools():
+def test_registry_has_40_tools():
     """Sanity floor — catches accidental deletions."""
-    assert len(tool_registry._REGISTRY) == 37
+    assert len(tool_registry._REGISTRY) == 40
 
 
 def test_registry_capabilities_are_known():
@@ -116,15 +116,18 @@ def test_capability_map_matches_registry():
 
 
 def test_shard_tools_set_matches_audit_log_filter():
-    """Audit log's _SHARD_TOOLS targets shard IDs, so it must include both
-    shard-category irreversibles AND nova_graph_relate (graph category,
-    irreversible, target is source shard ID)."""
+    """Audit log's _SHARD_TOOLS targets shard IDs, so it must include
+    shard-category irreversibles, nova_graph_relate (graph category,
+    irreversible, target is source shard ID), and the nidhogg tools
+    (nidhogg category, irreversible, target is a matched shard ID)."""
     from audit_log import _SHARD_TOOL_NAMES
     expected = {
         "nova_shard_archive",
         "nova_shard_forget",
         "nova_shard_consolidate",
         "nova_graph_relate",
+        "nidhogg_ingest",
+        "nidhogg_scan",
     }
     assert set(_SHARD_TOOL_NAMES) == expected
 
