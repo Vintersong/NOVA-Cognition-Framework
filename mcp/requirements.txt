@@ -1,6 +1,6 @@
 # NOVA v2 MCP Server dependencies
-mcp[cli]>=1.0.0
-pydantic>=2.10.1               # transitive floor from mcp>=1.2.0
+mcp[cli]>=1.29,<2             # <2 is required: SDK v2 removed mcp.server.fastmcp
+pydantic>=2.11.0              # transitive floor from mcp>=1.29
 sentence-transformers>=2.2.0  # local embeddings, no API key required
 python-dotenv>=1.0.0
 filelock>=3.12.0

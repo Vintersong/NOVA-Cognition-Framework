@@ -25,6 +25,35 @@ jobs:
       - name: Check shard bloat
         run: python utilities/shard_compact.py --shard-dir shards --fail-on-bloat --dry-run
 
+  # Guards the floors in mcp/requirements.txt on their own. quality-gates also
+  # installs requirements-dev.txt, whose exact pins win the resolution and would
+  # mask a bad floor here — but the Docker image and every fresh `pip install`
+  # resolve mcp/requirements.txt alone. This job reproduces that.
+  runtime-install:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: mcp/requirements.txt
+      - name: Install runtime deps only (mirrors Dockerfile — torch excluded)
+        run: grep -v "^torch" mcp/requirements.txt | pip install -r /dev/stdin
+      - name: Assert the resolved MCP SDK is v1
+        # SDK v2 removed mcp.server.fastmcp; nova_server.py imports it.
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+          v = version("mcp")
+          assert int(v.split(".")[0]) < 2, f"mcp resolved to {v}; nova_server.py needs the v1 API"
+          print(f"mcp {v} OK")
+          PY
+      - name: Import the server
+        run: cd mcp && python -c "import nova_server; print('nova_server imports clean')"
+
   quality-gates:
     runs-on: ubuntu-latest
     permissions:
