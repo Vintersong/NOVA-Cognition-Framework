@@ -28,15 +28,19 @@ from capability_gate import CapabilityDenied, resolve_capability
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MCP_DIR = REPO_ROOT / "mcp"
 
-TOOL_MODULES = [
-    MCP_DIR / "nova_server.py",
-    MCP_DIR / "facts.py",
-    MCP_DIR / "wiki_tools.py",
-    MCP_DIR / "nidhogg.py",
-    MCP_DIR / "evolve.py",
-    MCP_DIR / "code_index.py",
-    MCP_DIR / "Gemini" / "gemini_mcp.py",
-]
+def _all_mcp_sources() -> list[Path]:
+    """Every Python source under mcp/.
+
+    Derived rather than hardcoded: the previous explicit list had gone stale and
+    omitted shard_tools.py (16 tools), graph_tools.py, session_tools.py,
+    forgemaster_tools.py, huginn_tools.py, calibrate.py and
+    external_retrieval.py — so a bare @mcp.tool in the largest tool module was
+    undetectable.
+    """
+    return sorted(p for p in MCP_DIR.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+TOOL_MODULES = _all_mcp_sources()
 
 
 def _decorator_targets(path: Path) -> list[tuple[str, int]]:
@@ -55,6 +59,19 @@ def _decorator_targets(path: Path) -> list[tuple[str, int]]:
                 if isinstance(func.value, ast.Name) and func.value.id == "mcp":
                     out.append(("@mcp.tool(...)", dec.lineno))
     return out
+
+
+def test_scan_covers_every_module_that_registers_tools():
+    """Guards the glob itself: if it stopped matching, the bare-decorator scan
+    below would pass vacuously."""
+    scanned = {p.name for p in TOOL_MODULES}
+    must_cover = {
+        "nova_server.py", "shard_tools.py", "graph_tools.py", "session_tools.py",
+        "forgemaster_tools.py", "wiki_tools.py", "facts.py", "nidhogg.py",
+        "evolve.py", "code_index.py", "huginn_tools.py", "calibrate.py",
+        "external_retrieval.py", "gemini_mcp.py",
+    }
+    assert must_cover <= scanned, f"not scanned: {sorted(must_cover - scanned)}"
 
 
 def test_no_bare_mcp_tool_decorator_remains():
