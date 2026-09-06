@@ -350,17 +350,6 @@ class CalibrateRoutingInput(BaseModel):
         default=3, ge=2, le=50,
         description="Minimum repeat count per query before consistency is computed",
     )
-
-
-class HuginnCandidatesInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
-    query: str = Field(min_length=1, description="Retrieval query to pre-filter against")
-    max_candidates: int = Field(
-        default=20, ge=1, le=20,
-        description="Maximum candidates to return (hard cap 20)",
-    )
-
-
     include_forgemaster: bool = Field(
         default=True,
         description="Include sprint pass-rate analysis from forgemaster event logs",
@@ -373,3 +362,13 @@ class HuginnCandidatesInput(BaseModel):
             "the P3 failure mode from Srinivasan 2026)."
         ),
     )
+
+
+class HuginnCandidatesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    query: str = Field(min_length=1, description="Retrieval query to pre-filter against")
+    max_candidates: int = Field(
+        default=20, ge=1, le=20,
+        description="Maximum candidates to return (hard cap 20)",
+    )
+
