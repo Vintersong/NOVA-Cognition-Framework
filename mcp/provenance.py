@@ -159,6 +159,9 @@ def apply_validation_event(
     - A positive ``confidence_delta`` routes through
       ``apply_confidence_corroboration`` (the only sanctioned confidence-raise
       path) and accumulates into ``confidence_delta``.
+    - Outside of an explicit supersession, ``source_type`` may only move to an
+      equal-or-higher authority rank; a downgrade raises ``ValueError`` so a
+      plain validation event cannot silently weaken a shard's authority.
     - Supersession sets the record's flags and ``meta_tags.superseded_by``; it
       never lowers confidence directly. If both ``superseded_by`` and the prior
       ``source_type`` are known, the superseding source must outrank the
@@ -177,6 +180,12 @@ def apply_validation_event(
     meta = shard_data.setdefault("meta_tags", {})
     record = ensure_provenance(shard_data)
     prior_type = record.get("source_type", "self_inferred")
+
+    if AUTHORITY_RANK.get(source_type, 0) < AUTHORITY_RANK.get(prior_type, 0) and not superseded:
+        raise ValueError(
+            f"cannot downgrade source_type from '{prior_type}' to '{source_type}' "
+            f"outside of an explicit supersession"
+        )
 
     if superseded and superseded_by:
         if AUTHORITY_RANK.get(source_type, 0) < AUTHORITY_RANK.get(prior_type, 0):
