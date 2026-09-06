@@ -10,6 +10,7 @@ import sys
 # Allow importing config from mcp/ when this module is loaded by nova_server.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import GEMINI_MODEL as MODEL
+from reject import RejectCode, reject_payload
 from tool_registry import nova_tool
 _client = None
 _ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
@@ -139,7 +140,9 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
                             target=params.output_file,
                         )
                     except (CapabilityDenied, HITLDenied) as exc:
-                        return json.dumps({"status": "error", "message": f"Capability gate denied: {exc}"})
+                        return reject_payload(
+                            RejectCode.GATE_DENIED, f"Capability gate denied: {exc}"
+                        )
 
                 output_path = (_WORKSPACE_DIR / params.output_file).resolve()
                 if not output_path.is_relative_to(_WORKSPACE_DIR.resolve()):
@@ -156,7 +159,10 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
                             )
                         except Exception:
                             pass
-                    return json.dumps({"status": "error", "message": "Access denied: output path is outside the allowed workspace directory."})
+                    return reject_payload(
+                        RejectCode.PERMISSION_DENIED,
+                        "Access denied: output path is outside the allowed workspace directory.",
+                    )
 
                 write_ok = False
                 try:
@@ -200,13 +206,23 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
         try:
             resolved = Path(params.filepath).resolve()
             if not resolved.is_relative_to(_REPO_ROOT):
-                return json.dumps({"status": "error", "message": "Access denied: path is outside the allowed directory."})
+                return reject_payload(
+                    RejectCode.PERMISSION_DENIED,
+                    "Access denied: path is outside the allowed directory.",
+                )
             if _is_secret_path(resolved):
-                return json.dumps({"status": "error", "message": "Access denied: refusing to read a credential/secret file."})
+                return reject_payload(
+                    RejectCode.PERMISSION_DENIED,
+                    "Access denied: refusing to read a credential/secret file.",
+                )
             with open(resolved, "r", encoding="utf-8") as f:
                 content = f.read()
             return json.dumps({"status": "success", "filepath": str(resolved), "content": content})
         except FileNotFoundError:
-            return json.dumps({"status": "error", "message": f"File not found: {params.filepath}"})
+            return reject_payload(
+                RejectCode.PRECONDITION_FAILED,
+                f"File not found: {params.filepath}",
+                target=params.filepath,
+            )
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})

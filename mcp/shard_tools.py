@@ -1031,7 +1031,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                     "merge_suggestions": len(report.merge_suggestions),
                 })
             except Exception as exc:
-                _last_consolidation_report = {"status": "error", "error": str(exc)}
+                _last_consolidation_report = {"status": "error", "message": str(exc)}
             finally:
                 ctx._nott_lock.release()
 

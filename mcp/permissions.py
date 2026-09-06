@@ -73,9 +73,10 @@ def is_blocked(tool_name: str) -> bool:
 
 
 def denial_payload(tool_name: str) -> str:
-    """Return the canonical JSON error string for a blocked tool call."""
-    import json
-    return json.dumps(
-        {"error": f"Tool '{tool_name}' is not permitted in the current permission context."},
-        indent=2,
+    """Return the canonical typed reject envelope for a blocked tool call."""
+    from reject import RejectCode, reject_payload
+    return reject_payload(
+        RejectCode.PERMISSION_DENIED,
+        f"Tool '{tool_name}' is not permitted in the current permission context.",
+        target=tool_name,
     )

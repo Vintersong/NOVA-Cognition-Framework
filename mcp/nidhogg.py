@@ -54,6 +54,7 @@ from graph import add_corroborated_by, load_graph, save_graph
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
+from reject import RejectCode, reject_dict
 from tool_registry import nova_tool
 from store import load_index, mutate_shard
 
@@ -367,15 +368,18 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
     try:
         path = _resolve_allowed_ingest_path(file_path)
     except ValueError as exc:
-        return {
-            "status": "error",
-            "code": "path_not_allowed",
-            "message": str(exc),
-            "allowed_roots": list(NIDHOGG_ALLOWED_ROOTS),
-        }
+        return reject_dict(
+            RejectCode.PERMISSION_DENIED,
+            str(exc),
+            extra={"allowed_roots": list(NIDHOGG_ALLOWED_ROOTS)},
+        )
 
     if not os.path.exists(path):
-        return {"error": f"File not found: {path}"}
+        return reject_dict(
+            RejectCode.PRECONDITION_FAILED,
+            f"File not found: {path}",
+            target=path,
+        )
 
     # SHA256 check — idempotent
     file_hash = _file_hash(path)
@@ -392,7 +396,11 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
     # Read and embed
     content = _read_file(path)
     if not content.strip():
-        return {"error": f"File is empty or unreadable: {path}"}
+        return reject_dict(
+            RejectCode.PRECONDITION_FAILED,
+            f"File is empty or unreadable: {path}",
+            target=path,
+        )
 
     chunks = _chunk_text(content)
     chunk_embeddings = [generate_local_embedding(c) for c in chunks]

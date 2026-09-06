@@ -64,7 +64,7 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
                     runtime_class=params.runtime_class,
                 )
             except Exception as exc:
-                return json.dumps({"error": str(exc)}, indent=2)
+                return json.dumps({"status": "error", "message": str(exc)}, indent=2)
 
             log_operation(
                 "nova_forgemaster_sprint",
@@ -112,7 +112,7 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
                 ),
             )
         except Exception as exc:
-            return json.dumps({"error": str(exc)}, indent=2)
+            return json.dumps({"status": "error", "message": str(exc)}, indent=2)
 
         log_operation("nova_cache_prewarm", result.get("shard_ids", []), {
             "model": model,

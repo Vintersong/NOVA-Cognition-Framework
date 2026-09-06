@@ -120,7 +120,16 @@ def get_permitted_tools(permission_context: ToolPermissionContext | None = None)
 
 # ── MCP resources (read-only views) ──────────────────────────────────────────
 
-@mcp.resource("nova://skill")
+@mcp.resource(
+    "nova://skill",
+    name="nova_skill",
+    title="NOVA Skill Definition",
+    description=(
+        "SKILL.md — NOVA's operating instructions: the shard model, the tool "
+        "inventory, and the session protocol. Read this first."
+    ),
+    mime_type="text/markdown",
+)
 async def nova_skill() -> str:
     skill_path = Path(__file__).parent / "SKILL.md"
     if skill_path.exists():
@@ -128,17 +137,40 @@ async def nova_skill() -> str:
     return "SKILL.md not found."
 
 
-@mcp.resource("nova://index")
+@mcp.resource(
+    "nova://index",
+    name="nova_index",
+    title="Shard Index",
+    description=(
+        "The full shard index: one metadata row per shard (id, guiding "
+        "question, confidence, tags, timestamps). Rebuilt on read."
+    ),
+    mime_type="application/json",
+)
 async def nova_index() -> str:
     return json.dumps(update_index(), indent=2)
 
 
-@mcp.resource("nova://graph")
+@mcp.resource(
+    "nova://graph",
+    name="nova_graph",
+    title="Shard Knowledge Graph",
+    description="Every directed inter-shard relation as stored on disk.",
+    mime_type="application/json",
+)
 async def nova_graph() -> str:
     return json.dumps(load_graph(), indent=2)
 
 
-@mcp.resource("nova://usage")
+@mcp.resource(
+    "nova://usage",
+    name="nova_usage",
+    title="Operation Log and Token Usage",
+    description=(
+        "The last 100 operation-log entries plus running session token totals."
+    ),
+    mime_type="application/json",
+)
 async def nova_usage() -> str:
     """Return last 100 operation log entries plus running session token totals."""
     if not os.path.exists(USAGE_LOG_FILE):

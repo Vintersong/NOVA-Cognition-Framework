@@ -86,4 +86,4 @@ def register_facts_tools(mcp: Any) -> None:
             return json.dumps({"status": "ok", "indexed": count, "facts_dir": FACTS_DIR})
         except Exception as exc:
             logger.warning("nova_facts_rebuild failed: %s", exc)
-            return json.dumps({"status": "error", "error": str(exc)})
+            return json.dumps({"status": "error", "message": str(exc)})

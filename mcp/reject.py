@@ -100,6 +100,42 @@ _DEFAULTS: dict[RejectCode, tuple[bool, str]] = {
 }
 
 
+def reject_dict(
+    code: RejectCode,
+    message: str,
+    *,
+    retryable: Optional[bool] = None,
+    hint: Optional[str] = None,
+    target: Optional[str] = None,
+    extra: Optional[dict] = None,
+) -> dict:
+    """Return a typed reject envelope as a dict.
+
+    Use this from helpers that build a payload dict for their caller to
+    serialise; :func:`reject_payload` is the JSON-string form tool handlers
+    return directly. Arguments are identical.
+    """
+    default_retryable, default_hint = _DEFAULTS.get(code, (True, ""))
+    if retryable is None:
+        retryable = default_retryable
+    if hint is None:
+        hint = default_hint
+
+    payload: dict = {
+        "status": "rejected",
+        "code": code.value,
+        "message": message,
+        "retryable": retryable,
+        "hint": hint,
+    }
+    if target is not None:
+        payload["target"] = target
+    if extra:
+        for k, v in extra.items():
+            payload.setdefault(k, v)
+    return payload
+
+
 def reject_payload(
     code: RejectCode,
     message: str,
@@ -123,26 +159,13 @@ def reject_payload(
             (status / code / message / retryable / hint / target) are not
             overwritten.
     """
-    default_retryable, default_hint = _DEFAULTS.get(code, (True, ""))
-    if retryable is None:
-        retryable = default_retryable
-    if hint is None:
-        hint = default_hint
-
-    payload: dict = {
-        "status": "rejected",
-        "code": code.value,
-        "message": message,
-        "retryable": retryable,
-        "hint": hint,
-    }
-    if target is not None:
-        payload["target"] = target
-    if extra:
-        for k, v in extra.items():
-            payload.setdefault(k, v)
-
-    return json.dumps(payload, indent=2)
+    return json.dumps(
+        reject_dict(
+            code, message,
+            retryable=retryable, hint=hint, target=target, extra=extra,
+        ),
+        indent=2,
+    )
 
 
 def shard_not_found(shard_id: str) -> str:

@@ -119,5 +119,9 @@ def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPatch) -
 
     search_out, rebuild_out = asyncio.run(_run())
 
-    assert "not permitted" in json.loads(search_out)["error"]
-    assert "not permitted" in json.loads(rebuild_out)["error"]
+    for out in (search_out, rebuild_out):
+        payload = json.loads(out)
+        assert payload["status"] == "rejected"
+        assert payload["code"] == "permission_denied"
+        assert payload["retryable"] is False
+        assert "not permitted" in payload["message"]

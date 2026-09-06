@@ -312,4 +312,7 @@ def test_nova_code_search_honours_permission_denial(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(permissions, "_active", ctx_perm)
 
     out = asyncio.run(mcp.tools["nova_code_search"](CodeSearchInput(query="x")))
-    assert "not permitted" in json.loads(out)["error"]
+    payload = json.loads(out)
+    assert payload["status"] == "rejected"
+    assert payload["code"] == "permission_denied"
+    assert "not permitted" in payload["message"]
