@@ -1,7 +1,7 @@
 """
 wiki_tools.py — MCP tool handlers for NOVA's wiki layer.
 
-Registered into the FastMCP instance via register_wiki_tools(mcp).
+Registered into the MCPServer instance via register_wiki_tools(mcp).
 
 Tools:
   nova_wiki_schema  — view or modify the topic taxonomy
@@ -48,7 +48,7 @@ from tool_registry import nova_tool
 # ═══════════════════════════════════════════════════════════
 
 def register_wiki_tools(mcp) -> None:
-    """Register all wiki MCP tools into the FastMCP instance."""
+    """Register all wiki MCP tools into the MCPServer instance."""
 
     # ── nova_wiki_schema ──────────────────────────────────────────────────────
 

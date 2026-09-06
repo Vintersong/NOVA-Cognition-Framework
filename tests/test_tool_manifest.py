@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO_ROOT / "utilities"))
 # Rendering the manifest boots the whole server, which needs the MCP SDK and the
 # local embedding stack. Skip cleanly where those are absent rather than adding
 # a collection error.
-pytest.importorskip("mcp.server.fastmcp", reason="MCP SDK not installed")
+pytest.importorskip("mcp.server.mcpserver", reason="MCP SDK not installed")
 pytest.importorskip("sentence_transformers", reason="embedding stack not installed")
 
 from dump_tool_manifest import MANIFEST_PATH, build_manifest  # noqa: E402

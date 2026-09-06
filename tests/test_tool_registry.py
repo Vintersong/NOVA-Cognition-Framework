@@ -194,7 +194,7 @@ HINT_KEYS = {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint
 
 
 class _WireIn(BaseModel):
-    """Module-scope so FastMCP's get_type_hints() call can resolve it — this
+    """Module-scope so the SDK's get_type_hints() call can resolve it — this
     file uses `from __future__ import annotations`."""
     q: str = ""
 
@@ -253,14 +253,14 @@ def test_wiki_schema_is_declared_a_write():
 
 
 def test_annotations_and_title_reach_the_wire():
-    """End-to-end through a real FastMCP instance: what a client sees in
+    """End-to-end through a real MCPServer instance: what a client sees in
     tools/list must carry the registry's title and derived annotations."""
     import asyncio
 
-    pytest.importorskip("mcp.server.fastmcp", reason="MCP SDK not installed in this environment")
-    from mcp.server.fastmcp import FastMCP
+    pytest.importorskip("mcp.server.mcpserver", reason="MCP SDK not installed in this environment")
+    from mcp.server.mcpserver import MCPServer
 
-    mcp = FastMCP("test")
+    mcp = MCPServer("test")
 
     @tool_registry.nova_tool(mcp, name="nova_shard_forget")
     async def _forget(params: _WireIn) -> str:
@@ -270,25 +270,28 @@ def test_annotations_and_title_reach_the_wire():
     async def _get(params: _WireIn) -> str:
         return ""
 
-    published = {t.name: t for t in asyncio.run(mcp.list_tools())}
+    published = {
+        t["name"]: t
+        for t in (x.model_dump(by_alias=True, mode="json") for x in asyncio.run(mcp.list_tools()))
+    }
 
     forget = published["nova_shard_forget"]
-    assert forget.title == "Forget Shard"
-    assert forget.annotations.readOnlyHint is False
-    assert forget.annotations.destructiveHint is True
+    assert forget["title"] == "Forget Shard"
+    assert forget["annotations"]["readOnlyHint"] is False
+    assert forget["annotations"]["destructiveHint"] is True
 
     get = published["nova_shard_get"]
-    assert get.title == "Read Shard"
-    assert get.annotations.readOnlyHint is True
-    assert get.annotations.destructiveHint is False
+    assert get["title"] == "Read Shard"
+    assert get["annotations"]["readOnlyHint"] is True
+    assert get["annotations"]["destructiveHint"] is False
 
 
 def test_call_site_can_override_derived_annotations():
-    pytest.importorskip("mcp.server.fastmcp", reason="MCP SDK not installed in this environment")
+    pytest.importorskip("mcp.server.mcpserver", reason="MCP SDK not installed in this environment")
     import asyncio
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
-    mcp = FastMCP("test")
+    mcp = MCPServer("test")
 
     @tool_registry.nova_tool(
         mcp, name="nova_shard_get", title="Custom", annotations={"idempotentHint": False},
@@ -296,8 +299,11 @@ def test_call_site_can_override_derived_annotations():
     async def _get(params: _WireIn) -> str:
         return ""
 
-    tool = {t.name: t for t in asyncio.run(mcp.list_tools())}["nova_shard_get"]
-    assert tool.title == "Custom"
-    assert tool.annotations.idempotentHint is False
+    tool = {
+        t["name"]: t
+        for t in (x.model_dump(by_alias=True, mode="json") for x in asyncio.run(mcp.list_tools()))
+    }["nova_shard_get"]
+    assert tool["title"] == "Custom"
+    assert tool["annotations"]["idempotentHint"] is False
     # untouched keys still come from the registry
-    assert tool.annotations.readOnlyHint is True
+    assert tool["annotations"]["readOnlyHint"] is True

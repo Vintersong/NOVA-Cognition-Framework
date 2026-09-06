@@ -433,7 +433,7 @@ def _read_snippet(relpath: str, start_line: int, end_line: int) -> str:
 # ═══════════════════════════════════════════════════════════
 
 def register_code_index_tools(mcp, ctx) -> None:
-    """Register the nova_code_search tool onto an existing FastMCP instance.
+    """Register the nova_code_search tool onto an existing MCPServer instance.
     Called once in nova_server.py after server init — same pattern as Nidhogg.
 
     Read-only and reversible (fs.read) — no capability gate needed, matching

@@ -42,13 +42,14 @@ jobs:
           cache-dependency-path: mcp/requirements.txt
       - name: Install runtime deps only (mirrors Dockerfile — torch excluded)
         run: grep -v "^torch" mcp/requirements.txt | pip install -r /dev/stdin
-      - name: Assert the resolved MCP SDK is v1
-        # SDK v2 removed mcp.server.fastmcp; nova_server.py imports it.
+      - name: Assert the resolved MCP SDK major version
+        # nova_server.py imports mcp.server.mcpserver, which exists only in v2.
+        # An unbounded floor previously resolved to a major the code cannot use.
         run: |
           python - <<'PY'
           from importlib.metadata import version
           v = version("mcp")
-          assert int(v.split(".")[0]) < 2, f"mcp resolved to {v}; nova_server.py needs the v1 API"
+          assert int(v.split(".")[0]) == 2, f"mcp resolved to {v}; nova_server.py needs the v2 API"
           print(f"mcp {v} OK")
           PY
       - name: Import the server

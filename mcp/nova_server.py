@@ -2,10 +2,10 @@
 nova_server.py — NOVA MCP Server (bootstrap + wiring only).
 
 This module is intentionally thin: it builds the singleton ``ServerContext``,
-constructs the ``FastMCP`` instance, and calls each tool category's
+constructs the ``MCPServer`` instance, and calls each tool category's
 ``register_*_tools(mcp, ctx)``. Handler bodies live in:
 
-  * ``shard_tools``        — 15 shard CRUD + lifecycle handlers
+  * ``shard_tools``        — 16 shard CRUD + lifecycle handlers
   * ``graph_tools``        — 2 knowledge-graph handlers
   * ``session_tools``      — 3 Forgemaster session handlers
   * ``forgemaster_tools``  — sprint pipeline + Anthropic cache prewarm
@@ -34,7 +34,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from config import (
     CLAUDE_API_KEY as _CLAUDE_API_KEY,
     SHARD_DIR,
@@ -81,8 +81,40 @@ if not _CLAUDE_API_KEY:
 ctx: ServerContext = ServerContext.bootstrap()
 
 
-# ── FastMCP + tool registration ──────────────────────────────────────────────
-mcp = FastMCP("nova_mcp_v2")
+# ── Server + tool registration ───────────────────────────────────────────────
+
+try:  # present when the project is pip-installed; falls back for a bare checkout
+    from importlib.metadata import version as _pkg_version
+
+    SERVER_VERSION = _pkg_version("nova-cognition-framework")
+except Exception:  # pragma: no cover — packaging metadata absent
+    SERVER_VERSION = "0.1.0"
+
+# Surfaced to the client on every request. NOVA is a memory server: loading
+# context before acting is the whole contract, so say so here rather than
+# relying on CLAUDE.md, which only this repo's own agent ever reads.
+SERVER_INSTRUCTIONS = """\
+NOVA is a persistent memory server. Shards are conversation-scoped memory units
+carrying a confidence score that decays over time.
+
+Call nova_shard_interact first to load relevant context — most other tools are
+far less useful without it. Read nova://skill for the full operating protocol.
+
+Tools are annotated: readOnlyHint marks safe reads, destructiveHint marks
+operations that cannot be undone (nova_shard_forget, nova_shard_archive,
+nidhogg_ingest/scan, nova_evolve, nova_forgemaster_sprint).
+
+Errors arrive as JSON carrying a "status" field: "rejected" means the tool
+refused for a known reason and the payload has a machine-readable "code",
+"retryable" flag and "hint"; "error" means something unexpected broke.
+"""
+
+mcp = MCPServer(
+    "nova_mcp_v2",
+    title="NOVA Cognition Framework",
+    version=SERVER_VERSION,
+    instructions=SERVER_INSTRUCTIONS,
+)
 
 # External (non-NOVA-core) tool modules.
 register_gemini_tools(mcp, gate=ctx.capability_gate, audit_log=ctx.skill_audit_log)

@@ -68,7 +68,7 @@ class LoadFileInput(BaseModel):
 
 
 def register_gemini_tools(mcp, gate=None, audit_log=None) -> None:
-    """Register Gemini worker tools onto an existing FastMCP instance.
+    """Register Gemini worker tools onto an existing MCPServer instance.
 
     ``gate`` (``CapabilityGate``) and ``audit_log`` (``AuditLog``) are passed
     by ``nova_server.py`` so the worker shares the single skill-verification

@@ -4,7 +4,7 @@
 
 ## Why it exists
 
-The Forgemaster sprint pipeline routes implementation tickets to Gemini Flash rather than Claude. `gemini_mcp.py` provides the two tools the orchestrator uses: one to execute a ticket (send a structured prompt to Gemini, optionally save output to a file) and one to read a file from disk as context. Both are registered into the existing FastMCP instance rather than running as a separate server.
+The Forgemaster sprint pipeline routes implementation tickets to Gemini Flash rather than Claude. `gemini_mcp.py` provides the two tools the orchestrator uses: one to execute a ticket (send a structured prompt to Gemini, optionally save output to a file) and one to read a file from disk as context. Both are registered into the existing MCPServer instance rather than running as a separate server.
 
 ## Key concepts
 
@@ -16,7 +16,7 @@ The Forgemaster sprint pipeline routes implementation tickets to Gemini Flash ra
 
 ## Public surface
 
-- `register_gemini_tools(mcp)` — registers both tools onto a FastMCP instance.
+- `register_gemini_tools(mcp)` — registers both tools onto an MCPServer instance.
 
 **MCP tools** (2):
 - `gemini_execute_ticket(ticket, context, output_file)` — send structured ticket to Gemini Flash; optionally write output to `output_file` in workspace.

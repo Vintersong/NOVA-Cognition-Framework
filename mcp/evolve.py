@@ -763,7 +763,7 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
 # ═══════════════════════════════════════════════════════════
 
 def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
-    """Register the nova_evolve tool onto an existing FastMCP instance.
+    """Register the nova_evolve tool onto an existing MCPServer instance.
     Called once in nova_server.py — same pattern as Gemini and Nidhogg.
     """
 

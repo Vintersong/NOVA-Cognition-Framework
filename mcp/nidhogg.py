@@ -502,7 +502,7 @@ def _resolve_allowed_ingest_path(file_path: str) -> str:
 # ═══════════════════════════════════════════════════════════
 
 def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
-    """Register Nidhogg ingestion tools onto an existing FastMCP instance.
+    """Register Nidhogg ingestion tools onto an existing MCPServer instance.
     Called once in nova_server.py after server init — same pattern as Gemini.
 
     Both ingest and scan irreversibly append provenance blocks to matched

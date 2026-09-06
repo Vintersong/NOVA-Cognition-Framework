@@ -43,6 +43,17 @@ def _schema_shape(schema: dict | None) -> dict | None:
     }
 
 
+# SDK v1 exposes camelCase attributes (``inputSchema``) and v2 exposes
+# snake_case (``input_schema``), but both serialise to the same camelCase wire
+# format. Reading the dumped dict rather than attributes keeps this snapshot
+# working across the port — and the wire format is what we actually want to pin.
+HINT_KEYS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+
+
+def _wire(model) -> dict:
+    return model.model_dump(by_alias=True, mode="json")
+
+
 async def build_manifest() -> dict:
     import nova_server
 
@@ -51,31 +62,26 @@ async def build_manifest() -> dict:
     resources = await mcp.list_resources()
 
     tool_rows = []
-    for t in sorted(tools, key=lambda x: x.name):
-        ann = t.annotations
+    for t in sorted((_wire(x) for x in tools), key=lambda d: d["name"]):
+        ann = t.get("annotations")
         tool_rows.append({
-            "name": t.name,
-            "title": t.title,
-            "description_first_line": (t.description or "").strip().split("\n")[0],
-            "annotations": None if ann is None else {
-                "readOnlyHint": ann.readOnlyHint,
-                "destructiveHint": ann.destructiveHint,
-                "idempotentHint": ann.idempotentHint,
-                "openWorldHint": ann.openWorldHint,
-            },
-            "input_schema": _schema_shape(t.inputSchema),
-            "output_schema": _schema_shape(t.outputSchema),
+            "name": t["name"],
+            "title": t.get("title"),
+            "description_first_line": (t.get("description") or "").strip().split("\n")[0],
+            "annotations": None if ann is None else {k: ann.get(k) for k in HINT_KEYS},
+            "input_schema": _schema_shape(t.get("inputSchema")),
+            "output_schema": _schema_shape(t.get("outputSchema")),
         })
 
     resource_rows = [
         {
-            "uri": str(r.uri),
-            "name": r.name,
-            "title": r.title,
-            "description": r.description,
-            "mime_type": r.mimeType,
+            "uri": str(r["uri"]),
+            "name": r.get("name"),
+            "title": r.get("title"),
+            "description": r.get("description"),
+            "mime_type": r.get("mimeType"),
         }
-        for r in sorted(resources, key=lambda x: str(x.uri))
+        for r in sorted((_wire(x) for x in resources), key=lambda d: str(d["uri"]))
     ]
 
     return {"tools": tool_rows, "resources": resource_rows}

@@ -18,7 +18,7 @@ Inspired by Bernstein's `evolve_mode.py`. The goal is to keep NOVA improving its
 ## Public surface
 
 - `run_evolve_cycle(dry_run, force) → dict` — main entry point. Returns full cycle result including `director_prompt`.
-- `register_evolve_tools(mcp)` — registers `nova_evolve` tool onto a FastMCP instance.
+- `register_evolve_tools(mcp)` — registers `nova_evolve` tool onto an MCPServer instance.
 
 ## Inputs and outputs
 

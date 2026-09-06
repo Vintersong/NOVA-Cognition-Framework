@@ -2,7 +2,7 @@
 session_tools.py — Forgemaster session persistence tools.
 
 Three handlers (flush / load / list) that wrap ``ServerContext.session_store``.
-Registered onto the FastMCP instance via ``register_session_tools(mcp, ctx)``.
+Registered onto the MCPServer instance via ``register_session_tools(mcp, ctx)``.
 """
 
 from __future__ import annotations
