@@ -75,17 +75,8 @@ def register_gemini_tools(mcp, gate=None, audit_log=None) -> None:
     (useful for direct unit invocation outside the MCP server).
     """
 
-    @nova_tool(
-        mcp,
-        name="gemini_execute_ticket",
-        annotations={
-            "title": "Execute Ticket via Gemini",
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,
-            "openWorldHint": True,
-        },
-    )
+    # Title and annotations come from the registry (net.egress).
+    @nova_tool(mcp, name="gemini_execute_ticket")
     async def gemini_execute_ticket(params: ExecuteTicketInput) -> str:
         """Send a structured ticket to Gemini Flash for code generation.
 
@@ -194,17 +185,8 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    @nova_tool(
-        mcp,
-        name="gemini_load_file",
-        annotations={
-            "title": "Load File as Context",
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
-    )
+    # Title and annotations come from the registry (fs.read).
+    @nova_tool(mcp, name="gemini_load_file")
     async def gemini_load_file(params: LoadFileInput) -> str:
         """Load a file from disk to use as codebase context for ticket execution.
 
