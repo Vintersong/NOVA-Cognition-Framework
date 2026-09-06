@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 from mcp.server.mcpserver import MCPServer
+
 from config import (
     CLAUDE_API_KEY as _CLAUDE_API_KEY,
     SHARD_DIR,
@@ -43,6 +44,7 @@ from config import (
 from graph import load_graph
 from nova_embeddings_local import prewarm_embedding_model
 from permissions import ToolPermissionContext
+from result_middleware import mark_failed_results
 from server_context import ServerContext
 from store import update_index
 from tool_registry import all_names as _registry_all_names
@@ -114,6 +116,9 @@ mcp = MCPServer(
     title="NOVA Cognition Framework",
     version=SERVER_VERSION,
     instructions=SERVER_INSTRUCTIONS,
+    # Handlers return JSON strings, so the SDK would report every call as a
+    # success. This flips isError on payloads that report a failure.
+    middleware=[mark_failed_results],
 )
 
 # External (non-NOVA-core) tool modules.
