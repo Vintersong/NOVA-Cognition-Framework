@@ -147,8 +147,8 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 
 | Variable | Default | Impact |
 |---|---|---|
-| `NOVA_HITL_BROKER` | `interactive` | `interactive` — prompts on Unix/Windows terminal before irreversible tool calls. `policy` — always-deny without prompting (used in Docker and CI where there is no terminal). |
-| `NOVA_HITL_TIMEOUT_S` | `30` | Seconds to wait for a human decision before auto-denying in interactive mode. |
+| `NOVA_HITL_BROKER` | `interactive` | Fallback broker only. MCP tool calls ask the operator through **elicitation** (the client shows the prompt), so this setting does not affect them. It governs the paths with no MCP client to ask: forgemaster's per-file writes, the Gemini worker, and bare CLI use. `interactive` — prompts on a controlling terminal, denying when there is none. `policy` — always-deny without prompting (used in Docker and CI). |
+| `NOVA_HITL_TIMEOUT_S` | `30` | Seconds to wait for a terminal decision before auto-denying in interactive mode. Elicitation prompts are not bounded by this — the client owns that timeout. |
 | `NOVA_SKILL_AUDIT_LOG` | `skill_audit.db` | SQLite file for the four-state HITL lifecycle (irreversible.request / decision / executed / capability.denied) and post-session biconditional audit. |
 | `NOVA_DENIED_TOOLS` | *(unset)* | Comma-separated tool names to block at runtime (e.g. `nova_evolve,nova_shard_forget`). Takes effect immediately without a server restart. Read directly by `permissions.py`. |
 | `NOVA_DENIED_PREFIXES` | *(unset)* | Comma-separated tool name prefixes to block (e.g. `gemini_` to disable all Gemini tools). Read directly by `permissions.py`. |

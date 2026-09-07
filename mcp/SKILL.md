@@ -32,7 +32,7 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (40 total — verified)
+## Tools (41 total — verified)
 
 ### Core shard + graph + session (23)
 
@@ -85,6 +85,18 @@ Principle Library (reasoning methodology)
 ### Calibrate (1)
 
 `nova_calibrate_routing` — analyse HUGINN consistency and sprint pass rates to suggest routing threshold adjustments.
+
+### External retrieval (1)
+
+`nova_external_retrieval` — Haiku + Sonnet/Opus deliberation over external sources; writes findings back as shards (reversible via archive/forget).
+
+### HUGINN orchestration (1)
+
+`nova_huginn_candidates` — keyword + confidence pre-filter over the shard index. Returns a small candidate list ready to paste into a HUGINN agent prompt; no LLM call.
+
+### Code index (1)
+
+`nova_code_search` — semantic search over `mcp/**/*.py`, AST-chunked at function/class granularity. Use instead of Grep when you know *what* you want but not the exact file or symbol.
 
 ---
 

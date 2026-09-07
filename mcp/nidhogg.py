@@ -54,6 +54,8 @@ from graph import add_corroborated_by, load_graph, save_graph
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from permissions import is_blocked, denial_payload
+from approval import Approval, was_approved
+from reject import RejectCode, reject_dict
 from tool_registry import nova_tool
 from store import load_index, mutate_shard
 
@@ -367,15 +369,18 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
     try:
         path = _resolve_allowed_ingest_path(file_path)
     except ValueError as exc:
-        return {
-            "status": "error",
-            "code": "path_not_allowed",
-            "message": str(exc),
-            "allowed_roots": list(NIDHOGG_ALLOWED_ROOTS),
-        }
+        return reject_dict(
+            RejectCode.PERMISSION_DENIED,
+            str(exc),
+            extra={"allowed_roots": list(NIDHOGG_ALLOWED_ROOTS)},
+        )
 
     if not os.path.exists(path):
-        return {"error": f"File not found: {path}"}
+        return reject_dict(
+            RejectCode.PRECONDITION_FAILED,
+            f"File not found: {path}",
+            target=path,
+        )
 
     # SHA256 check — idempotent
     file_hash = _file_hash(path)
@@ -392,7 +397,11 @@ def _ingest_file(file_path: str, source_type: str, top_n: int) -> dict:
     # Read and embed
     content = _read_file(path)
     if not content.strip():
-        return {"error": f"File is empty or unreadable: {path}"}
+        return reject_dict(
+            RejectCode.PRECONDITION_FAILED,
+            f"File is empty or unreadable: {path}",
+            target=path,
+        )
 
     chunks = _chunk_text(content)
     chunk_embeddings = [generate_local_embedding(c) for c in chunks]
@@ -494,7 +503,7 @@ def _resolve_allowed_ingest_path(file_path: str) -> str:
 # ═══════════════════════════════════════════════════════════
 
 def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
-    """Register Nidhogg ingestion tools onto an existing FastMCP instance.
+    """Register Nidhogg ingestion tools onto an existing MCPServer instance.
     Called once in nova_server.py after server init — same pattern as Gemini.
 
     Both ingest and scan irreversibly append provenance blocks to matched
@@ -504,7 +513,10 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
     """
 
     @nova_tool(mcp, name="nidhogg_ingest")
-    async def nidhogg_ingest(params: NidhoggIngestInput) -> str:
+    async def nidhogg_ingest(
+        params: NidhoggIngestInput,
+        approval: Approval("nidhogg_ingest"),
+    ) -> str:
         """
         Ingest a single document into NOVA's shard graph.
         Embeds the file, finds matching shards by cosine similarity, and appends
@@ -513,7 +525,10 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
         """
         if is_blocked("nidhogg_ingest"):
             return denial_payload("nidhogg_ingest")
-        gate_err, request_id = await gate_check(ctx, "nidhogg_ingest", params.file_path)
+        gate_err, request_id = await gate_check(
+            ctx, "nidhogg_ingest", params.file_path,
+            approval=was_approved(approval),
+        )
         if gate_err:
             return gate_err
         result = _ingest_file(params.file_path, params.source_type, params.top_n)
@@ -524,7 +539,10 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
         return json.dumps(result, indent=2)
 
     @nova_tool(mcp, name="nidhogg_scan")
-    async def nidhogg_scan(params: NidhoggScanInput) -> str:
+    async def nidhogg_scan(
+        params: NidhoggScanInput,
+        approval: Approval("nidhogg_scan"),
+    ) -> str:
         """
         Scan the intake/ directory and ingest all pending files.
         Skips files already in the manifest (idempotent).
@@ -546,7 +564,10 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
                 "intake_dir": NIDHOGG_INTAKE_DIR,
             }, indent=2)
 
-        gate_err, request_id = await gate_check(ctx, "nidhogg_scan", NIDHOGG_INTAKE_DIR)
+        gate_err, request_id = await gate_check(
+            ctx, "nidhogg_scan", NIDHOGG_INTAKE_DIR,
+            approval=was_approved(approval),
+        )
         if gate_err:
             return gate_err
 

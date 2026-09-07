@@ -1,7 +1,7 @@
 """
 wiki_tools.py — MCP tool handlers for NOVA's wiki layer.
 
-Registered into the FastMCP instance via register_wiki_tools(mcp).
+Registered into the MCPServer instance via register_wiki_tools(mcp).
 
 Tools:
   nova_wiki_schema  — view or modify the topic taxonomy
@@ -19,6 +19,7 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
+from reject import RejectCode, reject_dict, reject_payload
 from schemas import (
     WikiSchemaInput,
     WikiIngestInput,
@@ -47,7 +48,7 @@ from tool_registry import nova_tool
 # ═══════════════════════════════════════════════════════════
 
 def register_wiki_tools(mcp) -> None:
-    """Register all wiki MCP tools into the FastMCP instance."""
+    """Register all wiki MCP tools into the MCPServer instance."""
 
     # ── nova_wiki_schema ──────────────────────────────────────────────────────
 
@@ -70,9 +71,13 @@ def register_wiki_tools(mcp) -> None:
 
         if params.action == "add":
             if not params.slug or not params.title:
-                return json.dumps({"status": "error", "message": "slug and title are required."})
+                return reject_payload(RejectCode.INVALID_INPUT, "slug and title are required.")
             if any(p.slug == params.slug for p in pages):
-                return json.dumps({"status": "error", "message": f"Slug '{params.slug}' already exists."})
+                return reject_payload(
+                    RejectCode.DUPLICATE,
+                    f"Slug '{params.slug}' already exists.",
+                    target=params.slug,
+                )
             tags = [t.strip() for t in params.tags.split(",") if t.strip()]
             new_spec = WikiPageSpec(
                 slug        = params.slug,
@@ -92,11 +97,15 @@ def register_wiki_tools(mcp) -> None:
 
         if params.action == "remove":
             if not params.slug:
-                return json.dumps({"status": "error", "message": "slug is required."})
+                return reject_payload(RejectCode.INVALID_INPUT, "slug is required.")
             before = len(pages)
             pages  = [p for p in pages if p.slug != params.slug]
             if len(pages) == before:
-                return json.dumps({"status": "error", "message": f"Slug '{params.slug}' not found."})
+                return reject_payload(
+                    RejectCode.WIKI_PAGE_NOT_FOUND,
+                    f"Slug '{params.slug}' not found.",
+                    target=params.slug,
+                )
             save_wiki_schema(pages)
             return json.dumps({
                 "status":  "removed",
@@ -105,7 +114,9 @@ def register_wiki_tools(mcp) -> None:
                 "note":    "Wiki file (if any) was not deleted.",
             }, indent=2)
 
-        return json.dumps({"status": "error", "message": f"Unknown action: {params.action}"})
+        return reject_payload(
+            RejectCode.INVALID_INPUT, f"Unknown action: {params.action}"
+        )
 
     # ── nova_wiki_ingest ──────────────────────────────────────────────────────
 
@@ -180,7 +191,9 @@ def register_wiki_tools(mcp) -> None:
         # Embed the query
         query_vec = generate_local_embedding(params.query)
         if not query_vec:
-            return json.dumps({"status": "error", "message": "Embedding model unavailable."})
+            return reject_payload(
+                RejectCode.DEPENDENCY_MISSING, "Embedding model unavailable."
+            )
 
         # Score every indexed page
         scored = []
@@ -214,10 +227,11 @@ def register_wiki_tools(mcp) -> None:
         """Read a specific wiki page in full."""
         page = load_wiki_page(params.slug)
         if page is None:
-            return json.dumps({
-                "status":  "error",
-                "message": f"No wiki page found for slug '{params.slug}'.",
-            }, indent=2)
+            return reject_payload(
+                RejectCode.WIKI_PAGE_NOT_FOUND,
+                f"No wiki page found for slug '{params.slug}'.",
+                target=params.slug,
+            )
         return json.dumps({
             "slug":     page.slug,
             "title":    page.title,
@@ -365,7 +379,10 @@ def _deep_lint(pages) -> dict:
     import anthropic
 
     if not CLAUDE_API_KEY:
-        return {"error": "CLAUDE_API_KEY not set — deep lint unavailable."}
+        return reject_dict(
+            RejectCode.DEPENDENCY_MISSING,
+            "CLAUDE_API_KEY not set — deep lint unavailable.",
+        )
 
     # Build a compact summary of all pages (title + first 300 chars of body)
     summaries = "\n\n".join(
@@ -400,6 +417,6 @@ def _deep_lint(pages) -> dict:
         if m:
             contradictions = json.loads(m.group())
     except Exception as exc:
-        return {"error": str(exc)}
+        return {"status": "error", "message": str(exc)}
 
     return contradictions

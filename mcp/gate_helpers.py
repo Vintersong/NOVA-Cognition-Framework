@@ -4,8 +4,8 @@ gate_helpers.py — capability-gate plumbing for NOVA tool handlers.
 Every NOVA tool that mutates state (or just wants to be audit-logged) wraps
 its body with three helpers:
 
-  1. ``permission_error(tool)`` — returns a structured JSON error string for
-     a tool blocked by the active ``ToolPermissionContext``.
+  1. ``permission_error(tool)`` — returns a typed reject envelope (see
+     ``reject.py``) for a tool blocked by the active ``ToolPermissionContext``.
   2. ``gate_check(ctx, tool, target=None)`` — asks the ``CapabilityGate``
      whether the active skill is allowed to run *tool*. Returns
      ``(err_json_or_None, request_id_or_None)``. On allow, the handler
@@ -20,11 +20,12 @@ can call them without reaching into module globals.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
 from capability_gate import CapabilityDenied, HITLDenied
+from permissions import denial_payload
+from reject import RejectCode, reject_payload
 
 if TYPE_CHECKING:
     from server_context import ServerContext
@@ -33,24 +34,26 @@ _logger = logging.getLogger(__name__)
 
 
 def permission_error(tool_name: str) -> str:
-    """Return a structured JSON error for a blocked tool call."""
-    return json.dumps(
-        {
-            "error": (
-                f"Tool '{tool_name}' is not permitted in the current "
-                "permission context."
-            )
-        },
-        indent=2,
-    )
+    """Return the typed reject envelope for a blocked tool call.
+
+    Delegates to ``permissions.denial_payload`` so the permission-denied shape
+    is defined once.
+    """
+    return denial_payload(tool_name)
 
 
 async def gate_check(
     ctx: "ServerContext",
     tool_name: str,
     target: str | None = None,
+    approval: bool | None = None,
 ) -> tuple[str | None, str | None]:
     """Run the capability gate for *tool_name* against the active skill.
+
+    *approval* carries the operator's answer for a destructive tool, obtained by
+    the handler's ``Approval(...)`` parameter before the body ran. Pass
+    ``was_approved(approval_param)``; the gate records the decision and refuses
+    when it is False.
 
     Returns ``(err, request_id)``:
       - On allow: ``(None, request_id_or_None)``. The handler must call
@@ -61,13 +64,24 @@ async def gate_check(
     """
     try:
         request_id = await ctx.capability_gate.async_check(
-            tool_name, ctx.active_skill, ctx.server_session_id, target
+            tool_name, ctx.active_skill, ctx.server_session_id, target,
+            approval=approval,
         )
         return None, request_id
     except CapabilityDenied as exc:
-        return json.dumps({"error": str(exc)}, indent=2), None
+        # The skill's @@capabilities do not cover this tool. Re-running as-is
+        # cannot help — the manifest has to change.
+        return reject_payload(
+            RejectCode.GATE_DENIED, str(exc), target=tool_name, retryable=False,
+        ), None
     except HITLDenied as exc:
-        return json.dumps({"error": str(exc)}, indent=2), None
+        # A human declined (or the prompt timed out). A later call may be
+        # approved, so this one is retryable.
+        return reject_payload(
+            RejectCode.GATE_DENIED, str(exc), target=tool_name, retryable=True,
+            hint="A human declined or did not answer in time. Ask the operator "
+                 "to approve, then retry.",
+        ), None
 
 
 def log_executed(

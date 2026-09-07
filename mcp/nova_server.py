@@ -2,10 +2,10 @@
 nova_server.py — NOVA MCP Server (bootstrap + wiring only).
 
 This module is intentionally thin: it builds the singleton ``ServerContext``,
-constructs the ``FastMCP`` instance, and calls each tool category's
+constructs the ``MCPServer`` instance, and calls each tool category's
 ``register_*_tools(mcp, ctx)``. Handler bodies live in:
 
-  * ``shard_tools``        — 15 shard CRUD + lifecycle handlers
+  * ``shard_tools``        — 16 shard CRUD + lifecycle handlers
   * ``graph_tools``        — 2 knowledge-graph handlers
   * ``session_tools``      — 3 Forgemaster session handlers
   * ``forgemaster_tools``  — sprint pipeline + Anthropic cache prewarm
@@ -34,7 +34,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+
 from config import (
     CLAUDE_API_KEY as _CLAUDE_API_KEY,
     SHARD_DIR,
@@ -43,6 +44,7 @@ from config import (
 from graph import load_graph
 from nova_embeddings_local import prewarm_embedding_model
 from permissions import ToolPermissionContext
+from result_middleware import mark_failed_results
 from server_context import ServerContext
 from store import update_index
 from tool_registry import all_names as _registry_all_names
@@ -81,8 +83,43 @@ if not _CLAUDE_API_KEY:
 ctx: ServerContext = ServerContext.bootstrap()
 
 
-# ── FastMCP + tool registration ──────────────────────────────────────────────
-mcp = FastMCP("nova_mcp_v2")
+# ── Server + tool registration ───────────────────────────────────────────────
+
+try:  # present when the project is pip-installed; falls back for a bare checkout
+    from importlib.metadata import version as _pkg_version
+
+    SERVER_VERSION = _pkg_version("nova-cognition-framework")
+except Exception:  # pragma: no cover — packaging metadata absent
+    SERVER_VERSION = "0.1.0"
+
+# Surfaced to the client on every request. NOVA is a memory server: loading
+# context before acting is the whole contract, so say so here rather than
+# relying on CLAUDE.md, which only this repo's own agent ever reads.
+SERVER_INSTRUCTIONS = """\
+NOVA is a persistent memory server. Shards are conversation-scoped memory units
+carrying a confidence score that decays over time.
+
+Call nova_shard_interact first to load relevant context — most other tools are
+far less useful without it. Read nova://skill for the full operating protocol.
+
+Tools are annotated: readOnlyHint marks safe reads, destructiveHint marks
+operations that cannot be undone (nova_shard_forget, nova_shard_archive,
+nidhogg_ingest/scan, nova_evolve, nova_forgemaster_sprint).
+
+Errors arrive as JSON carrying a "status" field: "rejected" means the tool
+refused for a known reason and the payload has a machine-readable "code",
+"retryable" flag and "hint"; "error" means something unexpected broke.
+"""
+
+mcp = MCPServer(
+    "nova_mcp_v2",
+    title="NOVA Cognition Framework",
+    version=SERVER_VERSION,
+    instructions=SERVER_INSTRUCTIONS,
+    # Handlers return JSON strings, so the SDK would report every call as a
+    # success. This flips isError on payloads that report a failure.
+    middleware=[mark_failed_results],
+)
 
 # External (non-NOVA-core) tool modules.
 register_gemini_tools(mcp, gate=ctx.capability_gate, audit_log=ctx.skill_audit_log)
@@ -120,7 +157,16 @@ def get_permitted_tools(permission_context: ToolPermissionContext | None = None)
 
 # ── MCP resources (read-only views) ──────────────────────────────────────────
 
-@mcp.resource("nova://skill")
+@mcp.resource(
+    "nova://skill",
+    name="nova_skill",
+    title="NOVA Skill Definition",
+    description=(
+        "SKILL.md — NOVA's operating instructions: the shard model, the tool "
+        "inventory, and the session protocol. Read this first."
+    ),
+    mime_type="text/markdown",
+)
 async def nova_skill() -> str:
     skill_path = Path(__file__).parent / "SKILL.md"
     if skill_path.exists():
@@ -128,17 +174,40 @@ async def nova_skill() -> str:
     return "SKILL.md not found."
 
 
-@mcp.resource("nova://index")
+@mcp.resource(
+    "nova://index",
+    name="nova_index",
+    title="Shard Index",
+    description=(
+        "The full shard index: one metadata row per shard (id, guiding "
+        "question, confidence, tags, timestamps). Rebuilt on read."
+    ),
+    mime_type="application/json",
+)
 async def nova_index() -> str:
     return json.dumps(update_index(), indent=2)
 
 
-@mcp.resource("nova://graph")
+@mcp.resource(
+    "nova://graph",
+    name="nova_graph",
+    title="Shard Knowledge Graph",
+    description="Every directed inter-shard relation as stored on disk.",
+    mime_type="application/json",
+)
 async def nova_graph() -> str:
     return json.dumps(load_graph(), indent=2)
 
 
-@mcp.resource("nova://usage")
+@mcp.resource(
+    "nova://usage",
+    name="nova_usage",
+    title="Operation Log and Token Usage",
+    description=(
+        "The last 100 operation-log entries plus running session token totals."
+    ),
+    mime_type="application/json",
+)
 async def nova_usage() -> str:
     """Return last 100 operation log entries plus running session token totals."""
     if not os.path.exists(USAGE_LOG_FILE):

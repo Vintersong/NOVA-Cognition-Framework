@@ -17,7 +17,7 @@ Shards are created from conversations. External documents (papers, articles, not
 
 ## Public surface
 
-- `register_nidhogg_tools(mcp)` — registers 3 tools onto a FastMCP instance.
+- `register_nidhogg_tools(mcp)` — registers 3 tools onto an MCPServer instance.
 
 **MCP tools** (3):
 - `nidhogg_ingest` — ingest a single file by path.

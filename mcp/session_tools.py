@@ -2,7 +2,7 @@
 session_tools.py — Forgemaster session persistence tools.
 
 Three handlers (flush / load / list) that wrap ``ServerContext.session_store``.
-Registered onto the FastMCP instance via ``register_session_tools(mcp, ctx)``.
+Registered onto the MCPServer instance via ``register_session_tools(mcp, ctx)``.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import json
 from typing import TYPE_CHECKING
 
 from gate_helpers import permission_error
+from reject import RejectCode, reject_payload
 from schemas import SessionFlushInput, SessionListInput, SessionLoadInput
 from tool_registry import nova_tool
 
@@ -28,15 +29,17 @@ def register_session_tools(mcp, ctx: "ServerContext") -> None:
 
         session = ctx.session_store.get(params.session_id)
         if session is None:
-            return json.dumps({
-                "error": f"Session '{params.session_id}' is not active in memory.",
-                "hint": "Use nova_session_load to restore a previously flushed session.",
-            }, indent=2)
+            return reject_payload(
+                RejectCode.PRECONDITION_FAILED,
+                f"Session '{params.session_id}' is not active in memory.",
+                target=params.session_id,
+                hint="Use nova_session_load to restore a previously flushed session.",
+            )
 
         try:
             ctx.session_store.flush(params.session_id)
         except Exception as exc:
-            return json.dumps({"error": str(exc)}, indent=2)
+            return json.dumps({"status": "error", "message": str(exc)}, indent=2)
 
         return json.dumps({
             "status": "flushed",
@@ -58,12 +61,15 @@ def register_session_tools(mcp, ctx: "ServerContext") -> None:
         try:
             session = ctx.session_store.load(params.session_id)
         except FileNotFoundError:
-            return json.dumps({
-                "error": f"No persisted session found for '{params.session_id}'.",
-                "available": ctx.session_store.list_sessions(),
-            }, indent=2)
+            return reject_payload(
+                RejectCode.PRECONDITION_FAILED,
+                f"No persisted session found for '{params.session_id}'.",
+                target=params.session_id,
+                hint="Call nova_session_list to see which sessions exist.",
+                extra={"available": ctx.session_store.list_sessions()},
+            )
         except Exception as exc:
-            return json.dumps({"error": str(exc)}, indent=2)
+            return json.dumps({"status": "error", "message": str(exc)}, indent=2)
 
         return json.dumps({
             "status": "loaded",

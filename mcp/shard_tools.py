@@ -42,6 +42,7 @@ from maintenance import confidence_weighted_score
 from nott import NottTrigger
 from nova_embeddings_local import enrich_shard
 import provenance
+from approval import Approval, was_approved
 from reject import RejectCode, reject_payload, shard_not_found
 from schemas import (
     ObsidianExportInput,
@@ -914,11 +915,17 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             log_executed(ctx, request_id, "nova_shard_merge", params.shard_ids, op_ok)
 
     @nova_tool(mcp, name="nova_shard_archive")
-    async def nova_shard_archive(params: ShardArchiveInput) -> str:
+    async def nova_shard_archive(
+        params: ShardArchiveInput,
+        approval: Approval("nova_shard_archive"),
+    ) -> str:
         """Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion."""
         if ctx.permission_context.blocks("nova_shard_archive"):
             return permission_error("nova_shard_archive")
-        gate_err, request_id = await gate_check(ctx, "nova_shard_archive", params.shard_id)
+        gate_err, request_id = await gate_check(
+            ctx, "nova_shard_archive", params.shard_id,
+            approval=was_approved(approval),
+        )
         if gate_err:
             return gate_err
         op_ok = False
@@ -944,7 +951,10 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             log_executed(ctx, request_id, "nova_shard_archive", params.shard_id, op_ok)
 
     @nova_tool(mcp, name="nova_shard_forget")
-    async def nova_shard_forget(params: ShardForgetInput) -> str:
+    async def nova_shard_forget(
+        params: ShardForgetInput,
+        approval: Approval("nova_shard_forget"),
+    ) -> str:
         """
         Hard soft-delete with provenance log.
         Shard is marked as forgotten and removed from all search/interact results.
@@ -954,7 +964,10 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         """
         if ctx.permission_context.blocks("nova_shard_forget"):
             return permission_error("nova_shard_forget")
-        gate_err, request_id = await gate_check(ctx, "nova_shard_forget", params.shard_id)
+        gate_err, request_id = await gate_check(
+            ctx, "nova_shard_forget", params.shard_id,
+            approval=was_approved(approval),
+        )
         if gate_err:
             return gate_err
         op_ok = False
@@ -985,7 +998,10 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             log_executed(ctx, request_id, "nova_shard_forget", params.shard_id, op_ok)
 
     @nova_tool(mcp, name="nova_shard_consolidate")
-    async def nova_shard_consolidate(params: ShardConsolidateInput) -> str:
+    async def nova_shard_consolidate(
+        params: ShardConsolidateInput,
+        approval: Approval("nova_shard_consolidate"),
+    ) -> str:
         """
         Trigger a full NÓTT maintenance cycle (fire-and-forget).
         Returns immediately — NÓTT runs entirely in the background.
@@ -1012,7 +1028,9 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                 }, indent=2)
             return json.dumps({"status": "no_report_yet", "hint": "Call with dry_run=false to trigger a cycle."}, indent=2)
 
-        gate_err, request_id = await gate_check(ctx, "nova_shard_consolidate")
+        gate_err, request_id = await gate_check(
+            ctx, "nova_shard_consolidate", approval=was_approved(approval),
+        )
         if gate_err:
             return gate_err
 
@@ -1031,7 +1049,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                     "merge_suggestions": len(report.merge_suggestions),
                 })
             except Exception as exc:
-                _last_consolidation_report = {"status": "error", "error": str(exc)}
+                _last_consolidation_report = {"status": "error", "message": str(exc)}
             finally:
                 ctx._nott_lock.release()
 

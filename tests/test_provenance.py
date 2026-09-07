@@ -167,6 +167,51 @@ def test_supersession_requires_higher_authority():
         )
 
 
+def test_same_rank_event_is_allowed():
+    shard = {"meta_tags": {"source": "user_input", "confidence": 0.9}}
+    ensure_provenance(shard)  # source_type = authority_validated
+    rec = apply_validation_event(
+        shard, source_type="authority_validated", validator="andrei"
+    )
+    assert rec["source_type"] == "authority_validated"
+    assert rec["validator"] == "andrei"
+
+
+def test_higher_rank_event_is_allowed():
+    shard = {"meta_tags": {"source": "agent_inference", "confidence": 0.5}}
+    ensure_provenance(shard)  # source_type = self_inferred
+    rec = apply_validation_event(shard, source_type="externally_published")
+    assert rec["source_type"] == "externally_published"
+    assert AUTHORITY_RANK["externally_published"] > AUTHORITY_RANK["self_inferred"]
+
+
+def test_downgrade_without_supersession_rejected():
+    # An authority_validated record must not be silently overwritten as
+    # self_inferred by a plain (non-superseding) validation event.
+    shard = {"meta_tags": {"source": "user_input", "confidence": 0.9}}
+    ensure_provenance(shard)  # source_type = authority_validated
+    with pytest.raises(ValueError, match="cannot downgrade source_type"):
+        apply_validation_event(shard, source_type="self_inferred")
+    assert shard["meta_tags"]["epistemic_provenance"]["source_type"] == "authority_validated"
+
+
+def test_downgrade_with_supersession_still_rejected():
+    # superseded=True routes past the downgrade guard, but the supersession
+    # rank check still requires the NEW type to outrank the current one.
+    shard = {"meta_tags": {"source": "user_input", "confidence": 0.9}}
+    ensure_provenance(shard)  # source_type = authority_validated
+    with pytest.raises(ValueError, match="does not outrank"):
+        apply_validation_event(
+            shard,
+            source_type="self_inferred",
+            superseded=True,
+            superseded_by="weak_shard",
+        )
+    rec = shard["meta_tags"]["epistemic_provenance"]
+    assert rec["source_type"] == "authority_validated"
+    assert rec["superseded"] is False
+
+
 def test_supersession_requires_superseded_by():
     shard = {"meta_tags": {"source": "agent_inference", "confidence": 0.5}}
     with pytest.raises(ValueError):

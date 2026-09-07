@@ -1,7 +1,9 @@
 """
-schemas.py — Pydantic input models for all 40 NOVA MCP tools.
+schemas.py — Pydantic input models for NOVA's 41 MCP tools.
 
 Extracted from nova_server.py so tool handlers remain a thin adapter layer.
+Holds 31 of the models; the rest live beside their own tool modules
+(facts.py, nidhogg.py, code_index.py, evolve.py, Gemini/gemini_mcp.py).
 """
 
 from typing import Literal, Optional
@@ -348,17 +350,6 @@ class CalibrateRoutingInput(BaseModel):
         default=3, ge=2, le=50,
         description="Minimum repeat count per query before consistency is computed",
     )
-
-
-class HuginnCandidatesInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
-    query: str = Field(min_length=1, description="Retrieval query to pre-filter against")
-    max_candidates: int = Field(
-        default=20, ge=1, le=20,
-        description="Maximum candidates to return (hard cap 20)",
-    )
-
-
     include_forgemaster: bool = Field(
         default=True,
         description="Include sprint pass-rate analysis from forgemaster event logs",
@@ -371,3 +362,13 @@ class HuginnCandidatesInput(BaseModel):
             "the P3 failure mode from Srinivasan 2026)."
         ),
     )
+
+
+class HuginnCandidatesInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
+    query: str = Field(min_length=1, description="Retrieval query to pre-filter against")
+    max_candidates: int = Field(
+        default=20, ge=1, le=20,
+        description="Maximum candidates to return (hard cap 20)",
+    )
+

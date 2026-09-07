@@ -4,7 +4,7 @@
 
 ## Why it exists
 
-`wiki.py` and `wiki_ingest.py` provide the backend; `wiki_tools.py` wraps them in the FastMCP registration pattern consistent with all other tool modules (`nidhogg.py`, `evolve.py`, `gemini_mcp.py`). All 6 wiki tools are registered in a single `register_wiki_tools(mcp)` call.
+`wiki.py` and `wiki_ingest.py` provide the backend; `wiki_tools.py` wraps them in the MCPServer registration pattern consistent with all other tool modules (`nidhogg.py`, `evolve.py`, `gemini_mcp.py`). All 6 wiki tools are registered in a single `register_wiki_tools(mcp)` call.
 
 ## Key concepts
 
@@ -17,7 +17,7 @@
 
 ## Public surface
 
-- `register_wiki_tools(mcp)` — registers all 6 wiki tools onto a FastMCP instance.
+- `register_wiki_tools(mcp)` — registers all 6 wiki tools onto an MCPServer instance.
 
 **MCP tools** (6): `nova_wiki_schema`, `nova_wiki_ingest`, `nova_wiki_query`, `nova_wiki_get`, `nova_wiki_list`, `nova_wiki_lint`.
 

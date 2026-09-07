@@ -10,8 +10,10 @@ requires-python = ">=3.11,<3.13"
 readme = "README.md"
 license = { text = "MIT" }
 dependencies = [
-    "mcp[cli]>=1.0.0",
-    "pydantic>=2.10.1",
+    # v2 API — nova_server.py imports mcp.server.mcpserver.MCPServer, which
+    # does not exist in v1. <3 guards against the next major.
+    "mcp[cli]>=2,<3",
+    "pydantic>=2.12.0",   # transitive floor from mcp>=2
     "python-dotenv>=1.0.0",
     "filelock>=3.12.0",
     "ijson>=3.3.0",

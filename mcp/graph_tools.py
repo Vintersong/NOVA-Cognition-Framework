@@ -19,6 +19,7 @@ from graph import (
     query_graph_transitive,
 )
 from maintenance import apply_confidence_corroboration
+from reject import RejectCode, reject_payload
 from schemas import GraphQueryInput, GraphRelationInput
 from store import load_shard, patch_index_entry, save_shard
 from tool_registry import nova_tool
@@ -45,7 +46,10 @@ def register_graph_tools(mcp, ctx: "ServerContext") -> None:
         if params.transitive:
             root_id = params.source or params.target
             if not root_id:
-                return json.dumps({"status": "error", "message": "Transitive query requires 'source' or 'target'."}, indent=2)
+                return reject_payload(
+                    RejectCode.INVALID_INPUT,
+                    "Transitive query requires 'source' or 'target'.",
+                )
             direction = "outbound" if params.source else "inbound"
             results = query_graph_transitive(
                 root_id=root_id,

@@ -156,7 +156,7 @@ Float confidence migration — every module that reads/writes `meta_tags.confide
 
 | File | Purpose | Notes |
 |---|---|---|
-| [nova_server.py](mcp/nova_server.md) | FastMCP server — registers all 30 tools, constructs all singletons, wires the hook/maintenance pipeline | Top of the import tree. Nothing else imports from here except `test_nova.py`. |
+| [nova_server.py](mcp/nova_server.md) | MCPServer — registers all 41 tools, constructs all singletons, wires the hook/maintenance pipeline | Top of the import tree. Nothing else imports from here except `test_nova.py`. |
 
 ### Tool modules (registered via `register_*_tools(mcp)`)
 

@@ -1,6 +1,6 @@
 # nova_server.py
 
-**One-line purpose:** FastMCP server entry point — registers all 30 NOVA MCP tools, constructs all module-level singletons, and wires the hook/maintenance pipeline.
+**One-line purpose:** MCPServer entry point — registers all 41 NOVA MCP tools, constructs all module-level singletons, and wires the hook/maintenance pipeline.
 
 ## Why it exists
 
@@ -8,7 +8,7 @@
 
 ## Key concepts
 
-- **FastMCP** — the MCP server framework. `mcp = FastMCP("NOVA")` is the instance all tools are registered onto.
+- **MCPServer** — the MCP server framework (SDK v2). `mcp = MCPServer("nova_mcp_v2")` is the instance all tools are registered onto.
 - **Module-level singletons** — constructed once at server startup:
   - `_huginn: Huginn`, `_muninn: Muninn` — retrieval agents (ravens.py)
   - `_nott: Nott` — maintenance daemon (nott.py)

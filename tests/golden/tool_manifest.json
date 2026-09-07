@@ -1,0 +1,1141 @@
+{
+  "resources": [
+    {
+      "description": "Every directed inter-shard relation as stored on disk.",
+      "mime_type": "application/json",
+      "name": "nova_graph",
+      "title": "Shard Knowledge Graph",
+      "uri": "nova://graph"
+    },
+    {
+      "description": "The full shard index: one metadata row per shard (id, guiding question, confidence, tags, timestamps). Rebuilt on read.",
+      "mime_type": "application/json",
+      "name": "nova_index",
+      "title": "Shard Index",
+      "uri": "nova://index"
+    },
+    {
+      "description": "SKILL.md \u2014 NOVA's operating instructions: the shard model, the tool inventory, and the session protocol. Read this first.",
+      "mime_type": "text/markdown",
+      "name": "nova_skill",
+      "title": "NOVA Skill Definition",
+      "uri": "nova://skill"
+    },
+    {
+      "description": "The last 100 operation-log entries plus running session token totals.",
+      "mime_type": "application/json",
+      "name": "nova_usage",
+      "title": "Operation Log and Token Usage",
+      "uri": "nova://usage"
+    }
+  ],
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Send a structured ticket to Gemini Flash for code generation.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "gemini_execute_ticket",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Execute Ticket via Gemini"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Load a file from disk to use as codebase context for ticket execution.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "gemini_load_file",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Load File as Context"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Ingest a single document into NOVA's shard graph.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nidhogg_ingest",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Ingest Document (Nidhogg)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Scan the intake/ directory and ingest all pending files.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nidhogg_scan",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Scan Intake Directory"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Show the Nidhogg ingestion manifest \u2014 what files have been ingested,",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nidhogg_status",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Nidhogg Status"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Pre-warm the Anthropic prompt cache with a summary context built from the",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_cache_prewarm",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Pre-warm Prompt Cache"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Analyse HUGINN retrieval logs and Forgemaster sprint logs to calibrate",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_calibrate_routing",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Analyse Routing Thresholds"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Semantic search over NOVA's own mcp/ source code.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_code_search",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Search NOVA Source Code"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Run one NOVA self-evolution cycle.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_evolve",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Run Self-Improvement Loop"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description_first_line": "External retrieval deliberation pipeline (v1.0).",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_external_retrieval",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "External Retrieval Deliberation"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Re-scan FACTS_DIR and rebuild the SQLite index. Idempotent.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_facts_rebuild",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Rebuild Facts Index"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Keyword search over the curated facts corpus (`.shard` files).",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_facts_search",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Search Facts Corpus"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Run a full Forgemaster sprint: orchestrator \u2192 planner \u2192 implementer \u2192 reviewer.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_forgemaster_sprint",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Run Forgemaster Sprint"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Query the inter-shard knowledge graph.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_graph_query",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Query Knowledge Graph"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Manually add a directed relation between two shards in the knowledge graph.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_graph_relate",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Relate Two Shards"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Pre-filter the shard index for a query and return a small candidate list",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_huginn_candidates",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "HUGINN Candidate Pre-filter"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Export all shards to an Obsidian vault as Markdown files with YAML frontmatter",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_obsidian_export",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Export Shards to Obsidian"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Persist an active session to disk and remove it from memory. Returns JSON confirmation with token totals.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_session_flush",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Flush Session to Disk"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "List all session IDs currently persisted on disk.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_session_list",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "List Stored Sessions"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Load a previously flushed session from disk into memory. Returns JSON with session metadata and message count.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_session_load",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Load Stored Session"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_archive",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Archive Shard"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Trigger a full N\u00d3TT maintenance cycle (fire-and-forget).",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_consolidate",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Run Maintenance Cycle"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Create a new shard. Triggers post-write enrichment hook and registers in knowledge graph.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_create",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Create Shard"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Hard soft-delete with provenance log.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_forget",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Forget Shard"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Read the full raw content of a shard from disk. Read-only, no side effects.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_get",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Read Shard"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Cold-path full-body fetch. Returns conversation_history/turns payload without side effects. Use nova_shard_get for raw metadata.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_get_full",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Read Shard Body"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Browse shards using compact metadata rows without loading conversation bodies.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_index",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Browse Shard Index"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Load shards into context for synthesis. Auto-selects relevant shards if none specified. Confidence-weighted.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_interact",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Load Shards into Context"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Return a legacy full shard dump. Prefer nova_shard_index or nova_shard_summary for browsing.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_list",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "List Shards (legacy dump)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Merge multiple shards into a meta-shard. Updates knowledge graph relations.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_merge",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Merge Shards"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Query the SQLite shard index by epistemic state vector.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_query_state",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Query Shard State Vector"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Search shards with confidence weighting. High-confidence shards rank higher for same relevance score.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_search",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Search Shards"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Browse shards with compact metadata rows plus a short synopsis per shard.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_summary",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Browse Shards with Synopsis"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Append to a shard. Triggers post-write enrichment hook and auto-compaction if threshold exceeded.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_update",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Append Turn to Shard"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Record an epistemic validation event on a shard.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_shard_validate",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Record Validation Event"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Read a specific wiki page in full.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_wiki_get",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Read Wiki Page"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Ingest a source document into the wiki.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_wiki_ingest",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Ingest Document into Wiki"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "Health check the wiki.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_wiki_lint",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Lint Wiki"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "List all wiki pages with one-line summaries.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_wiki_list",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "List Wiki Pages"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description_first_line": "Semantic search over wiki pages using cosine similarity.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_wiki_query",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "Search Wiki"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description_first_line": "View or modify the wiki topic taxonomy.",
+      "input_schema": {
+        "properties": [
+          "params"
+        ],
+        "required": [
+          "params"
+        ]
+      },
+      "name": "nova_wiki_schema",
+      "output_schema": {
+        "properties": [
+          "result"
+        ],
+        "required": [
+          "result"
+        ]
+      },
+      "title": "View or Edit Wiki Taxonomy"
+    }
+  ]
+}
