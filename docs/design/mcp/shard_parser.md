@@ -46,11 +46,11 @@ The old JSON shards used float confidence (0.0–1.0) which caused practical iss
 
 ## Callers and integration
 
-Not imported by any other `mcp/` module. `nova_server.py` does not use `ShardParser` or `ShardDB` at all — the live server still operates entirely on the old JSON format. `shard_parser.py` is tested in `tests/test_shard_parser.py`.
+`facts.py` imports `ShardDB` and opens it against `FACTS_INDEX_FILE`, backing the `nova_facts_search` and `nova_facts_rebuild` tools — so the `.shard` format is live, but as a **separate curated corpus** rather than as the primary shard store. The main shard path (`store.py`, `maintenance.py`, `nott.py`, `ravens.py`) still reads JSON with float confidence. `shard_parser.py` is tested in `tests/test_shard_parser.py`.
 
 ## Known gaps / open questions
 
-- **Migration blocker**: `nova_server.py`, `store.py`, `maintenance.py`, `nott.py`, `ravens.py`, `evolve.py`, and all utilities still use the old JSON + float confidence format. `shard_parser.py` is the target state but nothing routes to it yet.
+- **Two formats coexist by design, for now.** The `.shard` corpus is reached through `facts.py`; the main shard store and every maintenance pass still use JSON + float confidence. The discrete epistemic encoding does reach the main store by another route — `nova_shard_db.py` indexes it and `nova_shard_query_state` queries it — so this is no longer a dead end, but a full migration of the primary store has not happened.
 - What is the migration plan? Will old JSON shards be converted, or will the two formats coexist with a reader that handles both?
 - `ShardDB` is in-memory SQLite (no WAL mode set) — concurrent write safety under multiple tool calls is not guaranteed.
 - The `tier` field (`personal | department | studio`) is not present in the old JSON shard schema. How will it be assigned during migration?

@@ -30,6 +30,10 @@ RUN chmod +x ./docker/entrypoint.sh
 RUN mkdir -p /app/data/shards /app/data/nova_sessions /app/data/output/forgemaster_runs \
              /app/data/intake /app/data/wiki /app/data/facts
 
+# NOVA_HITL_BROKER is a fallback broker only. The seven destructive MCP tools
+# ask the operator through the client via elicitation, which works fine in a
+# container; `policy` covers the paths with no client to ask — forgemaster's
+# per-file writes and the Gemini worker.
 ENV PYTHONUNBUFFERED=1 \
     NOVA_SHARD_DIR=/app/data/shards \
     NOVA_INDEX_FILE=/app/data/shard_index.json \

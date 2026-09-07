@@ -34,7 +34,7 @@ One `BaseModel` subclass per tool. Key models:
 
 ## Callers and integration
 
-- `nova_server.py` — imports all models for tool handler signatures.
+- The handler modules (`shard_tools.py`, `graph_tools.py`, `session_tools.py`, `forgemaster_tools.py`, `wiki_tools.py`, …) import these models for their handler signatures.
 - `mcp/test_nova.py` — imports `ShardIndexInput`, `ShardSearchInput`, `ShardGetInput` for the explorer script.
 
 ## Known gaps / open questions

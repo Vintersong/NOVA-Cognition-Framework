@@ -38,7 +38,7 @@ Shard quality degrades over time without intervention: old shards lose relevance
 ## Callers and integration
 
 - `nott.py` — all three public mutating functions (`apply_confidence_decay`, `maybe_compact_shard`, `find_merge_candidates`) are injected into `Nott` at construction time as callables.
-- `nova_server.py` — imports `apply_confidence_decay` and `maybe_compact_shard` for inline use in legacy code paths (pre-NÓTT pattern; may be redundant).
+- `shard_tools.py` — imports `apply_confidence_decay` and `maybe_compact_shard` for inline use alongside the NÓTT passes.
 - `nidhogg.py` — imports `cosine_similarity` for document-to-shard matching.
 
 ## Known gaps / open questions

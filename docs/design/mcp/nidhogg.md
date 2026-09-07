@@ -40,7 +40,8 @@ Shards are created from conversations. External documents (papers, articles, not
 
 ## Callers and integration
 
-- `nova_server.py` — calls `register_nidhogg_tools(mcp)` at startup.
+- `nova_server.py` — calls `register_nidhogg_tools(mcp, ctx)` at startup.
+- `nidhogg_ingest` and `nidhogg_scan` are `fs.write.irrev` and ask the operator for approval before running.
 
 ## Known gaps / open questions
 

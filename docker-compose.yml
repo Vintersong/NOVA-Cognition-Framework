@@ -6,6 +6,8 @@ services:
       - CLAUDE_API_KEY=${CLAUDE_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      # Fallback broker only — destructive MCP tools ask through the client
+      # via elicitation. This covers the paths with no client to ask.
       - NOVA_HITL_BROKER=policy
     volumes:
       - nova_data:/app/data

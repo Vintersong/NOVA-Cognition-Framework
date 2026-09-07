@@ -45,7 +45,7 @@ Centralises shard I/O so no other module opens shard files directly, and provide
 
 ## Callers and integration
 
-Imported by `nova_server.py`, `maintenance.py`, `nidhogg.py`, `evolve.py`, and `utilities/shard_index.py`. The most widely used module in `mcp/`.
+Imported by `shard_tools.py`, `maintenance.py`, `nidhogg.py`, `evolve.py`, and `utilities/shard_index.py`. The most widely used module in `mcp/`.
 
 ## Known gaps / open questions
 

@@ -35,7 +35,8 @@ Inspired by Bernstein's `evolve_mode.py`. The goal is to keep NOVA improving its
 
 ## Callers and integration
 
-- `nova_server.py` — calls `register_evolve_tools(mcp)` at startup.
+- `nova_server.py` — calls `register_evolve_tools(mcp, ctx)` at startup.
+- `nova_evolve` carries the `memory.write` capability, so it asks the operator for approval before running (`approval.py`).
 - No other callers.
 
 ## Known gaps / open questions

@@ -29,7 +29,7 @@ Token usage needed to be accumulated across multiple tool calls within a session
 ## Callers and integration
 
 - `session_store.py` — `NovaSession` contains a `UsageSummary` field; `add_message` calls `add_turn`.
-- `nova_server.py` — `_session_usage: UsageSummary` module-level singleton tracks session-wide usage.
+- `server_context.py` — `ctx.session_usage: UsageSummary` tracks session-wide usage.
 - Referenced in `forgemaster_runtime.py` via the session's `usage` field.
 
 ## Known gaps / open questions

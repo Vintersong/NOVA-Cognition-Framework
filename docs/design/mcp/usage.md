@@ -27,7 +27,7 @@ Token cost and operation frequency tracking requires a persistent log that survi
 
 ## Callers and integration
 
-- `nova_server.py` — calls `log_operation` in every tool handler after the main work is done.
+- The handler modules call `log_operation` after the main work is done.
 - `nott.py` — writes its own entries directly (not via `usage.log_operation`).
 - `ravens.py` — writes its own entries directly (not via `usage.log_operation`).
 

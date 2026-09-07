@@ -45,7 +45,7 @@ Forgemaster sprint sessions need to accumulate message history and token usage a
 ## Callers and integration
 
 - `forgemaster_runtime.py` — creates, updates, and flushes sessions in `ForgemasterRuntime.run_sprint`.
-- `nova_server.py` — constructs the module-level `_session_store` singleton; implements `nova_session_flush`, `nova_session_load`, `nova_session_list` MCP tools by delegating to `SessionStore`.
+- `server_context.py` — constructs the session-store singleton. `session_tools.py` implements `nova_session_flush`, `nova_session_load` and `nova_session_list` by delegating to it.
 
 ## Known gaps / open questions
 

@@ -41,7 +41,7 @@ Shards are ephemeral conversation records with confidence decay. The wiki layer 
 
 - `wiki_ingest.py` — uses `WikiPage`, `load_wiki_page`, `all_wiki_pages`, `wiki_dir_ready`, `schema_*`, `upsert_wiki_embedding`.
 - `wiki_tools.py` — uses all of the above plus `load_wiki_index`.
-- `nova_server.py` — imports `register_wiki_tools` from `wiki_tools.py`, not from `wiki.py` directly.
+- `nova_server.py` — calls `register_wiki_tools(mcp)`; it does not import `wiki.py` directly.
 
 ## Known gaps / open questions
 

@@ -31,7 +31,7 @@ Before `hooks.py`, `nova_server.py` called `asyncio.create_task(...)` inline in 
 
 ## Callers and integration
 
-- `nova_server.py` — constructs the module-level `_hooks` singleton; registers `_nott.run(...)` lambdas for `SESSION_START`, `POST_SPRINT`, `COUNT_THRESHOLD`; calls `_hooks.emit(...)` and `_hooks.emit_wait(...)` in tool handlers.
+- `server_context.py` — `ServerContext.bootstrap()` constructs the hook registry and registers the NÓTT lambdas for `SESSION_START`, `POST_SPRINT` and `COUNT_THRESHOLD`. Handler modules emit through `ctx`.
 
 ## Known gaps / open questions
 

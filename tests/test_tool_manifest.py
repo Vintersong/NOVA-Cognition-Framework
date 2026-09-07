@@ -87,4 +87,4 @@ def test_every_tool_is_annotated_and_titled(live):
     for t in live["tools"]:
         assert t["annotations"] is not None, f"{t['name']} publishes no annotations"
         assert t["title"], f"{t['name']} publishes no title"
-        assert t["description_first_line"], f"{t['name']} publishes no description"
+        assert t["summary"], f"{t['name']} publishes no description"
