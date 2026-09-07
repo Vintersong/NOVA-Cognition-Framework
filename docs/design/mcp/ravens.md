@@ -39,7 +39,7 @@ Single-pass keyword search over shard metadata degrades at scale and misses sema
 
 ## Callers and integration
 
-- `nova_server.py` — constructs `Huginn` and `Muninn` singletons at startup; calls them in sequence inside `nova_shard_interact` and `nova_shard_search`.
+- `server_context.py` — constructs the `Huginn` and `Muninn` singletons. `shard_tools.py` calls them in sequence inside `nova_shard_interact` and `nova_shard_search`.
 - No callers outside `mcp/`.
 
 ## Known gaps / open questions

@@ -4,6 +4,16 @@ One-page navigation for all design documents across `mcp/` and `utilities/`. Eac
 
 ---
 
+> **Coverage warning.** These docs were written before `nova_server.py` was
+> split and before the security/approval layer existed. They cover roughly 17 of
+> the ~57 modules under `mcp/`; the handler modules (`shard_tools.py`,
+> `graph_tools.py`, `session_tools.py`, `forgemaster_tools.py`), the registry and
+> context (`tool_registry.py`, `server_context.py`), and the whole gate/approval
+> stack (`capability_gate.py`, `approval.py`, `gate_helpers.py`, `audit_log.py`,
+> `reject.py`, `result_middleware.py`, `active_request.py`) have no design doc.
+> `CLAUDE.md` and `README.md` are the current-state references; treat anything
+> here that contradicts them as stale.
+
 ## Review status — last updated 2026-04-27
 
 ### Utilities — complete
@@ -106,14 +116,14 @@ Float confidence migration — every module that reads/writes `meta_tags.confide
 | File | Purpose | Key callers |
 |---|---|---|
 | [config.py](mcp/config.md) | Single source of truth for all env vars and path constants | Every module in `mcp/` |
-| [schemas.py](mcp/schemas.md) | Pydantic input models for all 30 MCP tools | `nova_server.py`, `test_nova.py` |
-| [models.py](mcp/models.md) | `UsageSummary` frozen dataclass — tracks per-session token estimates | `session_store.py`, `nova_server.py`, `forgemaster_runtime.py` |
+| [schemas.py](mcp/schemas.md) | Pydantic input models for the MCP tools (31 models; the rest live beside their own tool modules) | the handler modules |
+| [models.py](mcp/models.md) | `UsageSummary` frozen dataclass — tracks per-session token estimates | `session_store.py`, `server_context.py`, `forgemaster_runtime.py` |
 
 ### Migration target — new shard format
 
 | File | Purpose | Status |
 |---|---|---|
-| [shard_parser.py](mcp/shard_parser.md) | Defines the new `.shard` plaintext format + `ShardDB` (SQLite, discrete `{-1,0,1}` confidence) | **Not wired.** No module imports it yet. Migration blocker for everything that uses float confidence. |
+| [shard_parser.py](mcp/shard_parser.md) | Defines the `.shard` plaintext format + `ShardDB` (SQLite, discrete `{-1,0,1}` confidence) | **Wired, as a separate corpus.** `facts.py` opens `ShardDB` for `nova_facts_search`/`nova_facts_rebuild`. The main shard store is still JSON + float confidence. |
 
 ### Shard storage
 
@@ -156,7 +166,7 @@ Float confidence migration — every module that reads/writes `meta_tags.confide
 
 | File | Purpose | Notes |
 |---|---|---|
-| [nova_server.py](mcp/nova_server.md) | MCPServer — registers all 41 tools, constructs all singletons, wires the hook/maintenance pipeline | Top of the import tree. Nothing else imports from here except `test_nova.py`. |
+| [nova_server.py](mcp/nova_server.md) | Bootstrap and wiring only — builds `ServerContext`, constructs `MCPServer`, calls each module's `register_*_tools`. Registers no handlers itself | Top of the import tree. Imported only by `utilities/test_nova.py` and `utilities/dump_tool_manifest.py`. |
 
 ### Tool modules (registered via `register_*_tools(mcp)`)
 
@@ -171,9 +181,9 @@ Float confidence migration — every module that reads/writes `meta_tags.confide
 
 ### Developer tools
 
-| File | Purpose | Notes |
-|---|---|---|
-| [test_nova.py](mcp/test_nova.md) | Interactive ASCII explorer — theme distribution, confidence health, spotlight shards, cross-theme search | CLI only (`cd mcp && python test_nova.py`). Misleadingly named — not a pytest suite. |
+`test_nova.py` moved to `utilities/` and its design doc was removed. Run it with
+`python utilities/test_nova.py` — it is an interactive explorer, not a pytest
+suite.
 
 ---
 
@@ -205,7 +215,7 @@ Float confidence migration — every module that reads/writes `meta_tags.confide
 
 | File | Purpose | Notes |
 |---|---|---|
-| [check_tool_docs.py](utilities/check_tool_docs.md) | Verify that `CLAUDE.md`, `SKILL.md`, and `schemas.py` all cite the correct tool count from `nova_server.py` | Has `__main__` guard. No CI wiring — could be a pre-commit hook. |
+| [check_tool_docs.py](utilities/check_tool_docs.md) | Verify that `CLAUDE.md`, `README.md`, `SKILL.md` and `schemas.py` cite the right tool count, that `CLAUDE.md` and `README.md` name every tool, and that CLAUDE.md's generated tool table matches the manifest. Reads `tool_registry.all_names()` | Wired into CI as the "Docs consistency" step. |
 
 ---
 

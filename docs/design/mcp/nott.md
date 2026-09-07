@@ -39,11 +39,11 @@ Maintenance work (confidence decay, shard compaction, merge detection, graph syn
 
 ## Callers and integration
 
-- `nova_server.py` — constructs the `_nott` singleton; registers lambdas with `_hooks` for `SESSION_START`, `POST_SPRINT`, and `COUNT_THRESHOLD`.
+- `server_context.py` — constructs the NÓTT singleton and registers its lambdas with the hook registry for `SESSION_START`, `POST_SPRINT` and `COUNT_THRESHOLD`.
 - No other callers outside `mcp/`.
 
 ## Known gaps / open questions
 
-- `_pre_compact` hook is wired in the constructor signature but no concrete function is passed from `nova_server.py` — fact extraction before compaction is not implemented.
+- `_pre_compact` is wired in the constructor signature but no concrete function is passed from `ServerContext.bootstrap()` — fact extraction before compaction is not implemented.
 - `_graph_sync` stores float confidence values from the index — blocked by the same discrete confidence migration as `maintenance.py`.
 - NÓTT's merge suggestions are surfaced in the report but there is no automatic action taken — a human must act on them via `nova_shard_merge`. The suggestions cap at 10 in `to_dict()`.

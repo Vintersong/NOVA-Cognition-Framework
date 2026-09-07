@@ -37,7 +37,7 @@ The Forgemaster sprint pipeline routes implementation tickets to Gemini Flash ra
 
 ## Callers and integration
 
-- `nova_server.py` — imports `register_gemini_tools` from `mcp/Gemini/gemini_mcp.py` and calls it at startup.
+- `nova_server.py` — calls `register_gemini_tools(mcp, gate=..., audit_log=...)` at startup.
 - `forgemaster_runtime.py` — does not call `gemini_execute_ticket` directly; it uses `_call_gemini` via the `google.genai` library directly.
 
 ## Known gaps / open questions

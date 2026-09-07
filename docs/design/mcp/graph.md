@@ -35,7 +35,7 @@ Shards are isolated JSON files; `graph.py` provides the connective tissue — a 
 
 ## Callers and integration
 
-- `nova_server.py` — imports all graph functions for `nova_graph_query` and `nova_graph_relate` tools.
+- `graph_tools.py` — imports all graph functions for the `nova_graph_query` and `nova_graph_relate` handlers.
 - `nott.py` — `_graph_sync` updates entity confidence values after a maintenance cycle.
 - No external callers outside `mcp/`.
 

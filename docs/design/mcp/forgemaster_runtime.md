@@ -37,7 +37,7 @@
 
 ## Callers and integration
 
-- `nova_server.py` — the `nova_forgemaster_sprint` tool handler constructs a `ForgemasterRuntime` per call and calls `run_sprint`.
+- `forgemaster_tools.py` — the `nova_forgemaster_sprint` handler constructs a `ForgemasterRuntime` per call and calls `run_sprint`. The tool asks for approval first.
 
 ## Known gaps / open questions
 

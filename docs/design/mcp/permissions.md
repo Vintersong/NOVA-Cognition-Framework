@@ -9,7 +9,7 @@ Some deployment contexts need to disable subsets of tools (e.g. disable all writ
 ## Key concepts
 
 - **`ToolPermissionContext`** — frozen dataclass with `denied_tools` (frozenset, exact names) and `denied_prefixes` (tuple). The `DEFAULT` class-level sentinel permits everything.
-- **Module-level active context** — `_active` holds the process-wide permission context. `nova_server.py` calls `set_active(ctx)` at startup with a context built from env vars. External tool modules (nidhogg, evolve, gemini) call `is_blocked(tool_name)` without needing to import `nova_server`.
+- **Module-level active context** — `_active` holds the process-wide permission context. `server_context.py` calls `set_active(...)` during `bootstrap()` with a context built from env vars. External tool modules (nidhogg, evolve, gemini) call `is_blocked(tool_name)` without importing the server.
 - **Normalization** — `from_iterables` lowercases and strips whitespace from all tool names and prefixes at construction time, so env var values are case-insensitive.
 
 ## Public surface
@@ -22,7 +22,7 @@ Some deployment contexts need to disable subsets of tools (e.g. disable all writ
 
 ## Inputs and outputs
 
-- **Reads:** nothing at module level. `nova_server.py` reads `NOVA_DENIED_TOOLS` and `NOVA_DENIED_PREFIXES` env vars and passes the parsed lists to `from_iterables`.
+- **Reads:** nothing at module level. `server_context.py` reads `NOVA_DENIED_TOOLS` and `NOVA_DENIED_PREFIXES` and passes the parsed lists to `from_iterables`.
 - **Writes:** nothing.
 
 ## Invariants and assumptions
@@ -33,7 +33,8 @@ Some deployment contexts need to disable subsets of tools (e.g. disable all writ
 
 ## Callers and integration
 
-- `nova_server.py` — builds the context at startup and calls `set_active`; also calls `is_blocked` and `denial_payload` in tool handler guards.
+- `server_context.py` — builds the context at bootstrap and calls `set_active`. Handler modules call `is_blocked` / `denial_payload`, or `gate_helpers.permission_error`, in their guards.
+- `denial_payload` now returns the typed reject envelope (`status: "rejected"`, `code: "permission_denied"`), not a bare `{"error": ...}`.
 - `nidhogg.py`, `evolve.py`, `gemini_mcp.py` — all call `is_blocked` and `denial_payload` at the top of their tool handler functions.
 
 ## Known gaps / open questions

@@ -36,7 +36,7 @@ All retrieval and merge detection in NOVA depends on semantic embeddings. `nova_
 
 ## Callers and integration
 
-- `nova_server.py` — calls `prewarm_embedding_model()` at startup; calls `enrich_shard` as post-write hook in `nova_shard_create` and `nova_shard_update`.
+- `nova_server.py` — calls `prewarm_embedding_model()` at startup. `shard_tools.py` calls `enrich_shard` as the post-write hook in `nova_shard_create` and `nova_shard_update`.
 - `maintenance.py` — calls `_generate_compaction_summary` via `maybe_compact_shard`.
 - `ravens.py` — calls `generate_local_embedding` for MUNINN's local cosine rerank fallback.
 - `nidhogg.py` — calls `generate_local_embedding` for document embedding before shard matching.

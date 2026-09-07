@@ -1,56 +1,75 @@
 # nova_server.py
 
-**One-line purpose:** MCPServer entry point — registers all 41 NOVA MCP tools, constructs all module-level singletons, and wires the hook/maintenance pipeline.
+**One-line purpose:** MCP server entry point — constructs the `ServerContext`, builds the `MCPServer` instance, and calls each tool module's `register_*_tools`. It registers no handlers of its own.
 
 ## Why it exists
 
-`nova_server.py` is the single assembly point: it imports tool handlers from `store.py`, `graph.py`, `maintenance.py`, `ravens.py`, `nott.py`, `session_store.py`, `forgemaster_runtime.py`, and registers the external tool modules (`wiki_tools.py`, `nidhogg.py`, `evolve.py`, `Gemini/gemini_mcp.py`) via their `register_*_tools(mcp)` functions. Nothing else in `mcp/` imports from `nova_server.py` directly — dependency flows inward.
+`nova_server.py` is the assembly point and nothing more. It was once a god-object holding every handler and singleton; both were extracted. Handlers now live in thirteen modules, and the singletons live in `server_context.py`. What remains is wiring:
+
+1. Load `.env` before `config.py` is imported, since config reads the environment at import time.
+2. `ctx = ServerContext.bootstrap()` — builds the process-scoped singletons and the hook bus.
+3. Construct `MCPServer` with the server's identity, instructions and middleware.
+4. Call thirteen `register_*_tools(mcp, ...)` functions.
+5. Declare four read-only resources.
+6. `mcp.run()` on stdio.
+
+Nothing in `mcp/` imports from `nova_server.py` — dependency flows inward.
 
 ## Key concepts
 
-- **MCPServer** — the MCP server framework (SDK v2). `mcp = MCPServer("nova_mcp_v2")` is the instance all tools are registered onto.
-- **Module-level singletons** — constructed once at server startup:
-  - `_huginn: Huginn`, `_muninn: Muninn` — retrieval agents (ravens.py)
-  - `_nott: Nott` — maintenance daemon (nott.py)
-  - `_hooks: NovaHookRegistry` — event registry (hooks.py)
-  - `_session_store: SessionStore` — session persistence (session_store.py)
-  - `_permission_ctx: ToolPermissionContext` — from env vars (permissions.py)
-- **`_ALL_TOOL_NAMES`** — a tuple of all 30 tool names; consumed by `utilities/check_tool_docs.py` for documentation completeness checking.
-- **Startup sequence** — `.env` is loaded before `config.py` imports (via `load_dotenv` at the top of the file). `prewarm_embedding_model()` is called to start loading the embedding model in a background thread. NÓTT and hooks are wired after all singletons are ready.
-- **Post-write hooks** — `nova_shard_create` and `nova_shard_update` call `enrich_shard` synchronously and emit `POST_SPRINT` / `COUNT_THRESHOLD` hooks asynchronously after writing.
+- **`MCPServer`** — SDK v2, spec revision 2026-07-28. The server declares `title`, `version` (read from package metadata, falling back to a constant), and `instructions`.
+- **`SERVER_INSTRUCTIONS`** — sent to the client on every request. It states the "call `nova_shard_interact` first" contract, the annotation vocabulary, and the two error-envelope shapes. This is the only copy of that contract clients actually receive; `nova://skill` carries the long form.
+- **Middleware** — `mark_failed_results` (`result_middleware.py`) sets `isError` on any tool result whose payload reports a failure, and records the live request in `active_request` so the capability gate can reach the client session to ask for approval.
+- **`ServerContext`** — all singletons (ravens, NÓTT, hook registry, session store, permission context, capability gate, audit log, usage counters, active skill, session id) hang off `ctx`. Handlers read through it rather than module globals.
+- **`_ALL_TOOL_NAMES`** — derived from `tool_registry.all_names()`, not maintained by hand.
 
 ## Public surface
 
-18 core tool handlers (async functions decorated with `@mcp.tool`):
-- `nova_shard_interact`, `nova_shard_create`, `nova_shard_update`, `nova_shard_search`
-- `nova_shard_index`, `nova_shard_summary`, `nova_shard_list`, `nova_shard_get`
-- `nova_shard_merge`, `nova_shard_archive`, `nova_shard_forget`, `nova_shard_consolidate`
-- `nova_graph_query`, `nova_graph_relate`
-- `nova_session_flush`, `nova_session_load`, `nova_session_list`
-- `nova_forgemaster_sprint`
+No tool handlers. Registration calls, in order:
 
-Plus 12 tools registered from external modules (see CLAUDE.md tool table).
+| Module | Tools |
+|---|---|
+| `gemini_mcp` | 2 — receives `gate=` and `audit_log=` explicitly |
+| `nidhogg` | 3 |
+| `evolve` | 1 |
+| `huginn_tools` | 1 |
+| `wiki_tools` | 6 |
+| `facts` | 2 |
+| `external_retrieval` | 1 |
+| `calibrate` | 1 |
+| `code_index` | 1 |
+| `shard_tools` | 16 — returns the handler map re-exported for `utilities/test_nova.py` |
+| `graph_tools` | 2 |
+| `session_tools` | 3 |
+| `forgemaster_tools` | 2 |
+
+Four resources, each publishing name, title, description and MIME type: `nova://skill` (`text/markdown`), `nova://index`, `nova://graph`, `nova://usage` (all `application/json`).
+
+Plus `get_permitted_tools(permission_context)` — the tool names not blocked by the active permission context.
 
 ## Inputs and outputs
 
 - **Reads:** `SHARD_DIR/*.json`, `shard_index.json`, `shard_graph.json`, `nova_sessions/*.json`.
-- **Writes:** same files; also `nova_usage.jsonl`.
-- **Env:** loads `.env` from repo root at startup; all config consumed via `config.py`.
+- **Writes:** the same, plus `nova_usage.jsonl`.
+- **Env:** loads `.env` from the repo root at startup; all config is consumed through `config.py`.
 
 ## Invariants and assumptions
 
-- Never imports `shard_parser.py` — the new `.shard` format and `ShardDB` are completely disconnected from the live server. The entire server operates on old JSON + float confidence shards.
-- `nova_shard_interact` fires `SESSION_START` → NÓTT decay pass. This is the heaviest call on every session open.
-- `nova_shard_update` fires `POST_SPRINT` → NÓTT full cycle (decay + compact + merge + graph sync), and `COUNT_THRESHOLD` if shard count exceeds `NOTT_COUNT_THRESHOLD`.
-- `SHARD_DIR` is exported as a module-level constant so `test_nova.py` can display it in the explorer header.
+- Runs on **stdio**. `docker/entrypoint.sh` and `.vscode/mcp.json` both spawn it as `python mcp/nova_server.py`, which puts `mcp/` on `sys.path[0]` — the bare imports (`from config import ...`) depend on that.
+- Requires **SDK v2**. `mcp.server.mcpserver` does not exist in v1, and v2's `mcp.server.fastmcp` exists only to raise a migration error, so the pin is bounded on both sides.
+- `prewarm_embedding_model()` starts the embedding model loading in a background thread at import.
+- `nova_shard_interact` fires `SESSION_START` → a NÓTT decay pass. It is the heaviest call on session open.
+- `nova_shard_update` fires `POST_SPRINT` → a full NÓTT cycle, and `COUNT_THRESHOLD` when the shard count exceeds `NOTT_COUNT_THRESHOLD`.
 
 ## Callers and integration
 
-- `test_nova.py` — imports `nova_server` directly and calls `nova_shard_index`, `nova_shard_search`, `nova_shard_get` as async functions.
-- No external callers — `nova_server.py` is the top of the import tree.
+- `utilities/test_nova.py` — imports `nova_server` and calls the re-exported `nova_shard_index` / `nova_shard_search` / `nova_shard_get` handlers directly.
+- `utilities/dump_tool_manifest.py` — boots the server to render the published tool and resource surface.
+- Otherwise nothing: `nova_server.py` is the top of the import tree.
 
 ## Known gaps / open questions
 
-- `shard_parser.py` migration not wired — all 30 tools use old JSON + float confidence. No read path for `.shard` files exists in the live server.
-- `enrich_shard` is called synchronously in tool handlers — adds latency to `nova_shard_create` and `nova_shard_update` proportional to embedding model inference time (~10–100ms on CPU).
-- `_ALL_TOOL_NAMES` tuple must be manually kept in sync as tools are added or removed.
+- `enrich_shard` is dispatched to an executor rather than awaited, but still adds latency to `nova_shard_create` / `nova_shard_update` proportional to embedding inference.
+- All 41 tools publish an `outputSchema`, but it is the degenerate `{"result": string}` wrapper the SDK generates for a handler annotated `-> str`; `structuredContent` therefore carries the JSON as an escaped string. Replacing it with real per-tool schemas is outstanding.
+- Every tool's `inputSchema` nests the real arguments under a single `params` property, because every handler takes one Pydantic model. Flattening would improve tool-call accuracy but is a breaking change to every call site.
+- stdio only. A loopback-only streamable-HTTP transport is possible under v2 but not wired.
