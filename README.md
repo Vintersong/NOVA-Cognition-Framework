@@ -223,7 +223,7 @@ Or use `docker-compose.yml` (copy your keys into `.env` first):
 docker compose up nova
 ```
 
-`NOVA_HITL_BROKER=policy` is set in the image by default — irreversible HITL calls are auto-denied rather than blocking the server waiting for terminal input.
+`NOVA_HITL_BROKER=policy` is set in the image by default. Note this no longer governs MCP tool calls: the seven destructive tools ask for approval through your MCP client (see [Approval](#approval)), which works fine in a container. The broker only covers paths with no client to ask — forgemaster's per-file writes, the Gemini worker, and bare CLI use — where `policy` denies them.
 
 ---
 
@@ -461,7 +461,7 @@ Nidhogg is non-destructive: it appends a `nidhogg` block to matched shards (atom
 |---|---|
 | `nova_evolve` | Run one self-evolution cycle: analyze → verify → commit → govern → plan |
 
-> ⚠ **Side effect:** `nova_evolve` runs `git add` and `git commit` locally when tests pass, staging only allowlisted paths (`EVOLVE_COMMIT_ROOTS`, default `mcp/ forgemaster/ tests/ docs/`). On test failure it rolls the changes back with `git stash push` (recoverable via `git stash list`), not a destructive `checkout`. Nothing is pushed to a remote. As an irreversible-write tool it routes through the capability gate (HITL on an unverified skill). Use `dry_run=true` for just the director prompt — a dry run is ungated and mutates nothing. If `mcp/` changed, it writes `.sdd/runtime/restart_requested`.
+> ⚠ **Side effect:** `nova_evolve` runs `git add` and `git commit` locally when tests pass, staging only allowlisted paths (`EVOLVE_COMMIT_ROOTS`, default `mcp/ forgemaster/ tests/ docs/`). On test failure it rolls the changes back with `git stash push` (recoverable via `git stash list`), not a destructive `checkout`. Nothing is pushed to a remote. It carries a destructive capability, so it asks for your approval on every call regardless of skill verification. Use `dry_run=true` for just the director prompt — a dry run is ungated and mutates nothing. If `mcp/` changed, it writes `.sdd/runtime/restart_requested`.
 
 ### Gemini (2)
 
@@ -522,7 +522,7 @@ Read-only resources exposed alongside the tools:
 | `embedding_integrity.py` | HMAC-SHA256 signing at ingestion, signature verification before MUNINN cosine reranking, adversarial event log |
 | `nott.py` | NÓTT daemon — scheduled decay, compact, merge, graph sync (dedicated `ThreadPoolExecutor`, isolated from default executor); every pass writes via `store.mutate_shard`, so background maintenance never clobbers a concurrent tool write (compaction uses a revision-guarded CAS) |
 | `nova_embeddings_local.py` | Local embeddings + heuristic compaction summaries (non-blocking `get_embedding_model_if_ready()` used on enrichment path) |
-| `capability_gate.py` | HITL gate — capability membership check + HITL broker (interactive on Unix, `msvcrt` polling on Windows). Every irreversible-write tool routes through it, including the externally-registered modules (`nova_evolve`, `nidhogg_ingest`/`scan`, `gemini_execute_ticket`); their executions emit audit records covered by the biconditional corpus check |
+| `capability_gate.py` | Capability membership check plus the approval policy: a destructive capability requires human approval whatever the skill claims. The seven destructive tools ask through MCP elicitation (see `approval.py`); the fallback brokers cover only paths with no client to ask. Executions emit audit records covered by the biconditional corpus check |
 | `audit_log.py` | SQLite HITL audit log — four-state lifecycle + biconditional corpus check |
 | `skill_manifest.py` | Parses `@@verification` / `@@capabilities` from skill file headers |
 | `external_retrieval.py` | `nova_external_retrieval` — Haiku retrieval + parallel validate/challenge/synthesize + Sonnet arbiter with ACCEPT/PARTIAL/REJECT verdict; cost-guard aborts if estimate exceeds `NOVA_EXTERNAL_COST_CAP` |
@@ -543,7 +543,7 @@ Read-only resources exposed alongside the tools:
 
 ### Experimental / internal tooling (may change without compatibility guarantees)
 - `utilities/` scripts (migration helpers, diagnostics, ad-hoc maintenance tools)
-- `mcp/test_nova.py` memory explorer CLI
+- `utilities/test_nova.py` memory explorer CLI
 - Planning/reference docs under `docs/` and donor/reference materials under `Donors/`
 - `forgemaster/library/` and `forgemaster/agents/` skill/persona content
 
@@ -640,6 +640,6 @@ Original named concepts in this repository: **shard** (memory unit), **HUGINN/MU
 - Never manually edit files in `shards/` or `wiki/` — always use the MCP tools
 - Auto-generated files, never commit: `shard_index.json`, `shard_graph.json`, `summary_index.json`, `summary_index.md`, `wiki_index.json`, `nidhogg_manifest.json`, `nova_usage.jsonl`, `evolve_cycles.jsonl`, `evolve.json`, `embedding_integrity.jsonl`
 - `.env` contains API keys — never commit it
-- `test_nova.py` is a memory-explorer CLI, not a pytest suite — run it with `python mcp/test_nova.py`
+- `test_nova.py` is a memory-explorer CLI, not a pytest suite — run it with `python utilities/test_nova.py`
 - See `CLAUDE.md` for operational instructions and sprint workflow; see `docs/ROADMAP.md` for shipped-vs-planned split
 - See `KNOWN_ISSUES.md` for open and resolved bugs with workarounds

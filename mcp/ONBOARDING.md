@@ -35,16 +35,21 @@ Ask these questions one at a time. Do not dump them all at once.
 > Give me one sentence about where you are with it right now.
 > What's the current state, what are you figuring out, or what decision are you facing?
 
-Then create the shard:
+Then create the shard. Every NOVA tool takes a single `params` object:
 ```python
-nova_shard_create(
-    guiding_question="[their answer from Step 2]",
-    user_message="[their answer from Step 3]",
-    ai_response="First shard created. NOVA is now tracking [theme]. Add context here as work progresses.",
-    intent="planning",
-    theme="[their theme from Step 1]"
-)
+nova_shard_create(params={
+    "guiding_question": "[their answer from Step 2]",
+    "theme":            "[their theme from Step 1]",
+    "intent":           "planning",
+    "initial_message":  "[their answer from Step 3]",
+    "source":           "user_input",
+})
 ```
+
+`ShardCreateInput` forbids unknown fields, so only the names above are accepted —
+`guiding_question` is the one required field; the rest have defaults. `source`
+matters: `user_input` records the shard as authority-validated, whereas the
+default `agent_inference` records it as self-inferred.
 
 ---
 
@@ -56,8 +61,14 @@ Tell the user:
 >
 > - Start every session with `nova_shard_interact` — it loads relevant context automatically
 > - Add to shards with `nova_shard_update` as work progresses
-> - Every 3 sessions, run `nova_shard_consolidate` to keep memory healthy
 > - When two shards start overlapping, merge them with `nova_shard_merge`
+> - Maintenance runs itself — NÓTT decays, compacts and merges in the background.
+>   You rarely need `nova_shard_consolidate` by hand.
+>
+> One thing to expect: a few tools cannot be undone — forgetting or archiving a
+> shard, ingesting documents, running a sprint, or letting NOVA evolve itself.
+> Those will ask you to approve them first, through whatever client you are using.
+> Declining is a normal answer; nothing else changes.
 >
 > You can create as many shards as you need — one per project, question, or thread of thinking.
 > The system works best when each shard has a clear, focused guiding question.
@@ -69,16 +80,21 @@ Tell the user:
 If the user says they've used NOVA before but shards are missing:
 
 > It looks like the shard directory is empty. This can happen if:
+> - `NOVA_DATA_ROOT` points somewhere unexpected — every other path resolves
+>   under it, and it defaults to the process working directory, which is not
+>   always the repo
 > - The `NOVA_SHARD_DIR` env variable points to the wrong folder
 > - Shards were accidentally deleted or moved
 > - This is a different machine and shards weren't copied over
 >
-> Check your `.env` file and confirm `NOVA_SHARD_DIR` points to the right path.
-> If shards exist elsewhere, move them into that directory and restart.
+> Check your `.env` file and confirm `NOVA_DATA_ROOT` and `NOVA_SHARD_DIR` point
+> where you expect. If shards exist elsewhere, move them into that directory and
+> restart.
 
 ---
 
 ## Onboarding Complete
 
 Once the first shard exists, this file is no longer needed in the flow.
-Normal session start resumes: read `mcp/SKILL.md` → call `nova_shard_interact`.
+Normal session start resumes: read `mcp/SKILL.md` (also served as the
+`nova://skill` resource) → call `nova_shard_interact`.

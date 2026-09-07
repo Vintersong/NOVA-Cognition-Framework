@@ -25,7 +25,8 @@ LLM Processor (stateless reasoning)
 Automation Layer (background maintenance)
   --> decay, compact, enrich, merge-suggest
 Knowledge Graph (inter-shard navigation)
-  --> influences, depends_on, contradicts, extends, references
+  --> influences, depends_on, contradicts, extends, references,
+      merged_from, supersedes, corroborated_by
 Principle Library (reasoning methodology)
   --> how to think, not just what to think about
 ```
@@ -40,39 +41,39 @@ Principle Library (reasoning methodology)
 |---|---|
 | `nova_shard_interact` | Load shards into context. Auto-selects by confidence-weighted relevance. Start here. |
 | `nova_shard_create` | Create shard. Triggers enrichment hook. Registers in graph. |
-| `nova_shard_update` | Append to shard. Triggers enrichment hook. Auto-compacts at 30 turns. |
+| `nova_shard_update` | Append to shard. Triggers enrichment hook. Auto-compacts past `NOVA_COMPACT_THRESHOLD` turns (default 30). |
 | `nova_shard_validate` | Record an epistemic validation event on a shard's provenance record. |
 | `nova_shard_search` | Search with confidence weighting. High-confidence shards rank higher. |
-| `nova_shard_query_state` | Inspect computed shard state (confidence, tags, decay) without loading body. |
+| `nova_shard_query_state` | Filter shards by epistemic state vector (confidence × valence × arousal × epistemic) over the SQLite index. `stats_only=true` returns the distribution. |
 | `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault. |
 | `nova_shard_index` | Browse shards using compact metadata rows only. Default orienting tool. |
 | `nova_shard_summary` | Browse shards with compact metadata plus short synopsis. |
-| `nova_shard_list` | Full raw dump. Use only when a complete export is required. |
+| `nova_shard_list` | Legacy full dump — the payload is marked `deprecated`. Prefer `nova_shard_index` or `nova_shard_summary`. |
 | `nova_shard_get` | Read full shard content. No side effects. |
 | `nova_shard_get_full` | Cold-path full-body fetch. Returns summary plus conversation body. |
 | `nova_shard_merge` | Merge shards into meta-shard. Auto-wires graph relations. |
-| `nova_shard_archive` | Soft-archive. Excluded from search. Content preserved. |
-| `nova_shard_forget` | Hard exclude with provenance log. Intentional exclusion. |
-| `nova_shard_consolidate` | Run full maintenance cycle: decay + compact + merge suggestions. |
+| `nova_shard_archive` | Soft-archive. Excluded from search, content preserved. Asks for approval. |
+| `nova_shard_forget` | Hard exclude with provenance log. Asks for approval. |
+| `nova_shard_consolidate` | Force a NÓTT cycle in the background. Runs automatically; you rarely need this. Asks for approval. |
 | `nova_graph_query` | Query inter-shard knowledge graph by source, target, or relation type. |
 | `nova_graph_relate` | Manually add a directed relation between two shards. |
 | `nova_session_flush` | Persist active sprint session to disk. |
 | `nova_session_load` | Restore a stored session to memory. |
 | `nova_session_list` | List all stored session IDs. |
-| `nova_forgemaster_sprint` | Full 4-turn sprint pipeline. |
+| `nova_forgemaster_sprint` | Full 4-turn sprint pipeline. Asks for approval. |
 | `nova_cache_prewarm` | Pre-warm Anthropic prompt cache with top-N shard context; returns the cached `system` string for subsequent calls. |
 
 ### Wiki (6)
 
-`nova_wiki_schema`, `nova_wiki_ingest`, `nova_wiki_query`, `nova_wiki_get`, `nova_wiki_list`, `nova_wiki_lint`
+`nova_wiki_schema` (view **or edit** the taxonomy), `nova_wiki_ingest`, `nova_wiki_query`, `nova_wiki_get`, `nova_wiki_list`, `nova_wiki_lint` (orphans, broken links, missing embeddings, stale pages)
 
 ### Nidhogg (3)
 
-`nidhogg_ingest`, `nidhogg_scan`, `nidhogg_status`
+`nidhogg_ingest`, `nidhogg_scan`, `nidhogg_status` — document ingestion over `intake/`, appending provenance blocks to matched shards. `ingest` and `scan` ask for approval.
 
 ### Evolution (1)
 
-`nova_evolve`
+`nova_evolve` — self-improvement cycle. Verifies tests and auto-commits passing changes, so it asks for approval.
 
 ### Facts (2)
 
@@ -97,6 +98,46 @@ Principle Library (reasoning methodology)
 ### Code index (1)
 
 `nova_code_search` — semantic search over `mcp/**/*.py`, AST-chunked at function/class granularity. Use instead of Grep when you know *what* you want but not the exact file or symbol.
+
+---
+
+## Calling Convention
+
+Every tool takes a single `params` object. Each is published with a human-readable
+`title` and MCP annotations derived from its capability tag:
+
+- `readOnlyHint` — safe reads. 22 of the 41 tools.
+- `destructiveHint` — cannot be undone. Exactly the seven tools that ask for
+  approval, below.
+- `openWorldHint` — talks to a third-party API.
+
+### Approval
+
+Seven tools stop and ask the operator before running, through the MCP client:
+
+`nova_shard_archive` · `nova_shard_forget` · `nova_shard_consolidate` ·
+`nidhogg_ingest` · `nidhogg_scan` · `nova_evolve` · `nova_forgemaster_sprint`
+
+The question is asked before the tool body runs, so a decline means nothing
+happened. Declining is a normal outcome, not an error to route around — do not
+retry a declined call without saying what changed. A client that does not support
+elicitation cannot approve these, and they will be refused.
+
+Note `nova_graph_relate` is *not* in this set. It is audit-logged but does not
+prompt, because it fires on ordinary corroboration.
+
+### Failure
+
+A failed call sets `isError` on the wire, and the payload always carries a
+`status`:
+
+- `"rejected"` — the tool refused for a known reason. Carries a machine-readable
+  `code` (`shard_not_found`, `permission_denied`, `gate_denied`, `quarantined`,
+  `invalid_input`, `duplicate`, …), a `retryable` flag, a `hint` naming the next
+  useful action, and often a `target`. Read the `code`; do not parse the message.
+- `"error"` — something unexpected broke.
+
+`retryable: false` means re-issuing the identical call will fail identically.
 
 ---
 
@@ -134,12 +175,27 @@ Principle Library (reasoning methodology)
 
 Every shard has a `confidence` score between 0.1 and 1.0.
 
-**Decay:** Shards not accessed in 7+ days lose confidence each cycle:
-```
-new_confidence = MAX(0.1, confidence * 0.95)
-```
+**Decay:** Shards not accessed for `NOVA_DECAY_DAYS` (default 7) lose confidence
+each cycle. The rate depends on the shard's `intent`, so a decision does not
+fade as fast as a session note:
 
-**Boost:** Accessing a shard via `interact` adds +0.05 to confidence.
+| intent | rate per cycle | intent | rate per cycle |
+|---|---|---|---|
+| `session` | 0.10 | `project` | 0.02 |
+| `event` | 0.07 | `decision` | 0.015 |
+| `reflection` | 0.05 (default) | `architecture` | 0.015 |
+| `research` | 0.03 | | |
+
+**Decay on read:** reading is not a boost. A shard retrieved more than 5 times in
+7 days without gaining a new `corroborated_by` edge is *penalised* — frequent
+recall without corroboration is treated as a sign the shard is being leaned on
+rather than confirmed.
+
+**Raising confidence** has exactly two sanctioned paths:
+- `nova_graph_relate` with `relation_type="corroborated_by"` — another shard
+  independently supports this one
+- `nova_shard_validate` with a positive `confidence_delta` — an explicit
+  validation event, recorded in the shard's provenance chain
 
 **Effect on search:** `weighted_score = relevance_score * confidence`
 Stale shards sink in results without being deleted. They remain available at `include_low_confidence=True`.
@@ -168,11 +224,13 @@ If similarity > 0.85: suggestion returned in create/update response.
 Human decides whether to merge — NOVA suggests, you decide.
 
 ### Consolidation cycle
-`nova_shard_consolidate` runs everything at once:
-1. Decay all stale shards
-2. Compact all bloated shards
-3. Surface top 10 merge candidate pairs
-Run on startup, periodically, or when things feel cluttered.
+NÓTT runs decay, compaction and merge-candidate detection on its own — on session
+start, after a sprint, and when the shard count crosses a threshold. You rarely
+need to trigger it.
+
+`nova_shard_consolidate` forces a cycle. It returns immediately and NÓTT runs in
+the background; `dry_run=true` returns the last completed report without starting
+a new cycle. It is a destructive tool, so it asks for approval first.
 
 ---
 
@@ -186,6 +244,10 @@ Shards are entities. Relations between them form a navigable structure.
 - `contradicts` — shards are in tension, revisit both
 - `extends` — shard A builds on shard B
 - `references` — shard A cites or mentions shard B
+- `merged_from` — shard A was folded into meta-shard B
+- `supersedes` — shard A replaces shard B (requires a `reason`)
+- `corroborated_by` — shard B independently supports shard A. The only relation
+  that raises confidence
 
 **Auto-wired relations:**
 - `nova_shard_create` with `related_shards` list adds relations automatically
