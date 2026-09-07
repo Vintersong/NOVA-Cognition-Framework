@@ -151,96 +151,65 @@ NOVA-Whitepaper/
 
 ## NOVA MCP Tools (41 total)
 
-### Core shard ops (`nova_server.py`, 23)
+Generated from the registry and the handlers' own docstrings — do not edit by
+hand. Regenerate with:
 
-| Tool | Purpose |
-|---|---|
-| `nova_shard_interact` | Load shards into context — start every session with this |
-| `nova_shard_create` | Create new shard with guiding question |
-| `nova_shard_update` | Append conversation turn to existing shard |
-| `nova_shard_validate` | Record an epistemic validation event (source_type, validator, mechanism, confidence delta, supersession) on a shard's provenance record |
-| `nova_shard_search` | Search by keyword with confidence weighting |
-| `nova_shard_query_state` | Inspect computed shard state (confidence, tags, decay) without loading body |
-| `nova_obsidian_export` | Export shard set as Obsidian-compatible markdown vault |
-| `nova_shard_index` | Rebuild or inspect the shard index |
-| `nova_shard_summary` | Summarise shard contents |
-| `nova_shard_list` | List all shards sorted by confidence |
-| `nova_shard_get` | Read full shard content, no side effects |
-| `nova_shard_get_full` | Cold-path full-body fetch — returns summary + conversation body |
-| `nova_shard_merge` | Merge related shards into meta-shard |
-| `nova_shard_archive` | Soft-archive stale shards |
-| `nova_shard_forget` | Hard exclude with provenance log |
-| `nova_shard_consolidate` | Full maintenance: decay + compact + merge suggestions |
-| `nova_graph_query` | Query inter-shard knowledge graph |
-| `nova_graph_relate` | Add directed relation between shards |
-| `nova_session_flush` | Persist active sprint session to disk |
-| `nova_session_load` | Restore stored session to memory |
-| `nova_session_list` | List all stored session IDs |
-| `nova_forgemaster_sprint` | Full 4-turn sprint pipeline |
-| `nova_cache_prewarm` | Pre-warm Anthropic prompt cache with top-N shard context; returns the cached `system` string for subsequent calls |
+```bash
+python utilities/dump_tool_manifest.py --write-table CLAUDE.md
+```
 
-### Wiki (`wiki_tools.py`, 6)
+Handlers live in `shard_tools.py` (16), `graph_tools.py` (2), `session_tools.py`
+(3), `forgemaster_tools.py` (2), `wiki_tools.py` (6), `facts.py` (2),
+`nidhogg.py` (3), `evolve.py` (1), `Gemini/gemini_mcp.py` (2),
+`external_retrieval.py` (1), `calibrate.py` (1), `huginn_tools.py` (1),
+`code_index.py` (1). `nova_server.py` registers none of them; it is bootstrap
+and wiring only.
 
-| Tool | Purpose |
-|---|---|
-| `nova_wiki_schema` | Inspect wiki page schema |
-| `nova_wiki_ingest` | Ingest markdown/source into the wiki |
-| `nova_wiki_query` | Search across wiki pages |
-| `nova_wiki_get` | Read a single wiki page in full |
-| `nova_wiki_list` | List wiki pages |
-| `nova_wiki_lint` | Lint wiki content for schema compliance |
-
-### Nidhogg — repo scanner (`nidhogg.py`, 3)
-
-| Tool | Purpose |
-|---|---|
-| `nidhogg_ingest` | Pull repo contents into the scanner index |
-| `nidhogg_scan` | Scan for issues/patterns |
-| `nidhogg_status` | Report scanner state |
-
-### Evolution (`evolve.py`, 1)
-
-| Tool | Purpose |
-|---|---|
-| `nova_evolve` | Self-improvement loop over shards/prompts |
-
-### Facts (`facts.py`, 2)
-
-| Tool | Purpose |
-|---|---|
-| `nova_facts_search` | Search the SQLite-backed `.shard` facts corpus |
-| `nova_facts_rebuild` | Rebuild the facts index from shard sources |
-
-### Gemini (`Gemini/gemini_mcp.py`, 2)
-
-| Tool | Purpose |
-|---|---|
-| `gemini_execute_ticket` | Run an implementation ticket on Gemini Flash |
-| `gemini_load_file` | Load a file into the Gemini worker's context |
-
-### External retrieval (`external_retrieval.py`, 1)
-
-| Tool | Purpose |
-|---|---|
-| `nova_external_retrieval` | Fire Haiku + Sonnet/Opus deliberation over external sources; writes findings back as shards (reversible via archive/forget) |
-
-### Calibrate (`calibrate.py`, 1)
-
-| Tool | Purpose |
-|---|---|
-| `nova_calibrate_routing` | Analyse HUGINN consistency and Forgemaster sprint pass rates to suggest routing threshold adjustments |
-
-### HUGINN orchestration (`huginn_tools.py`, 1)
-
-| Tool | Purpose |
-|---|---|
-| `nova_huginn_candidates` | Keyword + confidence pre-filter over the shard index — returns a small candidate list ready to paste into a HUGINN agent prompt, no LLM required |
-
-### Code index (`code_index.py`, 1)
-
-| Tool | Purpose |
-|---|---|
-| `nova_code_search` | Semantic search over `mcp/**/*.py` — AST-chunked at function/class granularity, embedded locally, kept warm by a SESSION_START background refresh. Use instead of Grep when you know *what* you're looking for but not the exact file/symbol |
+<!-- BEGIN GENERATED TOOL TABLE -->
+| Tool | Title | Purpose |
+|---|---|---|
+| `gemini_execute_ticket` | Execute Ticket via Gemini | Send a structured ticket to Gemini Flash for code generation. |
+| `gemini_load_file` | Load File as Context | Load a file from disk to use as codebase context for ticket execution. _(read-only)_ |
+| `nidhogg_ingest` | Ingest Document (Nidhogg) | Ingest a single document into NOVA's shard graph. _(**asks for approval**)_ |
+| `nidhogg_scan` | Scan Intake Directory | Scan the intake/ directory and ingest all pending files. _(**asks for approval**)_ |
+| `nidhogg_status` | Nidhogg Status | Show the Nidhogg ingestion manifest — what files have been ingested, which shards they matched, and which were flagged as merge candidates. _(read-only)_ |
+| `nova_cache_prewarm` | Pre-warm Prompt Cache | Pre-warm the Anthropic prompt cache with a summary context built from the top-N highest-confidence shards. |
+| `nova_calibrate_routing` | Analyse Routing Thresholds | Analyse HUGINN retrieval logs and Forgemaster sprint logs to calibrate routing thresholds and model routing based on empirical performance data. _(read-only)_ |
+| `nova_code_search` | Search NOVA Source Code | Semantic search over NOVA's own mcp/ source code. _(read-only)_ |
+| `nova_evolve` | Run Self-Improvement Loop | Run one NOVA self-evolution cycle. _(**asks for approval**)_ |
+| `nova_external_retrieval` | External Retrieval Deliberation | External retrieval deliberation pipeline (v1.0). |
+| `nova_facts_rebuild` | Rebuild Facts Index | Re-scan FACTS_DIR and rebuild the SQLite index. |
+| `nova_facts_search` | Search Facts Corpus | Keyword search over the curated facts corpus (`.shard` files). _(read-only)_ |
+| `nova_forgemaster_sprint` | Run Forgemaster Sprint | Run a full Forgemaster sprint: orchestrator → planner → implementer → reviewer. _(**asks for approval**)_ |
+| `nova_graph_query` | Query Knowledge Graph | Query the inter-shard knowledge graph. _(read-only)_ |
+| `nova_graph_relate` | Relate Two Shards | Manually add a directed relation between two shards in the knowledge graph. |
+| `nova_huginn_candidates` | HUGINN Candidate Pre-filter | Pre-filter the shard index for a query and return a small candidate list ready to pass to a HUGINN agent prompt. _(read-only)_ |
+| `nova_obsidian_export` | Export Shards to Obsidian | Export all shards to an Obsidian vault as Markdown files with YAML frontmatter and [[wikilink]] edges derived from the knowledge graph. |
+| `nova_session_flush` | Flush Session to Disk | Persist an active session to disk and remove it from memory. |
+| `nova_session_list` | List Stored Sessions | List all session IDs currently persisted on disk. _(read-only)_ |
+| `nova_session_load` | Load Stored Session | Load a previously flushed session from disk into memory. |
+| `nova_shard_archive` | Archive Shard | Soft-archive a shard. _(**asks for approval**)_ |
+| `nova_shard_consolidate` | Run Maintenance Cycle | Trigger a full NÓTT maintenance cycle (fire-and-forget). _(**asks for approval**)_ |
+| `nova_shard_create` | Create Shard | Create a new shard. |
+| `nova_shard_forget` | Forget Shard | Hard soft-delete with provenance log. _(**asks for approval**)_ |
+| `nova_shard_get` | Read Shard | Read the full raw content of a shard from disk. _(read-only)_ |
+| `nova_shard_get_full` | Read Shard Body | Cold-path full-body fetch. _(read-only)_ |
+| `nova_shard_index` | Browse Shard Index | Browse shards using compact metadata rows without loading conversation bodies. _(read-only)_ |
+| `nova_shard_interact` | Load Shards into Context | Load shards into context for synthesis. _(read-only)_ |
+| `nova_shard_list` | List Shards (legacy dump) | Return a legacy full shard dump. _(read-only)_ |
+| `nova_shard_merge` | Merge Shards | Merge multiple shards into a meta-shard. |
+| `nova_shard_query_state` | Query Shard State Vector | Query the SQLite shard index by epistemic state vector. _(read-only)_ |
+| `nova_shard_search` | Search Shards | Search shards with confidence weighting. _(read-only)_ |
+| `nova_shard_summary` | Browse Shards with Synopsis | Browse shards with compact metadata rows plus a short synopsis per shard. _(read-only)_ |
+| `nova_shard_update` | Append Turn to Shard | Append to a shard. |
+| `nova_shard_validate` | Record Validation Event | Record an epistemic validation event on a shard. |
+| `nova_wiki_get` | Read Wiki Page | Read a specific wiki page in full. _(read-only)_ |
+| `nova_wiki_ingest` | Ingest Document into Wiki | Ingest a source document into the wiki. |
+| `nova_wiki_lint` | Lint Wiki | Health check the wiki. |
+| `nova_wiki_list` | List Wiki Pages | List all wiki pages with one-line summaries. _(read-only)_ |
+| `nova_wiki_query` | Search Wiki | Semantic search over wiki pages using cosine similarity. _(read-only)_ |
+| `nova_wiki_schema` | View or Edit Wiki Taxonomy | View or modify the wiki topic taxonomy. |
+<!-- END GENERATED TOOL TABLE -->
 
 ---
 
@@ -276,7 +245,9 @@ For all other domains see `forgemaster/SKILL_LIBRARY.md` (24 categories, 324 ski
 4. Dispatch lanes → forgemaster-parallel-lanes
 5. Review results → forgemaster-code-review
 6. nova_shard_update(shard_id=...) — write decisions made
-7. Every 3 sprints: nova_shard_consolidate()
+7. Maintenance runs itself — NÓTT fires on session start, after a sprint, and
+   on a shard-count threshold. Call nova_shard_consolidate() only to force a
+   cycle; it asks for approval.
 ```
 
 ---
@@ -362,7 +333,9 @@ Next session starts with `nova_shard_interact(message="[project name] current st
 ## What Not To Do
 
 - Do not edit shard JSON files by hand
-- Do not skip `nova_shard_consolidate` — run every 3 sprints
+- Do not call `nova_shard_consolidate` on a schedule — NÓTT already runs decay,
+  compaction and merge detection automatically, and the tool asks for approval.
+  Use `dry_run=true` to read the last report without starting a cycle
 - Do not start implementation without loading NOVA context first
 - Do not end a session without the handoff write
 - Do not commit the shards directory — personal data

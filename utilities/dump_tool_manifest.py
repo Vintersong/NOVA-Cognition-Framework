@@ -26,7 +26,22 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = REPO_ROOT / "tests" / "golden" / "tool_manifest.json"
 
+sys.path.insert(0, str(REPO_ROOT / "utilities"))
+from tool_table import load_manifest, render_tool_table, splice_table  # noqa: E402
+
 sys.path.insert(0, str(REPO_ROOT / "mcp"))
+
+
+def _summarise(description: str) -> str:
+    """First sentence of a docstring, with wrapped lines rejoined.
+
+    Taking the first *line* truncated mid-sentence on any docstring that wraps,
+    which is most of them.
+    """
+    paragraph = (description or "").strip().split("\n\n")[0]
+    flowed = " ".join(line.strip() for line in paragraph.splitlines() if line.strip())
+    sentence, sep, _ = flowed.partition(". ")
+    return (sentence + sep).strip() if sep else flowed
 
 
 def _schema_shape(schema: dict | None) -> dict | None:
@@ -67,7 +82,7 @@ async def build_manifest() -> dict:
         tool_rows.append({
             "name": t["name"],
             "title": t.get("title"),
-            "description_first_line": (t.get("description") or "").strip().split("\n")[0],
+            "summary": _summarise(t.get("description") or ""),
             "annotations": None if ann is None else {k: ann.get(k) for k in HINT_KEYS},
             "input_schema": _schema_shape(t.get("inputSchema")),
             "output_schema": _schema_shape(t.get("outputSchema")),
@@ -91,7 +106,22 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--write", action="store_true",
                     help=f"write the manifest to {MANIFEST_PATH.relative_to(REPO_ROOT)}")
+    ap.add_argument("--table", action="store_true",
+                    help="print the markdown tool table (from the committed manifest)")
+    ap.add_argument("--write-table", metavar="FILE", nargs="+",
+                    help="splice the tool table into FILE(s) between the generated-table markers")
     args = ap.parse_args()
+
+    # The table modes read the committed manifest, so they do not boot the server.
+    if args.table or args.write_table:
+        table = render_tool_table(load_manifest())
+        if args.table:
+            print(table)
+        for name in args.write_table or []:
+            path = REPO_ROOT / name
+            changed = splice_table(path, table)
+            print(f"{'updated' if changed else 'unchanged'} {path.relative_to(REPO_ROOT)}")
+        return 0
 
     manifest = asyncio.run(build_manifest())
     text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"

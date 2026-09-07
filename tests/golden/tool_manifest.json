@@ -37,7 +37,6 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description_first_line": "Send a structured ticket to Gemini Flash for code generation.",
       "input_schema": {
         "properties": [
           "params"
@@ -55,6 +54,7 @@
           "result"
         ]
       },
+      "summary": "Send a structured ticket to Gemini Flash for code generation.",
       "title": "Execute Ticket via Gemini"
     },
     {
@@ -64,7 +64,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Load a file from disk to use as codebase context for ticket execution.",
       "input_schema": {
         "properties": [
           "params"
@@ -82,6 +81,7 @@
           "result"
         ]
       },
+      "summary": "Load a file from disk to use as codebase context for ticket execution.",
       "title": "Load File as Context"
     },
     {
@@ -91,7 +91,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Ingest a single document into NOVA's shard graph.",
       "input_schema": {
         "properties": [
           "params"
@@ -109,6 +108,7 @@
           "result"
         ]
       },
+      "summary": "Ingest a single document into NOVA's shard graph.",
       "title": "Ingest Document (Nidhogg)"
     },
     {
@@ -118,7 +118,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Scan the intake/ directory and ingest all pending files.",
       "input_schema": {
         "properties": [
           "params"
@@ -136,6 +135,7 @@
           "result"
         ]
       },
+      "summary": "Scan the intake/ directory and ingest all pending files.",
       "title": "Scan Intake Directory"
     },
     {
@@ -145,7 +145,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Show the Nidhogg ingestion manifest \u2014 what files have been ingested,",
       "input_schema": {
         "properties": [
           "params"
@@ -163,6 +162,7 @@
           "result"
         ]
       },
+      "summary": "Show the Nidhogg ingestion manifest \u2014 what files have been ingested, which shards they matched, and which were flagged as merge candidates.",
       "title": "Nidhogg Status"
     },
     {
@@ -172,7 +172,6 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description_first_line": "Pre-warm the Anthropic prompt cache with a summary context built from the",
       "input_schema": {
         "properties": [
           "params"
@@ -190,6 +189,7 @@
           "result"
         ]
       },
+      "summary": "Pre-warm the Anthropic prompt cache with a summary context built from the top-N highest-confidence shards.",
       "title": "Pre-warm Prompt Cache"
     },
     {
@@ -199,7 +199,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Analyse HUGINN retrieval logs and Forgemaster sprint logs to calibrate",
       "input_schema": {
         "properties": [
           "params"
@@ -217,6 +216,7 @@
           "result"
         ]
       },
+      "summary": "Analyse HUGINN retrieval logs and Forgemaster sprint logs to calibrate routing thresholds and model routing based on empirical performance data.",
       "title": "Analyse Routing Thresholds"
     },
     {
@@ -226,7 +226,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Semantic search over NOVA's own mcp/ source code.",
       "input_schema": {
         "properties": [
           "params"
@@ -244,6 +243,7 @@
           "result"
         ]
       },
+      "summary": "Semantic search over NOVA's own mcp/ source code.",
       "title": "Search NOVA Source Code"
     },
     {
@@ -253,7 +253,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Run one NOVA self-evolution cycle.",
       "input_schema": {
         "properties": [
           "params"
@@ -271,6 +270,7 @@
           "result"
         ]
       },
+      "summary": "Run one NOVA self-evolution cycle.",
       "title": "Run Self-Improvement Loop"
     },
     {
@@ -280,7 +280,6 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description_first_line": "External retrieval deliberation pipeline (v1.0).",
       "input_schema": {
         "properties": [
           "params"
@@ -298,6 +297,7 @@
           "result"
         ]
       },
+      "summary": "External retrieval deliberation pipeline (v1.0).",
       "title": "External Retrieval Deliberation"
     },
     {
@@ -307,7 +307,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Re-scan FACTS_DIR and rebuild the SQLite index. Idempotent.",
       "input_schema": {
         "properties": [
           "params"
@@ -325,6 +324,7 @@
           "result"
         ]
       },
+      "summary": "Re-scan FACTS_DIR and rebuild the SQLite index.",
       "title": "Rebuild Facts Index"
     },
     {
@@ -334,7 +334,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Keyword search over the curated facts corpus (`.shard` files).",
       "input_schema": {
         "properties": [
           "params"
@@ -352,6 +351,7 @@
           "result"
         ]
       },
+      "summary": "Keyword search over the curated facts corpus (`.shard` files).",
       "title": "Search Facts Corpus"
     },
     {
@@ -361,7 +361,6 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description_first_line": "Run a full Forgemaster sprint: orchestrator \u2192 planner \u2192 implementer \u2192 reviewer.",
       "input_schema": {
         "properties": [
           "params"
@@ -379,6 +378,7 @@
           "result"
         ]
       },
+      "summary": "Run a full Forgemaster sprint: orchestrator \u2192 planner \u2192 implementer \u2192 reviewer.",
       "title": "Run Forgemaster Sprint"
     },
     {
@@ -388,7 +388,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Query the inter-shard knowledge graph.",
       "input_schema": {
         "properties": [
           "params"
@@ -406,6 +405,7 @@
           "result"
         ]
       },
+      "summary": "Query the inter-shard knowledge graph.",
       "title": "Query Knowledge Graph"
     },
     {
@@ -415,7 +415,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Manually add a directed relation between two shards in the knowledge graph.",
       "input_schema": {
         "properties": [
           "params"
@@ -433,6 +432,7 @@
           "result"
         ]
       },
+      "summary": "Manually add a directed relation between two shards in the knowledge graph.",
       "title": "Relate Two Shards"
     },
     {
@@ -442,7 +442,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Pre-filter the shard index for a query and return a small candidate list",
       "input_schema": {
         "properties": [
           "params"
@@ -460,6 +459,7 @@
           "result"
         ]
       },
+      "summary": "Pre-filter the shard index for a query and return a small candidate list ready to pass to a HUGINN agent prompt.",
       "title": "HUGINN Candidate Pre-filter"
     },
     {
@@ -469,7 +469,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Export all shards to an Obsidian vault as Markdown files with YAML frontmatter",
       "input_schema": {
         "properties": [
           "params"
@@ -487,6 +486,7 @@
           "result"
         ]
       },
+      "summary": "Export all shards to an Obsidian vault as Markdown files with YAML frontmatter and [[wikilink]] edges derived from the knowledge graph.",
       "title": "Export Shards to Obsidian"
     },
     {
@@ -496,7 +496,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Persist an active session to disk and remove it from memory. Returns JSON confirmation with token totals.",
       "input_schema": {
         "properties": [
           "params"
@@ -514,6 +513,7 @@
           "result"
         ]
       },
+      "summary": "Persist an active session to disk and remove it from memory.",
       "title": "Flush Session to Disk"
     },
     {
@@ -523,7 +523,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "List all session IDs currently persisted on disk.",
       "input_schema": {
         "properties": [
           "params"
@@ -541,6 +540,7 @@
           "result"
         ]
       },
+      "summary": "List all session IDs currently persisted on disk.",
       "title": "List Stored Sessions"
     },
     {
@@ -550,7 +550,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Load a previously flushed session from disk into memory. Returns JSON with session metadata and message count.",
       "input_schema": {
         "properties": [
           "params"
@@ -568,6 +567,7 @@
           "result"
         ]
       },
+      "summary": "Load a previously flushed session from disk into memory.",
       "title": "Load Stored Session"
     },
     {
@@ -577,7 +577,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion.",
       "input_schema": {
         "properties": [
           "params"
@@ -595,6 +594,7 @@
           "result"
         ]
       },
+      "summary": "Soft-archive a shard.",
       "title": "Archive Shard"
     },
     {
@@ -604,7 +604,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Trigger a full N\u00d3TT maintenance cycle (fire-and-forget).",
       "input_schema": {
         "properties": [
           "params"
@@ -622,6 +621,7 @@
           "result"
         ]
       },
+      "summary": "Trigger a full N\u00d3TT maintenance cycle (fire-and-forget).",
       "title": "Run Maintenance Cycle"
     },
     {
@@ -631,7 +631,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Create a new shard. Triggers post-write enrichment hook and registers in knowledge graph.",
       "input_schema": {
         "properties": [
           "params"
@@ -649,6 +648,7 @@
           "result"
         ]
       },
+      "summary": "Create a new shard.",
       "title": "Create Shard"
     },
     {
@@ -658,7 +658,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Hard soft-delete with provenance log.",
       "input_schema": {
         "properties": [
           "params"
@@ -676,6 +675,7 @@
           "result"
         ]
       },
+      "summary": "Hard soft-delete with provenance log.",
       "title": "Forget Shard"
     },
     {
@@ -685,7 +685,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Read the full raw content of a shard from disk. Read-only, no side effects.",
       "input_schema": {
         "properties": [
           "params"
@@ -703,6 +702,7 @@
           "result"
         ]
       },
+      "summary": "Read the full raw content of a shard from disk.",
       "title": "Read Shard"
     },
     {
@@ -712,7 +712,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Cold-path full-body fetch. Returns conversation_history/turns payload without side effects. Use nova_shard_get for raw metadata.",
       "input_schema": {
         "properties": [
           "params"
@@ -730,6 +729,7 @@
           "result"
         ]
       },
+      "summary": "Cold-path full-body fetch.",
       "title": "Read Shard Body"
     },
     {
@@ -739,7 +739,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Browse shards using compact metadata rows without loading conversation bodies.",
       "input_schema": {
         "properties": [
           "params"
@@ -757,6 +756,7 @@
           "result"
         ]
       },
+      "summary": "Browse shards using compact metadata rows without loading conversation bodies.",
       "title": "Browse Shard Index"
     },
     {
@@ -766,7 +766,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Load shards into context for synthesis. Auto-selects relevant shards if none specified. Confidence-weighted.",
       "input_schema": {
         "properties": [
           "params"
@@ -784,6 +783,7 @@
           "result"
         ]
       },
+      "summary": "Load shards into context for synthesis.",
       "title": "Load Shards into Context"
     },
     {
@@ -793,7 +793,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Return a legacy full shard dump. Prefer nova_shard_index or nova_shard_summary for browsing.",
       "input_schema": {
         "properties": [
           "params"
@@ -811,6 +810,7 @@
           "result"
         ]
       },
+      "summary": "Return a legacy full shard dump.",
       "title": "List Shards (legacy dump)"
     },
     {
@@ -820,7 +820,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Merge multiple shards into a meta-shard. Updates knowledge graph relations.",
       "input_schema": {
         "properties": [
           "params"
@@ -838,6 +837,7 @@
           "result"
         ]
       },
+      "summary": "Merge multiple shards into a meta-shard.",
       "title": "Merge Shards"
     },
     {
@@ -847,7 +847,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Query the SQLite shard index by epistemic state vector.",
       "input_schema": {
         "properties": [
           "params"
@@ -865,6 +864,7 @@
           "result"
         ]
       },
+      "summary": "Query the SQLite shard index by epistemic state vector.",
       "title": "Query Shard State Vector"
     },
     {
@@ -874,7 +874,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Search shards with confidence weighting. High-confidence shards rank higher for same relevance score.",
       "input_schema": {
         "properties": [
           "params"
@@ -892,6 +891,7 @@
           "result"
         ]
       },
+      "summary": "Search shards with confidence weighting.",
       "title": "Search Shards"
     },
     {
@@ -901,7 +901,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Browse shards with compact metadata rows plus a short synopsis per shard.",
       "input_schema": {
         "properties": [
           "params"
@@ -919,6 +918,7 @@
           "result"
         ]
       },
+      "summary": "Browse shards with compact metadata rows plus a short synopsis per shard.",
       "title": "Browse Shards with Synopsis"
     },
     {
@@ -928,7 +928,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Append to a shard. Triggers post-write enrichment hook and auto-compaction if threshold exceeded.",
       "input_schema": {
         "properties": [
           "params"
@@ -946,6 +945,7 @@
           "result"
         ]
       },
+      "summary": "Append to a shard.",
       "title": "Append Turn to Shard"
     },
     {
@@ -955,7 +955,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Record an epistemic validation event on a shard.",
       "input_schema": {
         "properties": [
           "params"
@@ -973,6 +972,7 @@
           "result"
         ]
       },
+      "summary": "Record an epistemic validation event on a shard.",
       "title": "Record Validation Event"
     },
     {
@@ -982,7 +982,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Read a specific wiki page in full.",
       "input_schema": {
         "properties": [
           "params"
@@ -1000,6 +999,7 @@
           "result"
         ]
       },
+      "summary": "Read a specific wiki page in full.",
       "title": "Read Wiki Page"
     },
     {
@@ -1009,7 +1009,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Ingest a source document into the wiki.",
       "input_schema": {
         "properties": [
           "params"
@@ -1027,6 +1026,7 @@
           "result"
         ]
       },
+      "summary": "Ingest a source document into the wiki.",
       "title": "Ingest Document into Wiki"
     },
     {
@@ -1036,7 +1036,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "Health check the wiki.",
       "input_schema": {
         "properties": [
           "params"
@@ -1054,6 +1053,7 @@
           "result"
         ]
       },
+      "summary": "Health check the wiki.",
       "title": "Lint Wiki"
     },
     {
@@ -1063,7 +1063,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "List all wiki pages with one-line summaries.",
       "input_schema": {
         "properties": [
           "params"
@@ -1081,6 +1080,7 @@
           "result"
         ]
       },
+      "summary": "List all wiki pages with one-line summaries.",
       "title": "List Wiki Pages"
     },
     {
@@ -1090,7 +1090,6 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description_first_line": "Semantic search over wiki pages using cosine similarity.",
       "input_schema": {
         "properties": [
           "params"
@@ -1108,6 +1107,7 @@
           "result"
         ]
       },
+      "summary": "Semantic search over wiki pages using cosine similarity.",
       "title": "Search Wiki"
     },
     {
@@ -1117,7 +1117,6 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description_first_line": "View or modify the wiki topic taxonomy.",
       "input_schema": {
         "properties": [
           "params"
@@ -1135,6 +1134,7 @@
           "result"
         ]
       },
+      "summary": "View or modify the wiki topic taxonomy.",
       "title": "View or Edit Wiki Taxonomy"
     }
   ]

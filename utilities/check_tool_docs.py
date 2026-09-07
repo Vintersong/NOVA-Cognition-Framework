@@ -47,6 +47,31 @@ def _assert_tool_mentions(path: Path, tools: list[str]) -> list[str]:
     return [f"{path}: missing tool mentions: {', '.join(missing)}"]
 
 
+def _assert_generated_table_current(path: Path) -> list[str]:
+    """The generated tool table in *path* must match what the manifest renders.
+
+    CLAUDE.md's table used to be hand-maintained and about a dozen rows had
+    drifted into describing something the tool does not do. It is now generated;
+    this keeps it that way.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "utilities"))
+    from tool_table import BEGIN_MARKER, END_MARKER, load_manifest, render_tool_table
+
+    text = path.read_text(encoding="utf-8")
+    if BEGIN_MARKER not in text or END_MARKER not in text:
+        return [f"{path}: generated-table markers are missing"]
+
+    current = text.split(BEGIN_MARKER, 1)[1].split(END_MARKER, 1)[0].strip()
+    expected = render_tool_table(load_manifest()).strip()
+    if current != expected:
+        return [
+            f"{path}: generated tool table is stale — regenerate with\n"
+            f"     python utilities/dump_tool_manifest.py --write-table "
+            f"{path.relative_to(REPO_ROOT)}"
+        ]
+    return []
+
+
 def main() -> int:
     tools = _extract_tools()
     expected_count = len(tools)
@@ -56,6 +81,7 @@ def main() -> int:
         errors.extend(_assert_count_phrase(path, expected_count))
     for path in TOOL_INVENTORIES:
         errors.extend(_assert_tool_mentions(path, tools))
+    errors.extend(_assert_generated_table_current(CLAUDE))
 
     if errors:
         print("Tool docs consistency check failed:")
