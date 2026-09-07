@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from forgemaster_runtime import ForgemasterRuntime
 from gate_helpers import gate_check, log_executed, permission_error
+from approval import Approval, was_approved
 from schemas import CachePrewarmInput, ForgemasterSprintInput
 from tool_registry import nova_tool
 from usage import log_operation
@@ -25,7 +26,10 @@ if TYPE_CHECKING:
 def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
 
     @nova_tool(mcp, name="nova_forgemaster_sprint")
-    async def nova_forgemaster_sprint(params: ForgemasterSprintInput) -> str:
+    async def nova_forgemaster_sprint(
+        params: ForgemasterSprintInput,
+        approval: Approval("nova_forgemaster_sprint"),
+    ) -> str:
         """
         Run a full Forgemaster sprint: orchestrator → planner → implementer → reviewer.
         Loads optional shards into context, executes the 4-turn pipeline, flushes the
@@ -36,7 +40,10 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
         """
         if ctx.permission_context.blocks("nova_forgemaster_sprint"):
             return permission_error("nova_forgemaster_sprint")
-        gate_err, request_id = await gate_check(ctx, "nova_forgemaster_sprint", params.sprint_id)
+        gate_err, request_id = await gate_check(
+            ctx, "nova_forgemaster_sprint", params.sprint_id,
+            approval=was_approved(approval),
+        )
         if gate_err:
             return gate_err
 

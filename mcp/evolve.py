@@ -43,6 +43,7 @@ from typing import Any, TYPE_CHECKING
 from filelock import FileLock
 from pydantic import BaseModel, Field, ConfigDict
 
+from approval import Approval, was_approved
 from atomic_io import atomic_write_json
 from config import SHARD_DIR, USAGE_LOG_FILE, MERGE_SIMILARITY_THRESHOLD
 from gate_helpers import gate_check, log_executed
@@ -768,7 +769,10 @@ def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
     """
 
     @nova_tool(mcp, name="nova_evolve")
-    async def nova_evolve(params: NovaEvolveInput) -> str:
+    async def nova_evolve(
+        params: NovaEvolveInput,
+        approval: Approval("nova_evolve"),
+    ) -> str:
         """
         Run one NOVA self-evolution cycle.
 
@@ -790,7 +794,10 @@ def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
         # irreversible capability before running and record the real outcome.
         request_id = None
         if not params.dry_run:
-            gate_err, request_id = await gate_check(ctx, "nova_evolve", "evolve_auto_commit")
+            gate_err, request_id = await gate_check(
+                ctx, "nova_evolve", "evolve_auto_commit",
+                approval=was_approved(approval),
+            )
             if gate_err:
                 return gate_err
 

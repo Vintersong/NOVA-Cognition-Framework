@@ -175,26 +175,39 @@ _REGISTRY: dict[str, ToolSpec] = dict([
 # request_id" (see nova_graph_relate), not a claim that the tool destroys
 # anything. Capability class alone decides destructiveness.
 
+#: Capability classes whose tools destroy or irreversibly alter state.
+#:
+#: This single set drives two things that must never disagree: the
+#: ``destructiveHint`` a client reads to decide what it may auto-approve, and
+#: whether ``capability_gate`` asks the operator before letting the call run.
+#: Deriving both from here means a client can never be told a tool is safe while
+#: the gate treats it as dangerous, or the reverse.
+DESTRUCTIVE_CAPABILITIES: frozenset[str] = frozenset({
+    "fs.write.irrev",  # shard archive/forget/consolidate, nidhogg ingest/scan
+    "memory.write",    # nova_evolve rewrites NOVA's own prompts and shards
+    "spawn.proc",      # nova_forgemaster_sprint egresses and writes output
+})
+
+# Hints that follow from the capability class alone. destructiveHint is absent
+# on purpose — it is computed from DESTRUCTIVE_CAPABILITIES above so the two
+# cannot drift apart.
 _ANNOTATIONS_BY_CAPABILITY: dict[str, dict[str, bool]] = {
     # read-only, closed world
-    "fs.read":        {"readOnlyHint": True,  "destructiveHint": False,
-                       "idempotentHint": True,  "openWorldHint": False},
-    # additive/undoable local writes (archive, forget and merge are the
-    # irreversible ones and carry fs.write.irrev instead)
-    "fs.write.rev":   {"readOnlyHint": False, "destructiveHint": False,
-                       "idempotentHint": False, "openWorldHint": False},
-    "fs.write.irrev": {"readOnlyHint": False, "destructiveHint": True,
-                       "idempotentHint": False, "openWorldHint": False},
-    # nova_evolve rewrites NOVA's own prompts/shards
-    "memory.write":   {"readOnlyHint": False, "destructiveHint": True,
-                       "idempotentHint": False, "openWorldHint": False},
+    "fs.read":        {"readOnlyHint": True,  "idempotentHint": True,
+                       "openWorldHint": False},
+    # additive/undoable local writes
+    "fs.write.rev":   {"readOnlyHint": False, "idempotentHint": False,
+                       "openWorldHint": False},
+    "fs.write.irrev": {"readOnlyHint": False, "idempotentHint": False,
+                       "openWorldHint": False},
+    "memory.write":   {"readOnlyHint": False, "idempotentHint": False,
+                       "openWorldHint": False},
     # talks to a third-party API: open world, but sending a request is not
     # itself a destructive update to the local environment
-    "net.egress":     {"readOnlyHint": False, "destructiveHint": False,
-                       "idempotentHint": False, "openWorldHint": True},
-    # spawns a sprint that both egresses and writes generated output
-    "spawn.proc":     {"readOnlyHint": False, "destructiveHint": True,
-                       "idempotentHint": False, "openWorldHint": True},
+    "net.egress":     {"readOnlyHint": False, "idempotentHint": False,
+                       "openWorldHint": True},
+    "spawn.proc":     {"readOnlyHint": False, "idempotentHint": False,
+                       "openWorldHint": True},
 }
 
 # A capability with no annotation mapping would silently publish nothing.
@@ -204,10 +217,38 @@ if _unmapped:
         f"capabilities missing from _ANNOTATIONS_BY_CAPABILITY: {sorted(_unmapped)}"
     )
 
+_unknown_destructive = DESTRUCTIVE_CAPABILITIES - _KNOWN_CAPABILITIES
+if _unknown_destructive:
+    raise RuntimeError(
+        f"DESTRUCTIVE_CAPABILITIES names unknown capabilities: {sorted(_unknown_destructive)}"
+    )
+
 
 def annotations_for(name: str) -> dict[str, bool]:
     """MCP tool annotations for *name*, derived from its capability tag."""
-    return dict(_ANNOTATIONS_BY_CAPABILITY[_REGISTRY[name].capability])
+    capability = _REGISTRY[name].capability
+    annotations = dict(_ANNOTATIONS_BY_CAPABILITY[capability])
+    annotations["destructiveHint"] = capability in DESTRUCTIVE_CAPABILITIES
+    return annotations
+
+
+def requires_approval(name: str) -> bool:
+    """True if *name* must be confirmed by a human before it runs.
+
+    Exactly the tools published with ``destructiveHint`` — see
+    ``DESTRUCTIVE_CAPABILITIES``. Notably excludes ``nova_graph_relate``, whose
+    ``irreversible`` flag exists to route it through the audit log rather than to
+    claim it destroys anything.
+    """
+    return _REGISTRY[name].capability in DESTRUCTIVE_CAPABILITIES
+
+
+def destructive_tools() -> frozenset[str]:
+    """Names of every tool that requires human approval."""
+    return frozenset(
+        name for name, spec in _REGISTRY.items()
+        if spec.capability in DESTRUCTIVE_CAPABILITIES
+    )
 
 
 # ── Public accessors ─────────────────────────────────────────────────────────

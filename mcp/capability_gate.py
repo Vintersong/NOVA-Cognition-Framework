@@ -4,28 +4,50 @@ capability_gate.py — HITL gate keyed to skill verification level.
 Maps each NOVA MCP tool to a (capability_tag, is_irreversible) pair and
 enforces the gate policy from the NOVA Skill Verification Layer design:
 
-  unverified + irreversible call           → HITL always
-  declared/tested + call in @@capabilities → log and proceed (no per-call HITL)
-  declared/tested + call outside @@cap     → HITL
-  any + call not in @@capabilities         → CapabilityDenied (hard block)
+  call not in @@capabilities               → CapabilityDenied (hard block)
+  reversible call                          → proceed (no audit record)
+  destructive capability, any verification → HITL always
+  unverified + irreversible                → HITL always
+  declared/tested + irreversible           → log the request and proceed
+
+"Destructive" is tool_registry.DESTRUCTIVE_CAPABILITIES — the same set that
+drives the destructiveHint published to clients, so the hint a caller sees and
+the prompt the operator gets can never diverge. Note check_capability_tag()
+(the un-named filesystem-write path) keeps the unverified-only rule: the tool
+that spawned it is already gated at entry, and gating each write as well would
+stall every sprint.
 
 No bypass switch: there is no environment variable, API call, or operator
 override that disables the gate, the audit log, or the capability check.
 
+How the operator is asked:
+
+  MCP tool calls   — through elicitation, by the resolver in approval.py, which
+                     runs before the handler body. MCP 2026-07-28 forbids
+                     server-initiated requests, so the gate cannot ask from
+                     where it sits; the handler passes the answer in as
+                     ``approval=``.
+  everything else  — through a broker below. This covers check_capability_tag()
+                     (forgemaster's per-file writes, the Gemini worker) and bare
+                     CLI use, where there is no MCP client to ask.
+
 HITL broker modes (NOVA_HITL_BROKER env var):
-  interactive (default) — terminal prompt, timeout → deny (dev only)
+  interactive (default) — terminal prompt, timeout → deny. Needs a controlling
+                          terminal, so it denies under any MCP client.
   policy                — always-deny placeholder until policy file is wired
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import uuid
 from typing import Optional
 
 from skill_manifest import SkillManifest, VerificationLevel
+from tool_registry import DESTRUCTIVE_CAPABILITIES
 from tool_registry import capability_map as _registry_capability_map
 
 logger = logging.getLogger(__name__)
@@ -79,10 +101,14 @@ class _InteractiveBroker:
     def __init__(self, timeout_s: int = 30) -> None:
         self._timeout_s = timeout_s
 
-    def request(self, tool_name: str, skill_id: str, verification: str) -> bool:
+    def request(
+        self, tool_name: str, skill_id: str, verification: str,
+        target: Optional[str] = None,
+    ) -> bool:
         prompt = (
-            f"\n[HITL] Irreversible call intercepted\n"
+            f"\n[HITL] Destructive call intercepted\n"
             f"  Tool:         {tool_name}\n"
+            f"  Target:       {target or '—'}\n"
             f"  Skill:        {skill_id}\n"
             f"  Verification: {verification}\n"
             f"  Approve? [y/N] (timeout {self._timeout_s}s → deny): "
@@ -161,7 +187,10 @@ class _InteractiveBroker:
 class _PolicyBroker:
     """Always-deny placeholder for policy-file mode (v2 concern)."""
 
-    def request(self, tool_name: str, skill_id: str, verification: str) -> bool:
+    def request(
+        self, tool_name: str, skill_id: str, verification: str,
+        target: Optional[str] = None,
+    ) -> bool:
         logger.warning(
             "capability_gate: policy broker has no policy file configured "
             "— denying %s for skill %s",
@@ -172,8 +201,20 @@ class _PolicyBroker:
 
 
 def _make_broker(mode: str, timeout_s: int) -> _InteractiveBroker | _PolicyBroker:
+    """Fallback broker for callers that cannot ask the MCP client.
+
+    On the MCP tool path the operator is asked through elicitation, by the
+    resolver in ``approval.py``, and the answer is handed to the gate — these
+    brokers are never consulted there. They remain for the synchronous
+    ``check_capability_tag`` callers (forgemaster's per-file writes, the Gemini
+    worker) and for bare-CLI use, where there is no client to ask.
+    """
     if mode == "policy":
         return _PolicyBroker()
+    if mode not in ("interactive", "auto"):
+        logger.warning(
+            "capability_gate: unknown NOVA_HITL_BROKER=%r — using 'interactive'", mode,
+        )
     return _InteractiveBroker(timeout_s=timeout_s)
 
 
@@ -216,6 +257,37 @@ class CapabilityGate:
                                    audit record reflects the real outcome.
         Returns None             — reversible call; no executed-event needed.
         """
+        request_id, action, cap_tag = self._authorize(
+            tool_name, active_skill, session_id
+        )
+        if action == "proceed":
+            return None
+        if action == "hitl":
+            self._run_hitl(tool_name, active_skill, session_id, request_id, target)
+            return request_id
+        self._log_manifest_approval(
+            tool_name, active_skill, session_id, request_id, cap_tag, target
+        )
+        return request_id
+
+    # ── Shared policy ────────────────────────────────────────────────────
+
+    def _authorize(
+        self,
+        tool_name: str,
+        active_skill: SkillManifest,
+        session_id: str,
+    ) -> tuple[str, str, str]:
+        """Decide what happens to a call, without performing it.
+
+        Returns ``(request_id, action, cap_tag)`` where *action* is one of
+        ``"proceed"`` (reversible — nothing to audit), ``"hitl"`` (a human must
+        approve) or ``"manifest"`` (the skill's verification level vouches for
+        it). Raises ``CapabilityDenied`` for an undeclared capability.
+
+        Both ``check`` and ``async_check`` route through here so the policy is
+        stated once; only the way HITL is carried out differs between them.
+        """
         cap_tag, is_irreversible = resolve_capability(tool_name)
         request_id = str(uuid.uuid4())
 
@@ -243,17 +315,36 @@ class CapabilityGate:
 
         # 2. Reversible calls always proceed without HITL.
         if not is_irreversible:
-            return None
+            return request_id, "proceed", cap_tag
 
-        # 3. Irreversible — apply HITL policy based on verification level.
+        # 3. A destructive tool is confirmed by a human whatever the skill
+        # claims. Without this, nothing on the MCP tool path could ever reach
+        # the broker: ServerContext bootstraps active_skill to OPERATOR_DIRECT,
+        # which is TESTED with a wildcard capability.
+        #
+        # Keyed on the capability class, not the `irreversible` flag —
+        # nova_graph_relate sets that flag purely to mint an audit request_id and
+        # must not prompt on ordinary corroboration. The same set drives the
+        # destructiveHint clients see, so the two can never disagree.
+        if (
+            active_skill.verification == VerificationLevel.UNVERIFIED
+            or cap_tag in DESTRUCTIVE_CAPABILITIES
+        ):
+            return request_id, "hitl", cap_tag
+
+        return request_id, "manifest", cap_tag
+
+    def _log_manifest_approval(
+        self,
+        tool_name: str,
+        active_skill: SkillManifest,
+        session_id: str,
+        request_id: str,
+        cap_tag: str,
+        target: Optional[str],
+    ) -> None:
+        """Record an irreversible call vouched for by the skill's manifest."""
         v = active_skill.verification
-
-        if v == VerificationLevel.UNVERIFIED:
-            self._run_hitl(tool_name, active_skill, session_id, request_id, target)
-            return request_id
-
-        # declared or tested + capability in scope → log the request and let
-        # the caller mark executed once the underlying operation completes.
         if self._audit:
             self._audit.log_request(
                 session_id=session_id,
@@ -270,9 +361,8 @@ class CapabilityGate:
             cap_tag,
             target,
         )
-        return request_id
 
-    def _run_hitl(
+    def _hitl_begin(
         self,
         tool_name: str,
         active_skill: SkillManifest,
@@ -280,7 +370,7 @@ class CapabilityGate:
         request_id: str,
         target: Optional[str],
     ) -> None:
-        """Run the four-state HITL lifecycle and raise HITLDenied if rejected."""
+        """Record the approval request, before the operator is asked."""
         if self._audit:
             self._audit.log_request(
                 session_id=session_id,
@@ -291,12 +381,20 @@ class CapabilityGate:
                 target=target,
             )
 
-        approved = self._broker.request(
-            tool_name=tool_name,
-            skill_id=active_skill.skill_id,
-            verification=active_skill.verification.value,
-        )
+    def _hitl_record(
+        self,
+        tool_name: str,
+        active_skill: SkillManifest,
+        session_id: str,
+        request_id: str,
+        approved: bool,
+    ) -> None:
+        """Record the decision, for approvals and refusals alike.
 
+        Always written, and always before any raise:
+        ``audit_log.run_biconditional_check`` reads a dangling
+        ``irreversible.request`` with no decision as a gate bypass.
+        """
         if self._audit:
             self._audit.log_decision(
                 session_id=session_id,
@@ -307,14 +405,99 @@ class CapabilityGate:
                 approved=approved,
             )
 
+    def _hitl_finish(
+        self,
+        tool_name: str,
+        active_skill: SkillManifest,
+        session_id: str,
+        request_id: str,
+        approved: bool,
+    ) -> None:
+        """Record the decision, then refuse the call if it was not approved."""
+        self._hitl_record(
+            tool_name, active_skill, session_id, request_id, approved
+        )
         if not approved:
             raise HITLDenied(
-                f"HITL broker denied '{tool_name}' for unverified skill "
+                f"HITL broker denied '{tool_name}' for skill "
                 f"'{active_skill.skill_id}'"
             )
         # NOTE: log_executed is deferred to the caller so the audit record
         # reflects the actual outcome of the operation, not just the gate
         # approval.
+
+    def _run_hitl(
+        self,
+        tool_name: str,
+        active_skill: SkillManifest,
+        session_id: str,
+        request_id: str,
+        target: Optional[str],
+    ) -> None:
+        """Synchronous HITL lifecycle. Raises HITLDenied if refused."""
+        self._hitl_begin(tool_name, active_skill, session_id, request_id, target)
+        try:
+            approved = self._broker.request(
+                tool_name=tool_name,
+                skill_id=active_skill.skill_id,
+                verification=active_skill.verification.value,
+                target=target,
+            )
+        except BaseException:
+            # A broker that blew up is a refusal, and the decision still has to
+            # be recorded or the audit shows a request with no outcome. Record
+            # it, then let the original error surface rather than masking it
+            # with HITLDenied — the cause is worth seeing.
+            self._hitl_record(
+                tool_name, active_skill, session_id, request_id, approved=False
+            )
+            raise
+        self._hitl_finish(
+            tool_name, active_skill, session_id, request_id, approved
+        )
+
+    async def _run_hitl_async(
+        self,
+        tool_name: str,
+        active_skill: SkillManifest,
+        session_id: str,
+        request_id: str,
+        target: Optional[str],
+        approval: Optional[bool] = None,
+    ) -> None:
+        """HITL lifecycle on the event loop.
+
+        When *approval* is supplied the operator has already answered (via
+        elicitation, before the handler body) and no broker runs. Otherwise the
+        fallback broker is consulted — in a worker thread, since it blocks.
+        """
+        self._hitl_begin(tool_name, active_skill, session_id, request_id, target)
+        if approval is not None:
+            self._hitl_finish(
+                tool_name, active_skill, session_id, request_id, approval
+            )
+            return
+        try:
+            # The fallback brokers all block (a terminal read), so they run off
+            # the event loop.
+            approved = await asyncio.to_thread(
+                functools.partial(
+                    self._broker.request,
+                    tool_name=tool_name,
+                    skill_id=active_skill.skill_id,
+                    verification=active_skill.verification.value,
+                    target=target,
+                )
+            )
+        except BaseException:
+            # Includes CancelledError when the client disconnects mid-prompt.
+            self._hitl_record(
+                tool_name, active_skill, session_id, request_id, approved=False
+            )
+            raise
+        self._hitl_finish(
+            tool_name, active_skill, session_id, request_id, approved
+        )
 
     def check_capability_tag(
         self,
@@ -389,18 +572,36 @@ class CapabilityGate:
         active_skill: SkillManifest,
         session_id: str,
         target: Optional[str] = None,
+        approval: Optional[bool] = None,
     ) -> Optional[str]:
         """
-        Async wrapper for check().
+        Async counterpart to check(), used by the MCP tool handlers.
 
-        The blocking HITL broker (select.select terminal prompt) is dispatched
-        via asyncio.to_thread so it does not stall the MCP server event loop.
-        Non-blocking paths (declared/tested, capability denied) remain synchronous
-        inside the thread and return immediately.
+        Applies the same policy via ``_authorize``, but carries out HITL on the
+        event loop so the elicitation broker can await the client. A broker with
+        no async path (the terminal prompt) is dispatched to a worker thread so
+        it still does not stall the server.
 
-        Returns the same request_id as ``check()``; caller is responsible for
+        *approval* is the operator's answer when the caller already asked — the
+        MCP path elicits through ``approval.py`` before the handler body runs,
+        because the protocol forbids asking from inside it. When supplied it is
+        used directly and no broker is consulted; the audit trail is written
+        either way.
+
+        Returns the same request_id as ``check()``; the caller is responsible for
         invoking ``audit.log_executed(...)`` post-operation.
         """
-        return await asyncio.to_thread(
-            self.check, tool_name, active_skill, session_id, target
+        request_id, action, cap_tag = self._authorize(
+            tool_name, active_skill, session_id
         )
+        if action == "proceed":
+            return None
+        if action == "hitl":
+            await self._run_hitl_async(
+                tool_name, active_skill, session_id, request_id, target, approval
+            )
+            return request_id
+        self._log_manifest_approval(
+            tool_name, active_skill, session_id, request_id, cap_tag, target
+        )
+        return request_id

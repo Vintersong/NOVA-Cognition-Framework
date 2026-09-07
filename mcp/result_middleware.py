@@ -30,6 +30,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import active_request
+
 # Envelope statuses that mean the call did not do what was asked. Kept as a
 # frozenset so an unrelated `status` (e.g. "flushed") can never match.
 FAILURE_STATUSES: frozenset[str] = frozenset({"rejected", "error"})
@@ -68,13 +70,18 @@ async def mark_failed_results(ctx, call_next):
     Only ``tools/call`` results are inspected, and only to flip ``isError`` from
     false to true — the body is never rewritten, so a client that does parse
     NOVA's envelopes sees exactly what it saw before.
+
+    Also records the live request in ``active_request`` for its duration, so the
+    capability gate can reach the client session to elicit an approval without
+    every gated handler having to accept and forward a ``Context``.
     """
-    result = await call_next(ctx)
-    if (
-        getattr(ctx, "method", None) == "tools/call"
-        and isinstance(result, dict)
-        and result.get("isError") is False
-        and result_reports_failure(result)
-    ):
-        result["isError"] = True
-    return result
+    with active_request.active(ctx):
+        result = await call_next(ctx)
+        if (
+            getattr(ctx, "method", None) == "tools/call"
+            and isinstance(result, dict)
+            and result.get("isError") is False
+            and result_reports_failure(result)
+        ):
+            result["isError"] = True
+        return result

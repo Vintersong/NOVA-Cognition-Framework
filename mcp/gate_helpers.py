@@ -46,8 +46,14 @@ async def gate_check(
     ctx: "ServerContext",
     tool_name: str,
     target: str | None = None,
+    approval: bool | None = None,
 ) -> tuple[str | None, str | None]:
     """Run the capability gate for *tool_name* against the active skill.
+
+    *approval* carries the operator's answer for a destructive tool, obtained by
+    the handler's ``Approval(...)`` parameter before the body ran. Pass
+    ``was_approved(approval_param)``; the gate records the decision and refuses
+    when it is False.
 
     Returns ``(err, request_id)``:
       - On allow: ``(None, request_id_or_None)``. The handler must call
@@ -58,7 +64,8 @@ async def gate_check(
     """
     try:
         request_id = await ctx.capability_gate.async_check(
-            tool_name, ctx.active_skill, ctx.server_session_id, target
+            tool_name, ctx.active_skill, ctx.server_session_id, target,
+            approval=approval,
         )
         return None, request_id
     except CapabilityDenied as exc:
