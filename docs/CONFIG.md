@@ -145,6 +145,17 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 
 ## Security & HITL
 
+**Which tools ask for approval.** Seven tools carry a destructive capability and
+are confirmed by the operator through MCP elicitation before they run:
+`nova_shard_archive`, `nova_shard_forget`, `nova_shard_consolidate`,
+`nidhogg_ingest`, `nidhogg_scan`, `nova_evolve`, `nova_forgemaster_sprint`. The
+set is derived from `tool_registry.DESTRUCTIVE_CAPABILITIES`, the same source as
+the `destructiveHint` published to clients. `NOVA_HITL_BROKER` does **not** affect
+them; a client that cannot elicit will see them refused with `gate_denied`.
+
+`NOVA_DENIED_TOOLS` is checked first and short-circuits before the approval
+prompt — use it for a hard block, not for caution.
+
 | Variable | Default | Impact |
 |---|---|---|
 | `NOVA_HITL_BROKER` | `interactive` | Fallback broker only. MCP tool calls ask the operator through **elicitation** (the client shows the prompt), so this setting does not affect them. It governs the paths with no MCP client to ask: forgemaster's per-file writes, the Gemini worker, and bare CLI use. `interactive` — prompts on a controlling terminal, denying when there is none. `policy` — always-deny without prompting (used in Docker and CI). |

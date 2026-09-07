@@ -12,6 +12,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS = REPO_ROOT / "mcp" / "schemas.py"
 SKILL = REPO_ROOT / "mcp" / "SKILL.md"
 CLAUDE = REPO_ROOT / "CLAUDE.md"
+README = REPO_ROOT / "README.md"
+
+# Docs that must name every tool and cite the right count. README was omitted
+# until now, which is how it drifted to three *different* wrong tool counts and
+# lost two tools entirely without CI noticing.
+TOOL_INVENTORIES = (CLAUDE, README)
+COUNT_CITERS = (SCHEMAS, SKILL, CLAUDE, README)
 
 
 def _extract_tools() -> list[str]:
@@ -32,6 +39,7 @@ def _assert_count_phrase(path: Path, expected_count: int) -> list[str]:
 
 
 def _assert_tool_mentions(path: Path, tools: list[str]) -> list[str]:
+    """Every registered tool must be named somewhere in *path*."""
     text = path.read_text(encoding="utf-8")
     missing = [tool for tool in tools if tool not in text]
     if not missing:
@@ -44,10 +52,10 @@ def main() -> int:
     expected_count = len(tools)
     errors: list[str] = []
 
-    errors.extend(_assert_count_phrase(SCHEMAS, expected_count))
-    errors.extend(_assert_count_phrase(SKILL, expected_count))
-    errors.extend(_assert_count_phrase(CLAUDE, expected_count))
-    errors.extend(_assert_tool_mentions(CLAUDE, tools))
+    for path in COUNT_CITERS:
+        errors.extend(_assert_count_phrase(path, expected_count))
+    for path in TOOL_INVENTORIES:
+        errors.extend(_assert_tool_mentions(path, tools))
 
     if errors:
         print("Tool docs consistency check failed:")

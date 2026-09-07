@@ -61,7 +61,10 @@ NOVA-Whitepaper/
     session_tools.py         ← nova_session_flush / load / list handlers
     forgemaster_tools.py     ← nova_forgemaster_sprint / nova_cache_prewarm handlers
     gate_helpers.py          ← permission_error / gate_check / log_executed plumbing shared across handler modules
-    reject.py                ← typed reject envelope (RejectCode enum + reject_payload())
+    reject.py                ← typed reject envelope (RejectCode enum + reject_payload()/reject_dict())
+    result_middleware.py     ← server middleware: sets isError on failing tool results
+    approval.py              ← elicitation resolver — operator approval for destructive tools
+    active_request.py        ← contextvar for the live MCP request
 
     # Session & sprint
     session_store.py         ← session persistence
@@ -138,8 +141,8 @@ NOVA-Whitepaper/
     SKILL_LIBRARY.md         ← index of all skills across 15 domains
     STANDARDS.md             ← authoring standard for all forgemaster content
     skills/                  ← core orchestration skills (14 files)
-    library/                 ← domain skill library (218 files, 25 categories)
-    agents/                  ← agent persona definitions (221 personas + 99 reference files, 18 divisions)
+    library/                 ← domain skill library (324 files, 24 categories)
+    agents/                  ← agent persona definitions (322 files, 18 divisions)
   docs/                      ← reference and roadmap documents
   .env                       ← API keys (never commit)
 ```
@@ -260,7 +263,7 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
 | `forgemaster-emotional-state-routing` | Routing hook: escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
-For all other domains see `forgemaster/SKILL_LIBRARY.md` (25 categories, 218 skills).
+For all other domains see `forgemaster/SKILL_LIBRARY.md` (24 categories, 324 skills).
 
 ---
 

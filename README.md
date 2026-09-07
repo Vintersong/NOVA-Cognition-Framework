@@ -1,7 +1,7 @@
 # NOVA-Cognition-Framework
 
 ![MCP](https://img.shields.io/badge/MCP-server-6B47ED?style=flat-square&logo=anthropic&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11--3.12-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Gemini](https://img.shields.io/badge/Gemini-Flash-4285F4?style=flat-square&logo=google&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -91,7 +91,7 @@ You (design doc / feature request)
 
 ```mermaid
 graph TD
-    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"38 tool calls"| B["nova_server.py\nMCP Adapter"]
+    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"41 tool calls"| B["nova_server.py\nMCP Adapter"]
 
     B --> C
     B -->|"nova_shard_interact"| R
@@ -141,6 +141,17 @@ graph TD
 ```bash
 cd mcp/
 pip install -r requirements.txt
+```
+
+NOVA requires **MCP Python SDK v2** (`mcp[cli]>=2,<3`), which implements spec
+revision **2026-07-28**. The server imports `mcp.server.mcpserver.MCPServer` and
+will not start against SDK v1 — the pin is bounded on both sides deliberately, and
+a CI job installs `mcp/requirements.txt` on its own to prove a fresh install works.
+
+Python 3.11 or 3.12. For development, install the pinned lockfile as well:
+
+```bash
+pip install -r requirements-dev.txt   # pytest, ruff, mypy + exact runtime pins
 ```
 
 ### 2. Configure environment
@@ -227,6 +238,29 @@ docker compose up nova
 
 ---
 
+## Approval
+
+Seven tools cannot be undone, so NOVA asks before running them:
+
+`nova_shard_archive` · `nova_shard_forget` · `nova_shard_consolidate` ·
+`nidhogg_ingest` · `nidhogg_scan` · `nova_evolve` · `nova_forgemaster_sprint`
+
+The prompt arrives through your MCP client, using the protocol's elicitation
+mechanism, and is asked *before* the tool runs — so declining means nothing
+happened. The set is derived from the capability registry
+(`tool_registry.DESTRUCTIVE_CAPABILITIES`), which is the same source as the
+`destructiveHint` published to clients, so a tool can never be advertised as safe
+while the gate treats it as dangerous.
+
+**Your client must support elicitation.** One that does not cannot approve these
+seven, and they will be refused with `code: "gate_denied"`. Everything else works
+normally.
+
+This is independent of `NOVA_HITL_BROKER`, which now only covers paths with no MCP
+client to ask: forgemaster's per-file writes, the Gemini worker, and bare CLI use.
+
+---
+
 ## Development & Testing
 
 ### Run the default test suite
@@ -257,7 +291,7 @@ The bench measures each stage independently: SQLite facts pre-filter → HUGINN 
 NOVA-Cognition-Framework/
   mcp/
     # Core server
-    nova_server.py           ← ACTIVE MCP server — bootstrap + wiring (registers all 38 tools)
+    nova_server.py           ← ACTIVE MCP server — bootstrap + wiring (registers all 41 tools)
     server_context.py        ← process-scoped singletons (ravens, NÓTT, hooks, gate, audit, session); all handlers read through ServerContext instead of module globals
     config.py                ← all env vars and defaults (single source of truth)
     schemas.py               ← Pydantic input models
@@ -318,12 +352,15 @@ NOVA-Cognition-Framework/
     skill_manifest.py        ← @@verification / @@capabilities header parser
 
     # Tool handler modules (split from nova_server.py god-object)
-    shard_tools.py           ← 15 shard CRUD/lifecycle handlers (interact, create, update, search, index, summary, list, get, get_full, merge, archive, forget, consolidate, query_state, obsidian_export)
+    shard_tools.py           ← 16 shard CRUD/lifecycle handlers (interact, create, update, validate, search, index, summary, list, get, get_full, merge, archive, forget, consolidate, query_state, obsidian_export)
     graph_tools.py           ← nova_graph_query + nova_graph_relate handlers
     session_tools.py         ← nova_session_flush / load / list handlers
     forgemaster_tools.py     ← nova_forgemaster_sprint + nova_cache_prewarm handlers
     gate_helpers.py          ← permission_error / gate_check / log_executed plumbing shared across handler modules
-    reject.py                ← typed reject envelope (SDB-contract machine-readable signals; RejectCode enum + reject_payload())
+    reject.py                ← typed reject envelope — RejectCode enum + reject_payload()/reject_dict()
+    result_middleware.py     ← server middleware: sets isError on tool results that report failure
+    approval.py              ← elicitation resolver — asks the operator before a destructive tool runs
+    active_request.py        ← contextvar holding the live MCP request, for code too deep to be handed a Context
 
     # MCP tool modules
     evolve.py                ← nova_evolve self-improvement loop
@@ -343,7 +380,8 @@ NOVA-Cognition-Framework/
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
 
-  tests/                     ← main pytest suite (21 files: 18 test_*, conftest.py, bench_corpus.py, bench_retrieval.py)
+  tests/                     ← main pytest suite (test_* modules, conftest.py, bench_corpus.py, bench_retrieval.py)
+    golden/                  ← tool_manifest.json — golden snapshot of the published MCP surface
   utilities/                 ← migration helpers, diagnostics, ad-hoc maintenance
     # Export converters (import existing AI conversation history into NOVA)
     chatgpt_to_nova.py       ← ChatGPT conversation export → shards
@@ -387,7 +425,13 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (39)
+## NOVA MCP Tools (41)
+
+Every tool is published with a human-readable title and MCP annotations derived
+from its capability tag — `readOnlyHint` (22 tools), `destructiveHint` (the seven
+above), `idempotentHint`, `openWorldHint` — so a client can decide what it may
+auto-approve without a hardcoded list. All tools take a single `params` object.
+
 
 ### Core shard + graph + session (23)
 
@@ -478,14 +522,29 @@ Registered into `nova_server` via `mcp/Gemini/gemini_mcp.py`:
 |---|---|
 | `nova_calibrate_routing` | Analyse HUGINN consistency per confidence bucket and Forgemaster sprint pass rates by model; suggests threshold adjustments. Read-only — no state changes. |
 
+### HUGINN orchestration (1)
+
+| Tool | Description |
+|---|---|
+| `nova_huginn_candidates` | Keyword + confidence pre-filter over the shard index. Returns a small candidate list ready to paste into a HUGINN agent prompt — no LLM call, so it costs nothing. |
+
+### Code index (1)
+
+| Tool | Description |
+|---|---|
+| `nova_code_search` | Semantic search over `mcp/**/*.py`, AST-chunked at function/class granularity and embedded locally. Use instead of grep when you know *what* you are looking for but not the file or symbol name. |
+
 ### MCP Resources
 
-Read-only resources exposed alongside the tools:
+Read-only resources exposed alongside the tools. Each publishes a name, title,
+description and MIME type:
 
-- `nova://skill` — contents of `mcp/SKILL.md`
-- `nova://index` — current shard index JSON
-- `nova://graph` — current knowledge graph JSON
-- `nova://usage` — last 100 log entries + session token totals
+| URI | Title | MIME type | Contents |
+|---|---|---|---|
+| `nova://skill` | NOVA Skill Definition | `text/markdown` | `mcp/SKILL.md` — the operating protocol |
+| `nova://index` | Shard Index | `application/json` | One metadata row per shard, rebuilt on read |
+| `nova://graph` | Shard Knowledge Graph | `application/json` | Every directed inter-shard relation |
+| `nova://usage` | Operation Log and Token Usage | `application/json` | Last 100 log entries + session token totals |
 
 ---
 
@@ -500,12 +559,15 @@ Read-only resources exposed alongside the tools:
 | `models.py` | Shared dataclasses (UsageSummary) |
 | `server_context.py` | Process-scoped singleton container (`ServerContext`); `bootstrap()` constructs all components in dependency order and wires hook bus — handler modules read singletons through `ctx` instead of module globals |
 | `tool_registry.py` | Canonical `ToolSpec` registry — `@nova_tool` validates names at import, feeds permissions/audit/docs |
-| `shard_tools.py` | 15 shard CRUD/lifecycle MCP tool handlers — `register_shard_tools(mcp, ctx)` wires them; reads singletons through `ServerContext` |
+| `shard_tools.py` | 16 shard CRUD/lifecycle MCP tool handlers — `register_shard_tools(mcp, ctx)` wires them; reads singletons through `ServerContext` |
 | `graph_tools.py` | `nova_graph_query` + `nova_graph_relate` handlers — `register_graph_tools(mcp, ctx)` |
 | `session_tools.py` | `nova_session_flush` / `nova_session_load` / `nova_session_list` handlers — `register_session_tools(mcp, ctx)` |
 | `forgemaster_tools.py` | `nova_forgemaster_sprint` + `nova_cache_prewarm` handlers — `register_forgemaster_tools(mcp, ctx)` |
 | `gate_helpers.py` | `permission_error` / `gate_check` / `log_executed` — shared capability-gate plumbing for all handler modules |
-| `reject.py` | Typed reject envelope: `RejectCode` enum + `reject_payload()`. Implements the SDB-contract reject signal so LLM proposers receive machine-readable error codes rather than free-text messages |
+| `reject.py` | The two error envelopes. `status="rejected"` carries a machine-readable `RejectCode`, a `retryable` flag and a `hint`; `status="error"` is reserved for unexpected exceptions. `reject_payload()` returns the JSON string, `reject_dict()` the dict for helpers that build a payload for their caller |
+| `result_middleware.py` | Server middleware that sets `isError` on any tool result reporting a failure, so a client can tell a refusal from a success without parsing the body. Also records the live request for `approval.py` |
+| `approval.py` | Asks the operator before a destructive tool runs, through MCP elicitation. Exposes the `Approval(tool)` parameter annotation and `was_approved()`; the gate keeps the policy and the audit trail |
+| `active_request.py` | ContextVar holding the request being served, so the capability gate can reach the client session without threading a `Context` through every handler |
 | `store.py` | Shard filesystem I/O, index, summary-index layer, path-traversal guards; `mutate_shard`/`mutate_shard_fields` give lock-safe read-modify-write (fresh read inside the FileLock) plus revision-guarded CAS, closing the NÓTT ↔ tool-write lost-update race |
 | `graph.py` | Knowledge graph load/save/query/relate/transitive BFS |
 | `provenance.py` | Epistemic provenance records at `meta_tags.epistemic_provenance` — `source_type` authority taxonomy (`self_inferred` → `peer_validated` → `authority_validated` → `externally_published`), append-only validation-event log, supersession flags. Confidence only ever rises through `maintenance.apply_confidence_corroboration`; this module routes positive `confidence_delta` through that path and never lowers confidence directly |
@@ -551,7 +613,7 @@ Read-only resources exposed alongside the tools:
 
 ## Key Environment Variables
 
-> For the complete 56-variable reference with impact explanations, see [docs/CONFIG.md](docs/CONFIG.md).
+> For the complete environment-variable reference with impact explanations, see [docs/CONFIG.md](docs/CONFIG.md).
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -581,8 +643,8 @@ Read-only resources exposed alongside the tools:
 | `NOVA_QUARANTINE_HOURS` | `48` | Hours a shard remains quarantined after failing the adversarial pass |
 | `NOVA_QUARANTINE_PENALTY` | `0.5` | Retrieval score multiplier applied to quarantined shards |
 | `NOVA_ADVERSARIAL_INTERVAL_DAYS` | `7` | Minimum days between adversarial passes on the same shard |
-| `NOVA_HITL_BROKER` | `interactive` | HITL broker mode: `interactive` (terminal prompt) or `policy` (always-deny — set in Docker image by default) |
-| `NOVA_HITL_TIMEOUT_S` | `30` | Seconds before an unanswered HITL prompt auto-denies |
+| `NOVA_HITL_BROKER` | `interactive` | Fallback broker only — MCP tool calls ask through elicitation and ignore this. Covers forgemaster per-file writes, the Gemini worker and bare CLI. `interactive` (terminal prompt, denies without a terminal) or `policy` (always-deny — set in the Docker image) |
+| `NOVA_HITL_TIMEOUT_S` | `30` | Seconds before an unanswered *terminal* prompt auto-denies. Elicitation prompts are not bounded by this — the client owns that timeout |
 | `NOVA_DENIED_TOOLS` | — | Comma-separated tool names to block |
 | `NOVA_DENIED_PREFIXES` | — | Comma-separated prefixes to block |
 | `NOVA_PROJECT_CONTEXT` | — | Freeform project context string injected into sprint prompts |
@@ -608,6 +670,20 @@ Read-only resources exposed alongside the tools:
 ---
 
 ## Error Handling
+
+Every payload carries a `status`, and a failed call sets `isError` on the wire, so
+a client can tell a refusal from a success without parsing the body:
+
+| `status` | Meaning |
+|---|---|
+| `"rejected"` | The tool refused for a known reason. Carries a machine-readable `code` (`shard_not_found`, `permission_denied`, `gate_denied`, `quarantined`, `invalid_input`, `duplicate`, …), a `retryable` flag, a `hint` naming the next useful action, and often a `target`. Read the `code` rather than the message. |
+| `"error"` | Something unexpected broke. |
+| anything else | Success — `"created"`, `"updated"`, `"flushed"`, `"ok"` and friends. |
+
+An operator declining an approval prompt arrives as `rejected` /
+`gate_denied` with `retryable: true`.
+
+Operational failure modes:
 
 | Scenario | Behavior |
 |---|---|
