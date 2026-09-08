@@ -60,8 +60,10 @@ NOVA-Whitepaper/
     graph_tools.py           ← nova_graph_query / nova_graph_relate handlers
     session_tools.py         ← nova_session_flush / load / list handlers
     forgemaster_tools.py     ← nova_forgemaster_sprint / nova_cache_prewarm handlers
-    gate_helpers.py          ← permission_error / gate_check / log_executed plumbing shared across handler modules
-    reject.py                ← typed reject envelope (RejectCode enum + reject_payload()/reject_dict())
+    gate_helpers.py          ← permission_reject / gate_check_model / log_executed plumbing shared across handler modules
+    reject.py                ← typed reject envelope (RejectCode enum + RejectPayload model)
+    outputs.py               ← Pydantic output models — every handler's return annotation, so tools publish a real outputSchema
+    prompts.py               ← MCP prompts: 6 workflow openers + one per core forgemaster skill
     result_middleware.py     ← server middleware: sets isError on failing tool results
     approval.py              ← elicitation resolver — operator approval for destructive tools
     active_request.py        ← contextvar for the live MCP request
@@ -307,6 +309,15 @@ Next session starts with `nova_shard_interact(message="[project name] current st
 - Always use `nova_server.py` — no deprecated servers remain
 - Confidence < 0.4 → shard tagged `low_confidence`, excluded from default search. Use `include_low_confidence=True` to recall deliberately
 - After creating related shards, wire them with `nova_graph_relate`. Before dependent work, query: `nova_graph_query(target=shard_id, relation_type=depends_on)`
+- Every handler is annotated with a model from `mcp/outputs.py`, never `-> str`.
+  A handler that can refuse returns `Success | RejectPayload`. Returning a shape
+  the annotation does not cover raises `UnexpectedToolError` — the SDK validates
+- The wire surface is pinned by `tests/golden/tool_manifest.json`. After an
+  intended change: `python utilities/dump_tool_manifest.py --write`, then check
+  the diff moved only what you meant to move
+- A new resource that serves the same data as a tool must call `_require(<tool>)`
+  in `nova_server.py` — resources do not go through the permission context on
+  their own
 
 ---
 

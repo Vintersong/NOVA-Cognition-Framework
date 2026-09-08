@@ -9,8 +9,8 @@
 1. Load `.env` before `config.py` is imported, since config reads the environment at import time.
 2. `ctx = ServerContext.bootstrap()` — builds the process-scoped singletons and the hook bus.
 3. Construct `MCPServer` with the server's identity, instructions and middleware.
-4. Call thirteen `register_*_tools(mcp, ...)` functions.
-5. Declare four read-only resources.
+4. Call thirteen `register_*_tools(mcp, ...)` functions, plus `register_prompts(mcp)`.
+5. Declare four read-only resources, two resource templates, and the completion handler.
 6. `mcp.run()` on stdio.
 
 Nothing in `mcp/` imports from `nova_server.py` — dependency flows inward.
@@ -22,6 +22,7 @@ Nothing in `mcp/` imports from `nova_server.py` — dependency flows inward.
 - **Middleware** — `mark_failed_results` (`result_middleware.py`) sets `isError` on any tool result whose payload reports a failure, and records the live request in `active_request` so the capability gate can reach the client session to ask for approval.
 - **`ServerContext`** — all singletons (ravens, NÓTT, hook registry, session store, permission context, capability gate, audit log, usage counters, active skill, session id) hang off `ctx`. Handlers read through it rather than module globals.
 - **`_ALL_TOOL_NAMES`** — derived from `tool_registry.all_names()`, not maintained by hand.
+- **Error vocabulary for resources** — `ResourceNotFoundError` for a missing instance (`-32602`), `ResourceError` for a refusal. Neither is a crash, so neither logs a traceback. Returning a string such as `"SKILL.md not found."` would be served to the client as content.
 
 ## Public surface
 
@@ -45,7 +46,13 @@ No tool handlers. Registration calls, in order:
 
 Four resources, each publishing name, title, description and MIME type: `nova://skill` (`text/markdown`), `nova://index`, `nova://graph`, `nova://usage` (all `application/json`).
 
+Two resource templates: `nova://shard/{shard_id}` (`application/json`) and `nova://wiki/{slug}` (`text/markdown`). Both parameters are completable — `complete_argument` serves shard ids from the SQLite index's primary key and wiki slugs from the schema plus the pages on disk. A `{param}` matches a single URI segment, so a traversal never reaches a handler; `wiki.load_wiki_page` guards the tool path, where the slug is unconstrained.
+
+Twenty prompts, registered by `prompts.register_prompts`: six hand-written workflow openers and one generated per file in `forgemaster/skills/`.
+
 Plus `get_permitted_tools(permission_context)` — the tool names not blocked by the active permission context.
+
+`_require(tool_name)` is the one piece of policy in this file. Resources are not tools, so nothing routes them through the permission context; a resource that serves the same data as a gateable tool calls `_require` with that tool's name. `nova://skill` and `nova://usage` mirror no tool and are deliberately open.
 
 ## Inputs and outputs
 

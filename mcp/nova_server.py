@@ -111,9 +111,19 @@ Tools are annotated: readOnlyHint marks safe reads, destructiveHint marks
 operations that cannot be undone (nova_shard_forget, nova_shard_archive,
 nidhogg_ingest/scan, nova_evolve, nova_forgemaster_sprint).
 
-Errors arrive as JSON carrying a "status" field: "rejected" means the tool
-refused for a known reason and the payload has a machine-readable "code",
-"retryable" flag and "hint"; "error" means something unexpected broke.
+Every tool publishes an outputSchema and returns structuredContent matching it.
+A tool that can refuse publishes a union, so its structuredContent is nested
+under a "result" key; the text block is emitted either way.
+
+Errors arrive carrying a "status" field, and a failed call sets isError:
+"rejected" means the tool refused for a known reason and the payload has a
+machine-readable "code", "retryable" flag and "hint"; "error" means something
+unexpected broke.
+
+Shards and wiki pages are also addressable as resources — nova://shard/{id} and
+nova://wiki/{slug}, both with argument completion. Prompts cover the common
+workflows (nova-orient, nova-recall, nova-write-handoff, nova-ingest-document,
+nova-run-sprint, nova-audit-confidence) and the forgemaster skills.
 """
 
 mcp = MCPServer(

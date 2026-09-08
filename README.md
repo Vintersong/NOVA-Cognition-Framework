@@ -546,6 +546,40 @@ description and MIME type:
 | `nova://graph` | Shard Knowledge Graph | `application/json` | Every directed inter-shard relation |
 | `nova://usage` | Operation Log and Token Usage | `application/json` | Last 100 log entries + session token totals |
 
+Two resource *templates* give the corpus addressable URIs, so a shard or a page
+can be linked and embedded in a prompt rather than reached only through a tool:
+
+| URI template | Title | MIME type | Contents |
+|---|---|---|---|
+| `nova://shard/{shard_id}` | Shard | `application/json` | One shard as stored on disk — the read-only equivalent of `nova_shard_get` |
+| `nova://wiki/{slug}` | Wiki Page | `text/markdown` | One curated wiki page — the read-only equivalent of `nova_wiki_get` |
+
+Both parameters support argument completion (`completion/complete`): shard ids
+come from the SQLite index's primary key, wiki slugs from the union of the
+schema and the pages on disk.
+
+A resource that serves the same data as a tool is closed by that tool's
+denial — denying `nova_shard_get` also closes `nova://shard/{id}`. `nova://skill`
+and `nova://usage` mirror no tool and stay open.
+
+### MCP Prompts
+
+Twenty prompts, listed by `prompts/list`:
+
+| Prompt | Arguments | Purpose |
+|---|---|---|
+| `nova-orient` | `project` | Load what NOVA knows about a project and summarise the current state |
+| `nova-recall` | `shard_id`, `depth` | One shard plus everything the graph connects it to |
+| `nova-write-handoff` | `project` | Apply the handoff test, then write one only if it passes |
+| `nova-ingest-document` | `path` | Route a document to the shard graph or the wiki |
+| `nova-run-sprint` | `sprint_id`, `design_doc`, `shard_ids` | Load context, then run the four-turn sprint |
+| `nova-audit-confidence` | `min_confidence` | Find contradicted, low-confidence and stale shards |
+| `forgemaster-*` (14) | — | One per file in `forgemaster/skills/`, generated from the directory |
+
+The skill prompts cover the fourteen **core** skills only. The 218 skills in
+`forgemaster/library/` are reachable through `SKILL_LIBRARY.md`; serving them as
+prompts would be an unusable menu.
+
 ---
 
 ## Module Architecture
@@ -682,6 +716,13 @@ a client can tell a refusal from a success without parsing the body:
 
 An operator declining an approval prompt arrives as `rejected` /
 `gate_denied` with `retryable: true`.
+
+Every tool also publishes a real `outputSchema` derived from a Pydantic model in
+`mcp/outputs.py`, and returns `structuredContent` matching it. A handler that can
+refuse is annotated `Success | RejectPayload`, so the published schema describes
+both shapes; the SDK nests `structuredContent` under a `result` key for those
+unions. The text block is still emitted alongside, so nothing that parses the
+body breaks.
 
 Operational failure modes:
 

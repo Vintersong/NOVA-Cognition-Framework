@@ -20,8 +20,14 @@
 
 All paths default to subdirectories of the repo root. Override when running multiple NOVA instances or when the repo is not writable.
 
+`NOVA_DATA_ROOT` moves the lot at once, and every variable below falls back to a
+subdirectory of it. **`NOVA_SHARD_DB_FILE` is the exception** — it is pinned to
+the repo root and ignores `NOVA_DATA_ROOT`, so a second instance that sets only
+the data root keeps writing the first instance's shard database. Set both.
+
 | Variable | Default | Impact |
 |---|---|---|
+| `NOVA_DATA_ROOT` | current working directory | Base for every path below. Set this to run a second NOVA against a separate corpus. |
 | `NOVA_SHARD_DIR` | `shards/` | Directory containing all shard JSON files. Changing this switches the active shard store — useful for separating project workspaces. |
 | `NOVA_INDEX_FILE` | `shard_index.json` | Fast-browse index rebuilt by `nova_shard_index`. Delete and rebuild if it drifts out of sync. |
 | `NOVA_GRAPH_FILE` | `shard_graph.json` | Inter-shard knowledge graph. Delete to reset all relations (they can be rebuilt via `nova_graph_relate`). |
@@ -32,6 +38,7 @@ All paths default to subdirectories of the repo root. Override when running mult
 | `NOVA_ACCESS_LOG` | `shard_access.jsonl` | Per-shard access log used by the decay-on-read pass. |
 | `NOVA_EMBEDDING_INTEGRITY_LOG` | `embedding_integrity.jsonl` | Adversarial embedding event log. Each entry records a shard ID, timestamp, and signature mismatch detail. Never commit. |
 | `NOVA_SKILL_AUDIT_LOG` | `skill_audit.db` | SQLite HITL audit log — four-state lifecycle for irreversible tool calls. |
+| `NOVA_SHARD_DB_FILE` | `<repo root>/nova_shard_index.db` | SQLite state-vector index behind `nova_shard_query_state` and shard-id completion. **Does not derive from `NOVA_DATA_ROOT`** — set it explicitly alongside one, or the second instance reports on the first one's corpus. |
 | `NOVA_FACTS_DIR` | `facts/` | Directory of curated `.shard` files for the SQLite facts pre-filter. |
 | `NOVA_FACTS_INDEX_FILE` | `facts_index.db` | SQLite index over the facts corpus. Rebuilt by `nova_facts_rebuild`. |
 | `NOVA_WIKI_DIR` | `wiki/` | Curated markdown wiki pages with YAML frontmatter. Never edit directly — use `nova_wiki_ingest`. |
