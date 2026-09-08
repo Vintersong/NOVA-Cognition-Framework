@@ -46,8 +46,9 @@ from pydantic import BaseModel, Field, ConfigDict
 from approval import Approval, was_approved
 from atomic_io import atomic_write_json
 from config import SHARD_DIR, USAGE_LOG_FILE, MERGE_SIMILARITY_THRESHOLD
-from gate_helpers import gate_check, log_executed
-from permissions import is_blocked, denial_payload
+from gate_helpers import gate_check_model, log_executed
+from outputs import EvolveCycle, EvolveNotRun, EvolveResult
+from permissions import denial_reject, is_blocked
 from store import load_index, load_shard
 from tool_registry import nova_tool
 
@@ -772,7 +773,7 @@ def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
     async def nova_evolve(
         params: NovaEvolveInput,
         approval: Approval("nova_evolve"),
-    ) -> str:
+    ) -> EvolveResult:
         """
         Run one NOVA self-evolution cycle.
 
@@ -787,14 +788,14 @@ def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
         force=True: skip interval/budget limits.
         """
         if is_blocked("nova_evolve"):
-            return denial_payload("nova_evolve")
+            return denial_reject("nova_evolve")
 
         # A dry run mutates nothing — skip the irreversible-write gate entirely.
         # A live cycle may git-commit allowlisted source, so pre-authorise the
         # irreversible capability before running and record the real outcome.
         request_id = None
         if not params.dry_run:
-            gate_err, request_id = await gate_check(
+            gate_err, request_id = await gate_check_model(
                 ctx, "nova_evolve", "evolve_auto_commit",
                 approval=was_approved(approval),
             )
@@ -808,4 +809,9 @@ def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
                 ctx, request_id, "nova_evolve",
                 "evolve_auto_commit", ok=bool(result.get("committed")),
             )
-        return json.dumps(result, indent=2)
+        # The three non-"ok" statuses are policy outcomes (disabled, budget
+        # spent, interval not elapsed), not failures — a distinct shape rather
+        # than an EvolveCycle with every field nulled out.
+        if result.get("status") != "ok":
+            return EvolveNotRun(**result)
+        return EvolveCycle(**result)

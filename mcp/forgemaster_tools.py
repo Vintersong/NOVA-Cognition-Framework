@@ -9,12 +9,18 @@ Two handlers: ``nova_forgemaster_sprint`` (full 4-turn pipeline) and
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import TYPE_CHECKING
 
 from forgemaster_runtime import ForgemasterRuntime
-from gate_helpers import gate_check, log_executed, permission_error
+from gate_helpers import gate_check_model, log_executed, permission_reject
 from approval import Approval, was_approved
+from outputs import (
+    CachePrewarmResult,
+    CachePrewarmed,
+    ErrorPayload,
+    ForgemasterSprintResult,
+    SprintSummary,
+)
 from schemas import CachePrewarmInput, ForgemasterSprintInput
 from tool_registry import nova_tool
 from usage import log_operation
@@ -29,7 +35,7 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
     async def nova_forgemaster_sprint(
         params: ForgemasterSprintInput,
         approval: Approval("nova_forgemaster_sprint"),
-    ) -> str:
+    ) -> ForgemasterSprintResult:
         """
         Run a full Forgemaster sprint: orchestrator → planner → implementer → reviewer.
         Loads optional shards into context, executes the 4-turn pipeline, flushes the
@@ -39,8 +45,8 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
         context before the sprint begins (same pattern as nova_shard_interact).
         """
         if ctx.permission_context.blocks("nova_forgemaster_sprint"):
-            return permission_error("nova_forgemaster_sprint")
-        gate_err, request_id = await gate_check(
+            return permission_reject("nova_forgemaster_sprint")
+        gate_err, request_id = await gate_check_model(
             ctx, "nova_forgemaster_sprint", params.sprint_id,
             approval=was_approved(approval),
         )
@@ -71,7 +77,7 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
                     runtime_class=params.runtime_class,
                 )
             except Exception as exc:
-                return json.dumps({"status": "error", "message": str(exc)}, indent=2)
+                return ErrorPayload(message=str(exc))
 
             log_operation(
                 "nova_forgemaster_sprint",
@@ -83,12 +89,12 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
                 },
             )
             op_ok = True
-            return json.dumps(summary, indent=2)
+            return SprintSummary(**summary)
         finally:
             log_executed(ctx, request_id, "nova_forgemaster_sprint", params.sprint_id, op_ok)
 
     @nova_tool(mcp, name="nova_cache_prewarm")
-    async def nova_cache_prewarm(params: CachePrewarmInput) -> str:
+    async def nova_cache_prewarm(params: CachePrewarmInput) -> CachePrewarmResult:
         """
         Pre-warm the Anthropic prompt cache with a summary context built from the
         top-N highest-confidence shards. Returns the system prompt string that must
@@ -101,7 +107,7 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
         entry written. Subsequent calls with the same system string pay ~0.1× cost.
         """
         if ctx.permission_context.blocks("nova_cache_prewarm"):
-            return permission_error("nova_cache_prewarm")
+            return permission_reject("nova_cache_prewarm")
 
         from recall import prewarm_session_context
         from config import MUNINN_MODEL
@@ -119,7 +125,7 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
                 ),
             )
         except Exception as exc:
-            return json.dumps({"status": "error", "message": str(exc)}, indent=2)
+            return ErrorPayload(message=str(exc))
 
         log_operation("nova_cache_prewarm", result.get("shard_ids", []), {
             "model": model,
@@ -128,17 +134,16 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
             "skipped": result.get("skipped", False),
         })
 
-        output = {
-            "status": "skipped" if result["skipped"] else "ok",
-            "skip_reason": result.get("skip_reason", ""),
-            "shard_count": len(result.get("shard_ids", [])),
-            "shard_ids": result.get("shard_ids", []),
-            "cache_write_tokens": result.get("cache_write_tokens", 0),
-            "model": model,
-            "note": (
+        return CachePrewarmed(
+            status="skipped" if result["skipped"] else "ok",
+            skip_reason=result.get("skip_reason", ""),
+            shard_count=len(result.get("shard_ids", [])),
+            shard_ids=result.get("shard_ids", []),
+            cache_write_tokens=result.get("cache_write_tokens", 0),
+            model=model,
+            note=(
                 "" if result["skipped"] else
                 "Pass system_prompt with cache_control on every subsequent call to get cache reads."
             ),
-            "system_prompt": result.get("system_prompt", ""),
-        }
-        return json.dumps(output, indent=2)
+            system_prompt=result.get("system_prompt", ""),
+        )

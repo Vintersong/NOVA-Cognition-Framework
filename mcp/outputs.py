@@ -989,3 +989,254 @@ FactsRebuildResult = Union[FactsRebuilt, RejectPayload, ErrorPayload]
 CodeSearchResult = Union[CodeSearchResults, CodeSearchUnavailable, RejectPayload]
 HuginnCandidatesResult = Union[HuginnCandidates, RejectPayload]
 CalibrateRoutingResult = Union[CalibrationReport, RejectPayload]
+
+
+# ── Passthrough handlers ─────────────────────────────────────────────────────
+#
+# These tools own no shape of their own — the payload belongs to nott, evolve,
+# forgemaster_runtime, wiki_ingest or the Gemini client. The models below
+# describe the producer, so a change there shows up as a schema change here
+# rather than passing silently through an untyped handler.
+
+class SprintSummary(NovaOutput):
+    """``nova_forgemaster_sprint`` — ``ForgemasterRuntime.run_sprint``'s summary."""
+
+    status: Literal["complete"] = "complete"
+    sprint_id: str
+    turns: int = 4
+    session_id: str
+    token_totals: TokenTotals = Field(default_factory=TokenTotals)
+    implementation_file: Optional[str] = None
+    review_head: str = Field(default="", description="The reviewer's PASS/FAIL line.")
+    outcome: Literal["pass", "fail"]
+    task_type: str = ""
+    runtime_class: str = ""
+    routed_model: str = ""
+    corroborated_shards: list[str] = Field(
+        default_factory=list,
+        description="Shards confirmed by a passing sprint. Empty on a failure.",
+    )
+    biconditional_check: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "The post-run audit reconciliation — every corpus change accounted "
+            "for by an audit record and vice versa. Null when no audit log is wired."
+        ),
+    )
+
+
+class CachePrewarmed(NovaOutput):
+    """``nova_cache_prewarm``."""
+
+    status: Literal["ok", "skipped"]
+    skip_reason: str = ""
+    shard_count: int = 0
+    shard_ids: list[str] = Field(default_factory=list)
+    cache_write_tokens: int = 0
+    model: str
+    note: str = ""
+    system_prompt: str = Field(
+        default="",
+        description=(
+            "Pass verbatim, with cache_control, on every subsequent call. Its "
+            "exact bytes decide whether the cache reads or writes, so it is "
+            "never reformatted."
+        ),
+    )
+
+
+class NidhoggMatch(NovaOutput):
+    """One shard a document was matched to and annotated on."""
+
+    shard_id: str
+    similarity_score: float
+    merge_candidate: bool
+    guiding_question: str = ""
+
+
+class NidhoggFileIngested(NovaOutput):
+    """A document was embedded, matched, and annotated onto shards."""
+
+    status: Literal["ingested"] = "ingested"
+    file: str
+    hash: str
+    source_type: str = ""
+    shards_annotated: int
+    merge_candidates: int
+    matches: list[NidhoggMatch] = Field(default_factory=list)
+
+
+class NidhoggFileSkipped(NovaOutput):
+    """Already in the manifest — ingestion is idempotent by content hash."""
+
+    status: Literal["skipped"] = "skipped"
+    reason: str = ""
+    file: str
+    hash: str
+    previously_ingested_at: Optional[str] = None
+
+
+class NidhoggNoEmbedding(NovaOutput):
+    """No embedding model, so nothing can be matched."""
+
+    status: Literal["no_embedding"] = "no_embedding"
+    reason: str
+    file: str
+
+
+class NidhoggNoMatches(NovaOutput):
+    """Nothing scored above the similarity threshold. Recorded in the manifest
+    anyway so the file is not retried forever."""
+
+    status: Literal["no_matches"] = "no_matches"
+    file: str
+    threshold: float
+    shards_scanned: int
+
+
+NidhoggFileResult = Union[
+    NidhoggFileIngested, NidhoggFileSkipped, NidhoggNoEmbedding,
+    NidhoggNoMatches, RejectPayload,
+]
+
+
+class NidhoggScanSummary(NovaOutput):
+    """``nidhogg_scan`` — one ``NidhoggFileResult`` per file, plus the tally."""
+
+    files_found: int
+    ingested: int
+    skipped: int
+    no_matches: int
+    rejected: int = Field(
+        description="Files refused outright — outside the allowlist, missing, or empty.",
+    )
+    results: list[NidhoggFileResult] = Field(default_factory=list)
+
+
+class NidhoggNothingToIngest(NovaOutput):
+    """``nidhogg_scan`` — the intake directory is empty."""
+
+    status: Literal["nothing_to_ingest"] = "nothing_to_ingest"
+    intake_dir: str
+
+
+class NidhoggManifestEntry(NovaOutput):
+    """One row of the ingestion manifest."""
+
+    file: str = ""
+    source_type: str = ""
+    ingested_at: str = ""
+    shards_matched: int = 0
+    merge_candidates: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+class NidhoggStatusReport(NovaOutput):
+    """``nidhogg_status``."""
+
+    total_ingested: int
+    total_merge_candidates: int
+    entries: list[NidhoggManifestEntry] = Field(default_factory=list)
+
+
+class NidhoggEmpty(NovaOutput):
+    """``nidhogg_status`` before anything has been ingested."""
+
+    status: Literal["empty"] = "empty"
+    message: str
+
+
+class RoutingHealth(NovaOutput):
+    """The calibration snapshot ``nova_evolve`` takes each cycle."""
+
+    huginn_consistency_rate: Optional[float] = None
+    routing_success_by_model: dict[str, Any] = Field(default_factory=dict)
+    suggested_threshold_delta: float = 0.0
+    sample_size: int = 0
+    note: str = ""
+
+
+class EvolveCycle(NovaOutput):
+    """``nova_evolve`` — one completed self-improvement cycle."""
+
+    status: Literal["ok"] = "ok"
+    cycle: int
+    dry_run: bool
+    focus_area: str = ""
+    health: Any = None
+    tests: str = Field(default="", description='e.g. "passed=12 failed=0 ran=12".')
+    commit: str = Field(default="", description="Why the commit was or was not made.")
+    committed: bool = False
+    restart_requested: bool = False
+    weight_reason: str = ""
+    consecutive_empty: int = 0
+    duration_s: float = 0.0
+    director_prompt: str = Field(
+        default="",
+        description="Feed to nova_forgemaster_sprint. Kept verbatim — it is a prompt.",
+    )
+    routing_health: Optional[RoutingHealth] = None
+
+
+class EvolveNotRun(NovaOutput):
+    """``nova_evolve`` declined to start a cycle.
+
+    ``disabled`` (evolve.json), ``limit_reached`` (cycle or budget cap) and
+    ``too_soon`` (interval not elapsed; ``force=True`` overrides) are policy
+    outcomes, not failures — the tool did what it was configured to do.
+    """
+
+    status: Literal["disabled", "limit_reached", "too_soon"]
+    message: str
+
+
+class ExternalDeliberation(NovaOutput):
+    """``nova_external_retrieval`` — the arbiter's verdict on an external claim.
+
+    ``REJECT`` and ``no_results`` are outcomes, not errors: the pipeline ran and
+    concluded nothing was worth writing. The cost-cap abort and the pipeline
+    failures (no API key, agent or arbiter error) never reach this model — the
+    tool turns those into reject envelopes, so a client can tell "deliberated
+    and declined" from "could not deliberate" without reading `verdict`.
+    """
+
+    verdict: str = Field(description="ACCEPT | PARTIAL | REJECT | no_results.")
+    claim: str = ""
+    confidence: float = 0.0
+    shard_id: Optional[str] = Field(
+        default=None, description="The claim shard, on ACCEPT or PARTIAL.",
+    )
+    debate_shard_id: Optional[str] = Field(
+        default=None, description="The debate log, written alongside the claim.",
+    )
+    cost_estimate: float = 0.0
+    rejection_reason: str = ""
+
+
+class GeminiTicketResult(NovaOutput):
+    """``gemini_execute_ticket``."""
+
+    status: Literal["success"] = "success"
+    code: str = Field(description="The generated output, markdown fences stripped.")
+    saved_to: Optional[str] = Field(
+        default=None, description="Set only when output_file was given.",
+    )
+
+
+class GeminiFileLoaded(NovaOutput):
+    """``gemini_load_file``."""
+
+    status: Literal["success"] = "success"
+    filepath: str
+    content: str
+
+
+ForgemasterSprintResult = Union[SprintSummary, RejectPayload, ErrorPayload]
+CachePrewarmResult = Union[CachePrewarmed, RejectPayload, ErrorPayload]
+NidhoggIngestResult = NidhoggFileResult
+NidhoggScanResult = Union[NidhoggScanSummary, NidhoggNothingToIngest, RejectPayload]
+NidhoggStatusResult = Union[NidhoggStatusReport, NidhoggEmpty, RejectPayload]
+EvolveResult = Union[EvolveCycle, EvolveNotRun, RejectPayload]
+ExternalRetrievalResult = Union[ExternalDeliberation, RejectPayload]
+GeminiTicketOutcome = Union[GeminiTicketResult, RejectPayload, ErrorPayload]
+GeminiLoadFileOutcome = Union[GeminiFileLoaded, RejectPayload, ErrorPayload]

@@ -1,19 +1,16 @@
 """
 result_middleware.py — mark failed tool calls with ``isError`` on the wire.
 
-Every NOVA handler returns a JSON string, so the SDK wraps it in a successful
-``CallToolResult`` and ``isError`` is always false. Deliberate failures — a
-missing shard, a permission denial, a capability-gate refusal — were therefore
+A NOVA handler returns a payload, not a ``CallToolResult``, so the SDK wraps it
+as a success and ``isError`` is always false. Deliberate failures — a missing
+shard, a permission denial, a capability-gate refusal — were therefore
 indistinguishable from success to any client that does not parse NOVA's payload
 shape, which is the inverse of what the spec intends: ``isError`` exists exactly
 so a client can tell a failed call from a successful one without understanding
 the body.
 
 Doing this as server middleware rather than per handler keeps all 41 tools
-consistent and means a new tool gets the behaviour for free. The alternative —
-having handlers return ``CallToolResult`` directly — would touch every handler
-and is better folded into the structured-output work, which rewrites the return
-types anyway.
+consistent and means a new tool gets the behaviour for free.
 
 The mapping follows the two-shape envelope contract in ``reject.py``:
 
@@ -23,6 +20,15 @@ The mapping follows the two-shape envelope contract in ``reject.py``:
 
 ``status`` values that denote success — "flushed", "loaded", "added",
 "skipped", "updated" and friends — are deliberately not in that set.
+
+This works because every failure NOVA reports goes through one of those two
+envelopes. Handlers whose payload has its own failure vocabulary are expected
+to translate: ``nova_external_retrieval``'s pipeline reports a ``verdict``,
+and its ``cap_exceeded`` and ``error`` verdicts are converted to reject
+envelopes by the handler rather than taught to the middleware here. Adding a
+second vocabulary to this file would mean deciding, per tool, which of its
+domain values count as failure — exactly the coupling the envelope exists to
+avoid.
 """
 
 from __future__ import annotations

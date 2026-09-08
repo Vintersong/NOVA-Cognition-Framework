@@ -50,7 +50,12 @@
       },
       "name": "gemini_execute_ticket",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ErrorPayload",
+          "GeminiTicketResult",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -81,7 +86,12 @@
       },
       "name": "gemini_load_file",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ErrorPayload",
+          "GeminiFileLoaded",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -112,7 +122,15 @@
       },
       "name": "nidhogg_ingest",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "NidhoggFileIngested",
+          "NidhoggFileSkipped",
+          "NidhoggMatch",
+          "NidhoggNoEmbedding",
+          "NidhoggNoMatches",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -143,7 +161,17 @@
       },
       "name": "nidhogg_scan",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "NidhoggFileIngested",
+          "NidhoggFileSkipped",
+          "NidhoggMatch",
+          "NidhoggNoEmbedding",
+          "NidhoggNoMatches",
+          "NidhoggNothingToIngest",
+          "NidhoggScanSummary",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -174,7 +202,13 @@
       },
       "name": "nidhogg_status",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "NidhoggEmpty",
+          "NidhoggManifestEntry",
+          "NidhoggStatusReport",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -205,7 +239,12 @@
       },
       "name": "nova_cache_prewarm",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "CachePrewarmed",
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -312,7 +351,13 @@
       },
       "name": "nova_evolve",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "EvolveCycle",
+          "EvolveNotRun",
+          "RejectCode",
+          "RejectPayload",
+          "RoutingHealth"
+        ],
         "properties": [
           "result"
         ],
@@ -343,7 +388,11 @@
       },
       "name": "nova_external_retrieval",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ExternalDeliberation",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -446,7 +495,13 @@
       },
       "name": "nova_forgemaster_sprint",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload",
+          "SprintSummary",
+          "TokenTotals"
+        ],
         "properties": [
           "result"
         ],

@@ -54,17 +54,20 @@ def report(tmp_path_factory) -> dict:
     return run_driver(tmp_path_factory.mktemp("nova_data"))
 
 
-WIKI_TOOLS = [
+#: The seven tools that never consulted the permission context at all.
+UNGUARDED_TOOLS = [
     "nova_wiki_schema", "nova_wiki_ingest", "nova_wiki_query",
     "nova_wiki_get", "nova_wiki_list", "nova_wiki_lint",
+    "nova_external_retrieval",
 ]
 
 
 @pytest.fixture(scope="module")
 def denied_report(tmp_path_factory) -> dict:
     return run_driver(
-        tmp_path_factory.mktemp("nova_denied"), "denied",
-        NOVA_DENIED_TOOLS=",".join(WIKI_TOOLS),
+        tmp_path_factory.mktemp("nova_denied"), "probe",
+        ROUNDTRIP_TOOLS=",".join(UNGUARDED_TOOLS),
+        NOVA_DENIED_TOOLS=",".join(UNGUARDED_TOOLS),
     )
 
 
@@ -270,11 +273,28 @@ def test_wiki_list_and_lint_on_an_empty_wiki(report):
     assert lint["deep_lint"] is None
 
 
-def test_wiki_tools_honour_the_permission_context(denied_report):
-    """The six wiki tools were the only ones that never consulted the permission
-    context, so NOVA_DENIED_TOOLS silently did nothing for them."""
-    assert set(denied_report["calls"]) == set(WIKI_TOOLS)
+def test_unguarded_tools_now_honour_the_permission_context(denied_report):
+    """These seven never consulted the permission context, so NOVA_DENIED_TOOLS
+    silently did nothing for them — you could deny nova_wiki_ingest and it would
+    still write."""
+    assert set(denied_report["calls"]) == set(UNGUARDED_TOOLS)
     for name, entry in denied_report["calls"].items():
         assert entry["is_error"] is True, name
         assert entry["payload"]["code"] == "permission_denied", name
         assert entry["payload"]["target"] == name
+
+
+def test_external_retrieval_translates_a_pipeline_failure(tmp_path_factory):
+    """Its pipeline reports a `verdict`, not a `status`, so the isError
+    middleware could never see its failures. The handler now converts the two
+    non-outcome verdicts into reject envelopes; without CLAUDE_API_KEY this
+    takes the dependency_missing path."""
+    report = run_driver(
+        tmp_path_factory.mktemp("nova_extret"), "probe",
+        ROUNDTRIP_TOOLS="nova_external_retrieval",
+        NOVA_DENIED_TOOLS="",
+        CLAUDE_API_KEY="",
+    )
+    entry = report["calls"]["nova_external_retrieval"]
+    assert entry["is_error"] is True
+    assert entry["payload"]["code"] == "dependency_missing"

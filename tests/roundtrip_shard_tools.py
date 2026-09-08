@@ -144,17 +144,18 @@ async def drive() -> dict:
     return report
 
 
-async def drive_denied() -> dict:
-    """Call every tool named in NOVA_DENIED_TOOLS and report what came back.
+async def drive_probe() -> dict:
+    """Call each tool named in ROUNDTRIP_TOOLS once and report what came back.
 
-    Separate from ``drive`` because the permission context is read from the
-    environment at import time, so a denial run needs its own interpreter.
+    Separate from ``drive`` because the permission context and the API keys are
+    read from the environment at import time, so probing under a different
+    environment needs its own interpreter.
     """
     import nova_server
     from mcp import Client
     import os
 
-    names = [n.strip() for n in os.environ["NOVA_DENIED_TOOLS"].split(",") if n.strip()]
+    names = [n.strip() for n in os.environ["ROUNDTRIP_TOOLS"].split(",") if n.strip()]
     args = {
         "nova_wiki_schema": {"action": "get"},
         "nova_wiki_ingest": {"source": "x"},
@@ -162,6 +163,7 @@ async def drive_denied() -> dict:
         "nova_wiki_get": {"slug": "x"},
         "nova_wiki_list": {},
         "nova_wiki_lint": {},
+        "nova_external_retrieval": {"query": "x"},
     }
 
     report: dict = {"calls": {}}
@@ -178,5 +180,5 @@ async def drive_denied() -> dict:
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
-    runner = drive_denied if mode == "denied" else drive
+    runner = drive_probe if mode == "probe" else drive
     print("@@REPORT@@" + json.dumps(asyncio.run(runner())))
