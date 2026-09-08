@@ -50,7 +50,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from atomic_io import atomic_write_json
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
-from permissions import denial_payload, is_blocked
+from outputs import (
+    CodeSearchResult,
+    CodeSearchResults,
+    CodeSearchUnavailable,
+)
+from permissions import denial_reject, is_blocked
 from tool_registry import nova_tool
 
 logger = logging.getLogger(__name__)
@@ -441,7 +446,7 @@ def register_code_index_tools(mcp, ctx) -> None:
     """
 
     @nova_tool(mcp, name="nova_code_search")
-    async def nova_code_search(params: CodeSearchInput) -> str:
+    async def nova_code_search(params: CodeSearchInput) -> CodeSearchResult:
         """
         Semantic search over NOVA's own mcp/ source code.
 
@@ -464,15 +469,14 @@ def register_code_index_tools(mcp, ctx) -> None:
           }
         """
         if is_blocked("nova_code_search"):
-            return denial_payload("nova_code_search")
+            return denial_reject("nova_code_search")
 
         query = params.query.strip()
         query_embedding = generate_local_embedding(query)
         if query_embedding is None:
-            return json.dumps({
-                "status": "unavailable",
-                "reason": "embedding model unavailable — install sentence-transformers",
-            }, indent=2)
+            return CodeSearchUnavailable(
+                reason="embedding model unavailable — install sentence-transformers",
+            )
 
         ranked = _search_chunks(query_embedding, params.top_n)
         matches = [
@@ -488,8 +492,8 @@ def register_code_index_tools(mcp, ctx) -> None:
             for score, chunk in ranked
         ]
 
-        return json.dumps({
-            "query": query,
-            "match_count": len(matches),
-            "matches": matches,
-        }, indent=2)
+        return CodeSearchResults(
+            query=query,
+            match_count=len(matches),
+            matches=matches,
+        )

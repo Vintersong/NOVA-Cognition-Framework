@@ -19,6 +19,7 @@ import os
 from collections import defaultdict, deque
 from pathlib import Path
 
+from outputs import CalibrateRoutingResult, CalibrationReport
 from schemas import CalibrateRoutingInput
 
 logger = logging.getLogger(__name__)
@@ -359,11 +360,11 @@ def _run_calibration(params: CalibrateRoutingInput) -> dict:
 
 def register_calibrate_tools(mcp) -> None:
     import asyncio
-    from permissions import is_blocked, denial_payload
+    from permissions import denial_reject, is_blocked
     from tool_registry import nova_tool
 
     @nova_tool(mcp, name="nova_calibrate_routing")
-    async def nova_calibrate_routing(params: CalibrateRoutingInput) -> str:
+    async def nova_calibrate_routing(params: CalibrateRoutingInput) -> CalibrateRoutingResult:
         """
         Analyse HUGINN retrieval logs and Forgemaster sprint logs to calibrate
         routing thresholds and model routing based on empirical performance data.
@@ -379,8 +380,8 @@ def register_calibrate_tools(mcp) -> None:
         via env var: HUGINN_CONFIDENCE_THRESHOLD=<value>.
         """
         if is_blocked("nova_calibrate_routing"):
-            return denial_payload("nova_calibrate_routing")
+            return denial_reject("nova_calibrate_routing")
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _run_calibration, params)
-        return json.dumps(result, indent=2)
+        return CalibrationReport(**result)

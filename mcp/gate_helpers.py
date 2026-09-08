@@ -24,8 +24,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from capability_gate import CapabilityDenied, HITLDenied
-from permissions import denial_payload
-from reject import RejectCode, RejectPayload, reject_model, reject_payload
+from permissions import denial_payload, denial_reject
+from reject import RejectCode, RejectPayload, reject_model
 
 if TYPE_CHECKING:
     from server_context import ServerContext
@@ -49,11 +49,7 @@ def permission_reject(tool_name: str) -> RejectPayload:
     Handlers annotated with an output model return this so the refusal
     validates against the published ``outputSchema``.
     """
-    return reject_model(
-        RejectCode.PERMISSION_DENIED,
-        f"Tool '{tool_name}' is not permitted in the current permission context.",
-        target=tool_name,
-    )
+    return denial_reject(tool_name)
 
 
 async def gate_check_model(

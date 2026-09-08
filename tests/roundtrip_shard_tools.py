@@ -102,6 +102,33 @@ async def drive() -> dict:
         })
         await call(c, "nova_shard_get", {"shard_id": "does_not_exist"}, key="missing")
 
+        # ── Wiki ─────────────────────────────────────────────────────────────
+        await call(c, "nova_wiki_schema", {"action": "get"}, key="wiki_schema_empty")
+        await call(c, "nova_wiki_schema", {
+            "action": "add", "slug": "roundtrip", "title": "Roundtrip",
+            "description": "A page for the roundtrip.", "tags": "testing",
+            "category": "testing",
+        }, key="wiki_add")
+        await call(c, "nova_wiki_schema", {
+            "action": "add", "slug": "roundtrip", "title": "Roundtrip",
+        }, key="wiki_add_duplicate")
+        await call(c, "nova_wiki_schema", {"action": "get"}, key="wiki_schema")
+        # No CLAUDE_API_KEY in CI, so routing returns nothing and this lands on
+        # the "no relevant pages" branch — still the WikiIngested shape.
+        await call(c, "nova_wiki_ingest", {
+            "source": "some text to file away", "source_name": "roundtrip.txt",
+        }, key="wiki_ingest")
+        await call(c, "nova_wiki_query", {"query": "roundtrip"}, key="wiki_query")
+        await call(c, "nova_wiki_list", {}, key="wiki_list")
+        await call(c, "nova_wiki_lint", {}, key="wiki_lint")
+        await call(c, "nova_wiki_get", {"slug": "not_a_page"}, key="wiki_missing")
+        await call(c, "nova_wiki_schema", {
+            "action": "remove", "slug": "roundtrip",
+        }, key="wiki_remove")
+        await call(c, "nova_wiki_schema", {
+            "action": "remove", "slug": "roundtrip",
+        }, key="wiki_remove_again")
+
         # Token accounting is asserted against the *persisted* transcript, which
         # is the string the handler serialised for the session store — not the
         # model the client received.
@@ -117,5 +144,39 @@ async def drive() -> dict:
     return report
 
 
+async def drive_denied() -> dict:
+    """Call every tool named in NOVA_DENIED_TOOLS and report what came back.
+
+    Separate from ``drive`` because the permission context is read from the
+    environment at import time, so a denial run needs its own interpreter.
+    """
+    import nova_server
+    from mcp import Client
+    import os
+
+    names = [n.strip() for n in os.environ["NOVA_DENIED_TOOLS"].split(",") if n.strip()]
+    args = {
+        "nova_wiki_schema": {"action": "get"},
+        "nova_wiki_ingest": {"source": "x"},
+        "nova_wiki_query": {"query": "x"},
+        "nova_wiki_get": {"slug": "x"},
+        "nova_wiki_list": {},
+        "nova_wiki_lint": {},
+    }
+
+    report: dict = {"calls": {}}
+    async with Client(nova_server.mcp) as c:
+        for name in names:
+            result = await c.call_tool(name, {"params": args[name]})
+            report["calls"][name] = {
+                "is_error": result.is_error,
+                "has_text": bool(result.content and getattr(result.content[0], "text", "")),
+                "payload": (result.structured_content or {}).get("result"),
+            }
+    return report
+
+
 if __name__ == "__main__":
-    print("@@REPORT@@" + json.dumps(asyncio.run(drive())))
+    mode = sys.argv[1] if len(sys.argv) > 1 else "full"
+    runner = drive_denied if mode == "denied" else drive
+    print("@@REPORT@@" + json.dumps(asyncio.run(runner())))

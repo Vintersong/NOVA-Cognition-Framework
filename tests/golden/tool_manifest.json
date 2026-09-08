@@ -236,7 +236,15 @@
       },
       "name": "nova_calibrate_routing",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "CalibrationReport",
+          "ForgemasterCalibration",
+          "HuginnBucketStat",
+          "HuginnCalibration",
+          "RejectCode",
+          "RejectPayload",
+          "ReplayDivergence"
+        ],
         "properties": [
           "result"
         ],
@@ -267,7 +275,13 @@
       },
       "name": "nova_code_search",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "CodeMatch",
+          "CodeSearchResults",
+          "CodeSearchUnavailable",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -360,7 +374,12 @@
       },
       "name": "nova_facts_rebuild",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ErrorPayload",
+          "FactsRebuilt",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -391,7 +410,12 @@
       },
       "name": "nova_facts_search",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "FactRow",
+          "FactsSearchResults",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -526,7 +550,12 @@
       },
       "name": "nova_huginn_candidates",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "HuginnCandidate",
+          "HuginnCandidates",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -1254,7 +1283,11 @@
       },
       "name": "nova_wiki_get",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiPageContent"
+        ],
         "properties": [
           "result"
         ],
@@ -1285,7 +1318,12 @@
       },
       "name": "nova_wiki_ingest",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiIngestNoSchema",
+          "WikiIngested"
+        ],
         "properties": [
           "result"
         ],
@@ -1316,7 +1354,13 @@
       },
       "name": "nova_wiki_lint",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiBrokenLink",
+          "WikiLintReport",
+          "WikiStalePage"
+        ],
         "properties": [
           "result"
         ],
@@ -1347,7 +1391,12 @@
       },
       "name": "nova_wiki_list",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiList",
+          "WikiListRow"
+        ],
         "properties": [
           "result"
         ],
@@ -1378,7 +1427,12 @@
       },
       "name": "nova_wiki_query",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiQueryHit",
+          "WikiQueryResults"
+        ],
         "properties": [
           "result"
         ],
@@ -1409,7 +1463,14 @@
       },
       "name": "nova_wiki_schema",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiSchema",
+          "WikiSpec",
+          "WikiSpecAdded",
+          "WikiSpecRemoved"
+        ],
         "properties": [
           "result"
         ],

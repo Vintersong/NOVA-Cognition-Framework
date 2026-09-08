@@ -19,7 +19,25 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reject import RejectCode, reject_dict, reject_payload
+from outputs import (
+    WikiGetResult,
+    WikiIngestNoSchema,
+    WikiIngestResult,
+    WikiIngested,
+    WikiLintReport,
+    WikiLintResult,
+    WikiList,
+    WikiListResult,
+    WikiPageContent,
+    WikiQueryResult,
+    WikiQueryResults,
+    WikiSchema,
+    WikiSchemaResult,
+    WikiSpecAdded,
+    WikiSpecRemoved,
+)
+from permissions import denial_reject as permission_reject, is_blocked
+from reject import RejectCode, reject_dict, reject_model
 from schemas import (
     WikiSchemaInput,
     WikiIngestInput,
@@ -34,9 +52,7 @@ from wiki import (
     all_wiki_pages,
     load_wiki_schema,
     save_wiki_schema,
-    schema_by_slug,
     load_wiki_index,
-    wiki_dir_ready,
 )
 from wiki_ingest import ingest_source
 from nova_embeddings_local import generate_local_embedding
@@ -53,7 +69,7 @@ def register_wiki_tools(mcp) -> None:
     # ── nova_wiki_schema ──────────────────────────────────────────────────────
 
     @nova_tool(mcp, name="nova_wiki_schema")
-    async def nova_wiki_schema(params: WikiSchemaInput) -> str:
+    async def nova_wiki_schema(params: WikiSchemaInput) -> WikiSchemaResult:
         """
         View or modify the wiki topic taxonomy.
 
@@ -61,19 +77,22 @@ def register_wiki_tools(mcp) -> None:
         action="add"    — add a new page spec (slug, title, description, tags, category)
         action="remove" — remove a page spec by slug (does not delete the wiki file)
         """
+        if is_blocked("nova_wiki_schema"):
+            return permission_reject("nova_wiki_schema")
+
         pages = load_wiki_schema()
 
         if params.action == "get":
-            return json.dumps({
-                "page_count": len(pages),
-                "pages": [p.to_dict() for p in pages],
-            }, indent=2)
+            return WikiSchema(
+                page_count=len(pages),
+                pages=[p.to_dict() for p in pages],
+            )
 
         if params.action == "add":
             if not params.slug or not params.title:
-                return reject_payload(RejectCode.INVALID_INPUT, "slug and title are required.")
+                return reject_model(RejectCode.INVALID_INPUT, "slug and title are required.")
             if any(p.slug == params.slug for p in pages):
-                return reject_payload(
+                return reject_model(
                     RejectCode.DUPLICATE,
                     f"Slug '{params.slug}' already exists.",
                     target=params.slug,
@@ -88,40 +107,38 @@ def register_wiki_tools(mcp) -> None:
             )
             pages.append(new_spec)
             save_wiki_schema(pages)
-            return json.dumps({
-                "status":   "added",
-                "slug":     params.slug,
-                "title":    params.title,
-                "total":    len(pages),
-            }, indent=2)
+            return WikiSpecAdded(
+                slug=params.slug,
+                title=params.title,
+                total=len(pages),
+            )
 
         if params.action == "remove":
             if not params.slug:
-                return reject_payload(RejectCode.INVALID_INPUT, "slug is required.")
+                return reject_model(RejectCode.INVALID_INPUT, "slug is required.")
             before = len(pages)
             pages  = [p for p in pages if p.slug != params.slug]
             if len(pages) == before:
-                return reject_payload(
+                return reject_model(
                     RejectCode.WIKI_PAGE_NOT_FOUND,
                     f"Slug '{params.slug}' not found.",
                     target=params.slug,
                 )
             save_wiki_schema(pages)
-            return json.dumps({
-                "status":  "removed",
-                "slug":    params.slug,
-                "total":   len(pages),
-                "note":    "Wiki file (if any) was not deleted.",
-            }, indent=2)
+            return WikiSpecRemoved(
+                slug=params.slug,
+                total=len(pages),
+                note="Wiki file (if any) was not deleted.",
+            )
 
-        return reject_payload(
+        return reject_model(
             RejectCode.INVALID_INPUT, f"Unknown action: {params.action}"
         )
 
     # ── nova_wiki_ingest ──────────────────────────────────────────────────────
 
     @nova_tool(mcp, name="nova_wiki_ingest")
-    async def nova_wiki_ingest(params: WikiIngestInput) -> str:
+    async def nova_wiki_ingest(params: WikiIngestInput) -> WikiIngestResult:
         """
         Ingest a source document into the wiki.
 
@@ -135,6 +152,9 @@ def register_wiki_tools(mcp) -> None:
           3. Re-embed updated pages
           4. Update wiki/index.md and wiki/log.md
         """
+        if is_blocked("nova_wiki_ingest"):
+            return permission_reject("nova_wiki_ingest")
+
         source    = params.source
         path      = Path(source)
 
@@ -152,18 +172,25 @@ def register_wiki_tools(mcp) -> None:
             source_name = source_name,
             dry_run     = params.dry_run,
         )
-        return json.dumps(result, indent=2)
+        # The two branches genuinely differ: an empty taxonomy reports a status
+        # and carries no source_name, so it gets its own model.
+        if result.get("status") == "no_schema":
+            return WikiIngestNoSchema(**result)
+        return WikiIngested(**result)
 
     # ── nova_wiki_query ───────────────────────────────────────────────────────
 
     @nova_tool(mcp, name="nova_wiki_query")
-    async def nova_wiki_query(params: WikiQueryInput) -> str:
+    async def nova_wiki_query(params: WikiQueryInput) -> WikiQueryResult:
         """
         Semantic search over wiki pages using cosine similarity.
 
         Returns top-n pages with slug, title, score, and a short excerpt.
         Falls back to keyword overlap if no embeddings are available.
         """
+        if is_blocked("nova_wiki_query"):
+            return permission_reject("nova_wiki_query")
+
         index = load_wiki_index()
 
         if not index:
@@ -186,12 +213,12 @@ def register_wiki_tools(mcp) -> None:
                 }
                 for p, hits in scored[: params.top_n]
             ]
-            return json.dumps({"query": params.query, "results": results}, indent=2)
+            return WikiQueryResults(query=params.query, results=results)
 
         # Embed the query
         query_vec = generate_local_embedding(params.query)
         if not query_vec:
-            return reject_payload(
+            return reject_model(
                 RejectCode.DEPENDENCY_MISSING, "Embedding model unavailable."
             )
 
@@ -218,39 +245,45 @@ def register_wiki_tools(mcp) -> None:
                 "method":  "cosine",
             })
 
-        return json.dumps({"query": params.query, "results": results}, indent=2)
+        return WikiQueryResults(query=params.query, results=results)
 
     # ── nova_wiki_get ─────────────────────────────────────────────────────────
 
     @nova_tool(mcp, name="nova_wiki_get")
-    async def nova_wiki_get(params: WikiGetInput) -> str:
+    async def nova_wiki_get(params: WikiGetInput) -> WikiGetResult:
         """Read a specific wiki page in full."""
+        if is_blocked("nova_wiki_get"):
+            return permission_reject("nova_wiki_get")
+
         page = load_wiki_page(params.slug)
         if page is None:
-            return reject_payload(
+            return reject_model(
                 RejectCode.WIKI_PAGE_NOT_FOUND,
                 f"No wiki page found for slug '{params.slug}'.",
                 target=params.slug,
             )
-        return json.dumps({
-            "slug":     page.slug,
-            "title":    page.title,
-            "category": page.category,
-            "tags":     page.tags,
-            "updated":  page.updated.isoformat(),
-            "sources":  page.sources,
-            "links":    page.outbound_links,
-            "body":     page.body,
-        }, indent=2)
+        return WikiPageContent(
+            slug=page.slug,
+            title=page.title,
+            category=page.category,
+            tags=page.tags,
+            updated=page.updated.isoformat(),
+            sources=page.sources,
+            links=page.outbound_links,
+            body=page.body,
+        )
 
     # ── nova_wiki_list ────────────────────────────────────────────────────────
 
     @nova_tool(mcp, name="nova_wiki_list")
-    async def nova_wiki_list(params: WikiListInput) -> str:
+    async def nova_wiki_list(params: WikiListInput) -> WikiListResult:
         """
         List all wiki pages with one-line summaries.
         Optionally filter by category.
         """
+        if is_blocked("nova_wiki_list"):
+            return permission_reject("nova_wiki_list")
+
         pages = all_wiki_pages()
 
         if params.category:
@@ -273,16 +306,16 @@ def register_wiki_tools(mcp) -> None:
                 "summary":  first_line[:120],
             })
 
-        return json.dumps({
-            "total":    len(rows),
-            "category": params.category or "all",
-            "pages":    rows,
-        }, indent=2)
+        return WikiList(
+            total=len(rows),
+            category=params.category or "all",
+            pages=rows,
+        )
 
     # ── nova_wiki_lint ────────────────────────────────────────────────────────
 
     @nova_tool(mcp, name="nova_wiki_lint")
-    async def nova_wiki_lint(params: WikiLintInput) -> str:
+    async def nova_wiki_lint(params: WikiLintInput) -> WikiLintResult:
         """
         Health check the wiki.
 
@@ -295,6 +328,9 @@ def register_wiki_tools(mcp) -> None:
         deep=True: also runs an LLM contradiction check across all pages
           (expensive — uses Sonnet, one pass per page pair)
         """
+        if is_blocked("nova_wiki_lint"):
+            return permission_reject("nova_wiki_lint")
+
         pages    = all_wiki_pages()
         index    = load_wiki_index()
         all_slugs = {p.slug for p in pages}
@@ -338,7 +374,7 @@ def register_wiki_tools(mcp) -> None:
         if params.deep and pages:
             report["deep_lint"] = _deep_lint(pages)
 
-        return json.dumps(report, indent=2)
+        return WikiLintReport(**report)
 
 
 # ═══════════════════════════════════════════════════════════

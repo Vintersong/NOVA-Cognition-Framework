@@ -686,3 +686,306 @@ ShardForgetResult = Union[ShardForgotten, RejectPayload]
 ShardConsolidateResult = Union[
     ConsolidateScheduled, ConsolidateLastReport, ConsolidateNoReport, RejectPayload,
 ]
+
+
+# ── Wiki tools ───────────────────────────────────────────────────────────────
+
+class WikiSpec(NovaOutput):
+    """One entry in the wiki taxonomy — ``wiki.WikiPageSpec``."""
+
+    slug: str
+    title: str
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    category: str = "general"
+
+
+class WikiSchema(NovaOutput):
+    """``nova_wiki_schema`` with ``action="get"`` — the whole taxonomy."""
+
+    page_count: int
+    pages: list[WikiSpec] = Field(default_factory=list)
+
+
+class WikiSpecAdded(NovaOutput):
+    """``nova_wiki_schema`` with ``action="add"``."""
+
+    status: Literal["added"] = "added"
+    slug: str
+    title: str
+    total: int = Field(description="Specs in the taxonomy after the add.")
+
+
+class WikiSpecRemoved(NovaOutput):
+    """``nova_wiki_schema`` with ``action="remove"``."""
+
+    status: Literal["removed"] = "removed"
+    slug: str
+    total: int
+    note: str
+
+
+class WikiIngested(NovaOutput):
+    """``nova_wiki_ingest`` — the routing pass ran, and the synthesis pass too
+    unless ``dry_run``."""
+
+    source_name: str
+    routed_slugs: list[str] = Field(default_factory=list)
+    synthesized: list[str] = Field(default_factory=list)
+    skipped: list[dict[str, str]] = Field(default_factory=list)
+    dry_run: bool = False
+    message: Optional[str] = None
+
+
+class WikiIngestNoSchema(NovaOutput):
+    """``nova_wiki_ingest`` with an empty taxonomy — there is nowhere to route to.
+
+    A distinct shape rather than a field on ``WikiIngested``: this branch reports
+    a ``status`` and carries no ``source_name`` or ``skipped``, and pretending
+    otherwise would describe a payload the tool never sends.
+    """
+
+    status: Literal["no_schema"] = "no_schema"
+    message: str
+    routed_slugs: list[str] = Field(default_factory=list)
+    synthesized: list[str] = Field(default_factory=list)
+    dry_run: bool = False
+
+
+class WikiQueryHit(NovaOutput):
+    """One ``nova_wiki_query`` result."""
+
+    slug: str
+    title: str
+    score: Union[int, float] = Field(
+        description=(
+            "A cosine similarity (float) on the embedding path, or a raw "
+            "occurrence count (int) on the keyword fallback. `method` says which."
+        ),
+    )
+    excerpt: str = ""
+    method: Literal["cosine", "keyword"]
+
+
+class WikiQueryResults(NovaOutput):
+    """``nova_wiki_query``."""
+
+    query: str
+    results: list[WikiQueryHit] = Field(default_factory=list)
+
+
+class WikiPageContent(NovaOutput):
+    """``nova_wiki_get`` — one page in full."""
+
+    slug: str
+    title: str
+    category: str = "general"
+    tags: list[str] = Field(default_factory=list)
+    updated: str = Field(description="ISO 8601. nova_wiki_list uses %Y-%m-%d instead.")
+    sources: list[str] = Field(
+        default_factory=list,
+        description="Names of the ingested documents. nova_wiki_list reports a count.",
+    )
+    links: list[str] = Field(default_factory=list, description="Outbound [[wikilinks]].")
+    body: str = ""
+
+
+class WikiListRow(NovaOutput):
+    """One row from ``nova_wiki_list``.
+
+    ``sources`` and ``updated`` deliberately differ from ``WikiPageContent``:
+    this is a listing projection, so a count and a date beat a name list and a
+    timestamp. They are separate models precisely so the schema can say that.
+    """
+
+    slug: str
+    title: str
+    category: str = "general"
+    tags: list[str] = Field(default_factory=list)
+    updated: str = Field(description="%Y-%m-%d.")
+    sources: int = Field(description="How many documents fed this page.")
+    summary: str = Field(description="First prose line, capped at 120 chars.")
+
+
+class WikiList(NovaOutput):
+    """``nova_wiki_list``."""
+
+    total: int
+    category: str = Field(description='The filter, or "all".')
+    pages: list[WikiListRow] = Field(default_factory=list)
+
+
+class WikiBrokenLink(NovaOutput):
+    """A `[[wikilink]]` pointing at a slug with no page."""
+
+    page: str
+    broken_link: str
+
+
+class WikiStalePage(NovaOutput):
+    """A page untouched for more than 30 days."""
+
+    slug: str
+    days_since_update: int
+
+
+class WikiLintReport(NovaOutput):
+    """``nova_wiki_lint``."""
+
+    total_pages: int
+    orphan_pages: list[str] = Field(
+        default_factory=list, description="No inbound [[wikilinks]].",
+    )
+    broken_links: list[WikiBrokenLink] = Field(default_factory=list)
+    missing_embeddings: list[str] = Field(default_factory=list)
+    stale_pages: list[WikiStalePage] = Field(default_factory=list)
+    deep_lint: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Null unless deep=True. Then {slug: [contradiction, ...]}, or a "
+            "reject/error envelope if the LLM pass could not run."
+        ),
+    )
+
+
+WikiSchemaResult = Union[WikiSchema, WikiSpecAdded, WikiSpecRemoved, RejectPayload]
+WikiIngestResult = Union[WikiIngested, WikiIngestNoSchema, RejectPayload]
+WikiQueryResult = Union[WikiQueryResults, RejectPayload]
+WikiGetResult = Union[WikiPageContent, RejectPayload]
+WikiListResult = Union[WikiList, RejectPayload]
+WikiLintResult = Union[WikiLintReport, RejectPayload]
+
+
+# ── Facts, code search, HUGINN pre-filter, calibration ───────────────────────
+
+class FactsSearchResults(NovaOutput):
+    """``nova_facts_search``."""
+
+    status: Literal["ok"] = "ok"
+    query: str
+    confidence_filter: Optional[int] = Field(
+        default=None, description="1=confirmed, 0=neutral, -1=contradicted, null=any.",
+    )
+    count: int
+    results: list[FactRow] = Field(default_factory=list)
+
+
+class FactsRebuilt(NovaOutput):
+    """``nova_facts_rebuild``."""
+
+    status: Literal["ok"] = "ok"
+    indexed: int = Field(description="Files re-indexed from FACTS_DIR.")
+    facts_dir: str
+
+
+class CodeMatch(NovaOutput):
+    """One chunk from ``nova_code_search``."""
+
+    file: str
+    symbol: str = ""
+    kind: str = Field(
+        description="function | class | module_header | function_header | class_header",
+    )
+    start_line: int
+    end_line: int
+    similarity_score: float
+    source: str = Field(description="The chunk's source text, verbatim.")
+
+
+class CodeSearchResults(NovaOutput):
+    """``nova_code_search``."""
+
+    query: str
+    match_count: int
+    matches: list[CodeMatch] = Field(default_factory=list)
+
+
+class CodeSearchUnavailable(NovaOutput):
+    """``nova_code_search`` with no embedding model — nothing to search with."""
+
+    status: Literal["unavailable"] = "unavailable"
+    reason: str
+
+
+class HuginnCandidate(NovaOutput):
+    """One shard surviving the HUGINN pre-filter."""
+
+    id: str
+    guiding_question: str = ""
+    context_summary: str = Field(default="", description="Capped at 300 chars.")
+    confidence: float
+
+
+class HuginnCandidates(NovaOutput):
+    """``nova_huginn_candidates``."""
+
+    query: str
+    candidate_count: int
+    candidates: list[HuginnCandidate] = Field(default_factory=list)
+    huginn_prompt_block: str = Field(
+        description=(
+            "The candidates rendered for pasting into a HUGINN agent prompt. "
+            "Its exact bytes are the point, so it stays a string rather than "
+            "being re-derived from `candidates` by the caller."
+        ),
+    )
+
+
+class HuginnBucketStat(NovaOutput):
+    """Top-1 consistency within one confidence bucket."""
+
+    total: int
+    consistent: int
+    consistency_rate: float
+
+
+class HuginnCalibration(NovaOutput):
+    """The HUGINN half of ``nova_calibrate_routing``."""
+
+    current_threshold: float
+    suggested_threshold: float
+    threshold_delta: float
+    sample_size: int
+    bucket_stats: dict[str, HuginnBucketStat] = Field(default_factory=dict)
+    note: str = ""
+
+
+class ReplayDivergence(NovaOutput):
+    """Repeated-query divergence — the same query returning different top-1
+    shards across runs."""
+
+    queries_repeated: int
+    queries_zero_hit: int = Field(
+        description="Repeated queries whose every run missed; excluded from the rate.",
+    )
+    queries_divergent: int
+    divergence_rate: float
+    examples: list[Any] = Field(default_factory=list)
+    note: str = ""
+
+
+class ForgemasterCalibration(NovaOutput):
+    """The Forgemaster half of ``nova_calibrate_routing``."""
+
+    total_outcome_events: int
+    routing_stats: dict[str, Any] = Field(default_factory=dict)
+    note: str = ""
+
+
+class CalibrationReport(NovaOutput):
+    """``nova_calibrate_routing`` — read-only findings; nothing is applied."""
+
+    huginn: HuginnCalibration
+    replay_divergence: Optional[ReplayDivergence] = Field(
+        default=None, description="Present only when include_replay_divergence.",
+    )
+    forgemaster: Optional[ForgemasterCalibration] = Field(
+        default=None, description="Present only when include_forgemaster.",
+    )
+
+
+FactsSearchResult = Union[FactsSearchResults, RejectPayload]
+FactsRebuildResult = Union[FactsRebuilt, RejectPayload, ErrorPayload]
+CodeSearchResult = Union[CodeSearchResults, CodeSearchUnavailable, RejectPayload]
+HuginnCandidatesResult = Union[HuginnCandidates, RejectPayload]
+CalibrateRoutingResult = Union[CalibrationReport, RejectPayload]

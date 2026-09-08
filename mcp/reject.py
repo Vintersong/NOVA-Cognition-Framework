@@ -85,7 +85,8 @@ _DEFAULTS: dict[RejectCode, tuple[bool, str]] = {
     ),
     RejectCode.DUPLICATE: (
         False,
-        "A shard with this content already exists; do not re-create.",
+        # Not shard-specific: nova_wiki_schema raises this for a taken slug too.
+        "Something with this identifier already exists; do not re-create it.",
     ),
     RejectCode.DEPENDENCY_MISSING: (
         False,

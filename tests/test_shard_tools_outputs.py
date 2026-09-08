@@ -26,12 +26,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DRIVER = Path(__file__).resolve().parent / "roundtrip_shard_tools.py"
 
 
-@pytest.fixture(scope="module")
-def report(tmp_path_factory) -> dict:
+def run_driver(data_root, *args, **extra_env) -> dict:
     pytest.importorskip("mcp.server.mcpserver", reason="MCP SDK not installed")
     pytest.importorskip("sentence_transformers", reason="embedding stack not installed")
 
-    data_root = tmp_path_factory.mktemp("nova_data")
     env = {
         **os.environ,
         "NOVA_DATA_ROOT": str(data_root),
@@ -39,15 +37,35 @@ def report(tmp_path_factory) -> dict:
         # from NOVA_DATA_ROOT (nova_shard_db.py pins it to the repo root), so
         # it has to be redirected separately or the test writes to the repo.
         "NOVA_SHARD_DB_FILE": str(data_root / "nova_shard_index.db"),
+        **extra_env,
     }
     proc = subprocess.run(
-        [sys.executable, str(DRIVER)],
+        [sys.executable, str(DRIVER), *args],
         cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=300,
     )
     marker = "@@REPORT@@"
     if marker not in proc.stdout:
         pytest.fail(f"driver produced no report\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
     return json.loads(proc.stdout.split(marker, 1)[1])
+
+
+@pytest.fixture(scope="module")
+def report(tmp_path_factory) -> dict:
+    return run_driver(tmp_path_factory.mktemp("nova_data"))
+
+
+WIKI_TOOLS = [
+    "nova_wiki_schema", "nova_wiki_ingest", "nova_wiki_query",
+    "nova_wiki_get", "nova_wiki_list", "nova_wiki_lint",
+]
+
+
+@pytest.fixture(scope="module")
+def denied_report(tmp_path_factory) -> dict:
+    return run_driver(
+        tmp_path_factory.mktemp("nova_denied"), "denied",
+        NOVA_DENIED_TOOLS=",".join(WIKI_TOOLS),
+    )
 
 
 def call(report: dict, key: str) -> dict:
@@ -203,3 +221,60 @@ def test_interact_transcript_is_the_payload_the_client_received(report):
     assert stored["inferred"] is wire["inferred"] is False
     assert [s["shard_id"] for s in stored["shards"]] == [s["shard_id"] for s in wire["shards"]]
     assert stored["shards"][0]["fragments"] == wire["shards"][0]["fragments"]
+
+
+# ── Wiki ─────────────────────────────────────────────────────────────────────
+
+def test_wiki_schema_add_get_remove(report):
+    assert call(report, "wiki_schema_empty")["payload"] == {"page_count": 0, "pages": []}
+
+    added = call(report, "wiki_add")["payload"]
+    assert added["status"] == "added"
+    assert added["total"] == 1
+
+    schema = call(report, "wiki_schema")["payload"]
+    assert schema["pages"][0]["slug"] == "roundtrip"
+    assert schema["pages"][0]["category"] == "testing"
+
+    removed = call(report, "wiki_remove")["payload"]
+    assert removed["status"] == "removed"
+    assert removed["total"] == 0
+
+
+@pytest.mark.parametrize("key,code", [
+    ("wiki_add_duplicate", "duplicate"),
+    ("wiki_remove_again", "wiki_page_not_found"),
+    ("wiki_missing", "wiki_page_not_found"),
+])
+def test_wiki_rejections_are_typed(report, key, code):
+    entry = call(report, key)
+    assert entry["is_error"] is True
+    assert entry["payload"]["code"] == code
+
+
+def test_wiki_ingest_reports_the_routing_result(report):
+    """With no CLAUDE_API_KEY the routing pass returns nothing, which is the
+    'no relevant pages' branch — still a WikiIngested, not a refusal."""
+    payload = call(report, "wiki_ingest")["payload"]
+    assert payload["source_name"] == "roundtrip.txt"
+    assert payload["routed_slugs"] == []
+    assert payload["synthesized"] == []
+
+
+def test_wiki_list_and_lint_on_an_empty_wiki(report):
+    assert call(report, "wiki_list")["payload"] == {
+        "total": 0, "category": "all", "pages": [],
+    }
+    lint = call(report, "wiki_lint")["payload"]
+    assert lint["total_pages"] == 0
+    assert lint["deep_lint"] is None
+
+
+def test_wiki_tools_honour_the_permission_context(denied_report):
+    """The six wiki tools were the only ones that never consulted the permission
+    context, so NOVA_DENIED_TOOLS silently did nothing for them."""
+    assert set(denied_report["calls"]) == set(WIKI_TOOLS)
+    for name, entry in denied_report["calls"].items():
+        assert entry["is_error"] is True, name
+        assert entry["payload"]["code"] == "permission_denied", name
+        assert entry["payload"]["target"] == name

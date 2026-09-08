@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 
-from gate_helpers import permission_error
+from gate_helpers import permission_reject
 from huginn_prefilter import prefilter
+from outputs import HuginnCandidates, HuginnCandidatesResult
 from schemas import HuginnCandidatesInput
 from store import load_index, update_index
 from tool_registry import nova_tool
@@ -20,7 +21,7 @@ from tool_registry import nova_tool
 def register_huginn_tools(mcp, ctx) -> None:
 
     @nova_tool(mcp, name="nova_huginn_candidates")
-    async def nova_huginn_candidates(params: HuginnCandidatesInput) -> str:
+    async def nova_huginn_candidates(params: HuginnCandidatesInput) -> HuginnCandidatesResult:
         """
         Pre-filter the shard index for a query and return a small candidate list
         ready to pass to a HUGINN agent prompt.
@@ -42,7 +43,7 @@ def register_huginn_tools(mcp, ctx) -> None:
           }
         """
         if ctx.permission_context.blocks("nova_huginn_candidates"):
-            return permission_error("nova_huginn_candidates")
+            return permission_reject("nova_huginn_candidates")
 
         query = params.query.strip()
         max_candidates = min(params.max_candidates, 20)
@@ -58,9 +59,9 @@ def register_huginn_tools(mcp, ctx) -> None:
             f"CANDIDATES:\n{candidates_json}"
         )
 
-        return json.dumps({
-            "query": query,
-            "candidate_count": len(candidates),
-            "candidates": candidates,
-            "huginn_prompt_block": huginn_prompt_block,
-        }, indent=2)
+        return HuginnCandidates(
+            query=query,
+            candidate_count=len(candidates),
+            candidates=candidates,
+            huginn_prompt_block=huginn_prompt_block,
+        )

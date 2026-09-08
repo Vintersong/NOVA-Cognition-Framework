@@ -298,7 +298,7 @@ def test_nova_code_search_returns_matches(tmp_path: Path, monkeypatch: pytest.Mo
     code_index.register_code_index_tools(mcp, ctx=None)
 
     out = asyncio.run(mcp.tools["nova_code_search"](CodeSearchInput(query="foo")))
-    payload = json.loads(out)
+    payload = out.model_dump(mode="json", by_alias=True)
     assert payload["match_count"] == 1
     assert payload["matches"][0]["symbol"] == "foo"
     assert "def foo" in payload["matches"][0]["source"]
@@ -312,7 +312,7 @@ def test_nova_code_search_honours_permission_denial(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(permissions, "_active", ctx_perm)
 
     out = asyncio.run(mcp.tools["nova_code_search"](CodeSearchInput(query="x")))
-    payload = json.loads(out)
+    payload = out.model_dump(mode="json", by_alias=True)
     assert payload["status"] == "rejected"
     assert payload["code"] == "permission_denied"
     assert "not permitted" in payload["message"]
