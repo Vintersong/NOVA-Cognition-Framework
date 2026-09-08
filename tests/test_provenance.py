@@ -11,7 +11,6 @@ provenance.apply_validation_event, which is tested directly here.
 
 import pytest
 
-import provenance
 from provenance import (
     AUTHORITY_RANK,
     MAX_EVENTS,

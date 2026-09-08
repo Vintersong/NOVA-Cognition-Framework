@@ -4,14 +4,10 @@ test_quarantine.py — Unit tests for the quarantine system (Step 4).
 Run: cd mcp && python -m pytest test_quarantine.py test_recall.py -v
 """
 
-import json
-import tempfile
-import time
+import asyncio
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from recall import hook_recall, clear_cache
 
@@ -101,7 +97,7 @@ def test_expired_quarantine_not_penalised():
 
 def _build_nott(shards: dict, graph_relations: list):
     """Build a Nott instance wired to in-memory shard storage."""
-    from nott import Nott, NottTrigger
+    from nott import Nott
 
     shard_store = dict(shards)  # shard_id -> data dict
 
@@ -151,9 +147,6 @@ def _shard(shard_id, quarantine_until, confidence=1.0):
             "source": "session_extracted",
         },
     }
-
-
-import asyncio
 
 
 def test_past_quarantine_no_contradicts_graduates():
