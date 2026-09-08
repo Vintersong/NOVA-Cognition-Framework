@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import yaml
 from filelock import FileLock
 
 try:
@@ -506,14 +507,71 @@ def read_shard_skeleton(shard_path: str | Path) -> dict:
     return skeleton
 
 
+def read_md_shard_skeleton(path: Path) -> dict:
+    """Skeleton for a ``.md`` shard, read from its YAML frontmatter.
+
+    The Markdown format keeps everything the browse row needs in the
+    frontmatter, so this stops at the closing fence rather than parsing the
+    conversation body — the same reason ``read_shard_skeleton`` streams the
+    JSON form with ijson instead of json.load. The turn count is the one field
+    that does need the body, and counting its ``---`` separators is far cheaper
+    than parsing the turns.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    parts = re.split(r"^---\s*$", text, maxsplit=2, flags=re.MULTILINE)
+    fm: dict = {}
+    body = ""
+    if len(parts) >= 3:
+        try:
+            fm = yaml.safe_load(parts[1]) or {}
+        except yaml.YAMLError as exc:
+            _record_error("read_md_shard_skeleton", exc)
+            fm = {}
+        body = parts[2]
+
+    theme = fm.get("theme", "") or ""
+    intent = fm.get("intent", "") or ""
+    skeleton = {
+        "id": fm.get("shard_id") or path.stem,
+        "guiding_question": fm.get("guiding_question", "") or "",
+        "theme": theme,
+        "intent": intent,
+        "confidence": float(fm.get("confidence", 1.0) or 1.0),
+        "created": _format_created_date(
+            fm.get("created") or fm.get("last_used") or "", path,
+        ),
+        # Separator count, not turn parsing: a trailing separator after the last
+        # turn would over-count, so count non-empty blocks instead.
+        "turn_count": sum(1 for b in re.split(r"\n---\n", body) if b.strip()),
+        "synopsis_source": fm.get("context_summary", "") or "",
+    }
+    skeleton["tags"] = _coerce_tags(theme, fm.get("tags") or [], intent)
+    return skeleton
+
+
 def iter_shard_skeletons() -> list[dict]:
+    """Skeletons for every shard on disk, in both storage formats.
+
+    This used to glob ``*.json`` only, while ``load_shard_file`` prefers ``.md``
+    — so a shard migrated to Markdown was readable by id but invisible to
+    nova_shard_index, nova_shard_summary and nova_shard_list, which all sit on
+    this function.
+    """
     shard_dir = Path(SHARD_DIR)
     if not shard_dir.exists():
         return []
+    readers = {".json": read_shard_skeleton, ".md": read_md_shard_skeleton}
     rows = []
-    for path in sorted(shard_dir.glob("*.json")):
+    for path in sorted(shard_dir.iterdir()):
+        # atomic_io writes ".tmp_*" siblings in this directory and renames them
+        # into place; catching one mid-write is a guaranteed FileNotFoundError.
+        if path.name.startswith("."):
+            continue
+        reader = readers.get(path.suffix.lower())
+        if reader is None:
+            continue
         try:
-            rows.append(read_shard_skeleton(path))
+            rows.append(reader(path))
         except Exception as exc:
             _record_error("iter_shard_skeletons", exc)
             continue
