@@ -214,10 +214,15 @@ def reject_payload(
     )
 
 
-def shard_not_found(shard_id: str) -> str:
+def shard_not_found_model(shard_id: str) -> RejectPayload:
     """Shortcut for the most common reject path."""
-    return reject_payload(
+    return reject_model(
         RejectCode.SHARD_NOT_FOUND,
         f"Shard '{shard_id}' not found.",
         target=shard_id,
     )
+
+
+def shard_not_found(shard_id: str) -> str:
+    """JSON-string form of :func:`shard_not_found_model`, for untyped handlers."""
+    return shard_not_found_model(shard_id).model_dump_json(indent=2)

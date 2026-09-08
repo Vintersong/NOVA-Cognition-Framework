@@ -557,7 +557,12 @@
       },
       "name": "nova_obsidian_export",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ObsidianDryRun",
+          "ObsidianExported",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -697,7 +702,11 @@
       },
       "name": "nova_shard_archive",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardArchived"
+        ],
         "properties": [
           "result"
         ],
@@ -728,7 +737,13 @@
       },
       "name": "nova_shard_consolidate",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ConsolidateLastReport",
+          "ConsolidateNoReport",
+          "ConsolidateScheduled",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -759,7 +774,11 @@
       },
       "name": "nova_shard_create",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardCreated"
+        ],
         "properties": [
           "result"
         ],
@@ -790,7 +809,11 @@
       },
       "name": "nova_shard_forget",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardForgotten"
+        ],
         "properties": [
           "result"
         ],
@@ -821,7 +844,15 @@
       },
       "name": "nova_shard_get",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ConversationTurn",
+          "EpistemicProvenance",
+          "RejectCode",
+          "RejectPayload",
+          "Shard",
+          "ShardContext",
+          "ShardMetaTags"
+        ],
         "properties": [
           "result"
         ],
@@ -852,7 +883,12 @@
       },
       "name": "nova_shard_get_full",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ConversationTurn",
+          "RejectCode",
+          "RejectPayload",
+          "ShardBody"
+        ],
         "properties": [
           "result"
         ],
@@ -883,7 +919,13 @@
       },
       "name": "nova_shard_index",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "BrowseEnvelope",
+          "BrowseRow",
+          "RejectCode",
+          "RejectPayload",
+          "ThemeBucket"
+        ],
         "properties": [
           "result"
         ],
@@ -914,7 +956,16 @@
       },
       "name": "nova_shard_interact",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "EpistemicProvenance",
+          "FactRow",
+          "InteractLoaded",
+          "InteractNoShards",
+          "LoadedShard",
+          "RejectCode",
+          "RejectPayload",
+          "ShardMetaTags"
+        ],
         "properties": [
           "result"
         ],
@@ -945,7 +996,16 @@
       },
       "name": "nova_shard_list",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "ConversationTurn",
+          "EpistemicProvenance",
+          "LegacyShardDump",
+          "RejectCode",
+          "RejectPayload",
+          "Shard",
+          "ShardContext",
+          "ShardMetaTags"
+        ],
         "properties": [
           "result"
         ],
@@ -976,7 +1036,11 @@
       },
       "name": "nova_shard_merge",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardsMerged"
+        ],
         "properties": [
           "result"
         ],
@@ -1007,7 +1071,15 @@
       },
       "name": "nova_shard_query_state",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "StateFilters",
+          "StateHit",
+          "StateQueryResults",
+          "StateStats",
+          "StateVector"
+        ],
         "properties": [
           "result"
         ],
@@ -1038,7 +1110,12 @@
       },
       "name": "nova_shard_search",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "SearchHit",
+          "SearchResults"
+        ],
         "properties": [
           "result"
         ],
@@ -1069,7 +1146,13 @@
       },
       "name": "nova_shard_summary",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "BrowseEnvelope",
+          "BrowseRow",
+          "RejectCode",
+          "RejectPayload",
+          "ThemeBucket"
+        ],
         "properties": [
           "result"
         ],
@@ -1100,7 +1183,11 @@
       },
       "name": "nova_shard_update",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardUpdated"
+        ],
         "properties": [
           "result"
         ],
@@ -1131,7 +1218,12 @@
       },
       "name": "nova_shard_validate",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "EpistemicProvenance",
+          "RejectCode",
+          "RejectPayload",
+          "ShardValidated"
+        ],
         "properties": [
           "result"
         ],
