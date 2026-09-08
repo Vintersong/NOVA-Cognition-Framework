@@ -1,4 +1,184 @@
 {
+  "prompts": [
+    {
+      "arguments": [],
+      "name": "forgemaster-code-review",
+      "summary": "Load this skill when reviewing any implementation before it merges to main.",
+      "title": "Code Review"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-emotional-state-routing",
+      "summary": "Load this skill **before** routing any sprint ticket when: - The task involves a high-stakes or irreversible decision - The user's phrasing signals urgency, frustration, or pressure (\"quickly\", \"need this now\", \"nothing is working\", \"desperate\") - A previous sprint produced contradicted or low-confidence results - N\u00d3TT's last cycle flagged shards with high arousal scores",
+      "title": "Emotional State Routing"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-git-workflow",
+      "summary": "Load this skill when setting up a branch, committing work, or creating a PR.",
+      "title": "Git Workflow"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-heavyskill",
+      "summary": "Load this skill when a task meets the activation predicate below.",
+      "title": "Heavyskill"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-implementation",
+      "summary": "Load this skill when executing a single implementation, boilerplate, or structured-output ticket.",
+      "title": "Implementation"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-nova-session-handoff",
+      "summary": "Load this skill when approaching context limit, ending a session, or handing work to another agent.",
+      "title": "NOVA Session Handoff"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-nova-session-start",
+      "summary": "Load this skill at the start of every session before doing any work.",
+      "title": "NOVA Session Start"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-nova-shard-triage",
+      "summary": "Load this skill when the shard corpus feels cluttered, after a consolidation run surfaces merge candidates, or on a scheduled hygiene pass (recommended every 10\u201315 sprints).",
+      "title": "NOVA Shard Triage"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-orchestrator",
+      "summary": "Load this skill at the start of every sprint, before decomposing any work.",
+      "title": "Orchestrator"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-parallel-lanes",
+      "summary": "Load this skill when dispatching 2 or more independent tickets in the same sprint wave.",
+      "title": "Parallel Lanes"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-qa-review",
+      "summary": "Load this skill when the review lane runs after any implementation ticket.",
+      "title": "QA Review"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-systematic-debugging",
+      "summary": "Load this skill whenever investigating any failure, error, or unexpected behavior \u2014 before attempting any fix.",
+      "title": "Systematic Debugging"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-verification",
+      "summary": "Load this skill before claiming any ticket, sprint, or feature is complete.",
+      "title": "Verification"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-writing-plans",
+      "summary": "Load this skill when decomposing a design doc, feature request, or user story into a sprint plan.",
+      "title": "Writing Plans"
+    },
+    {
+      "arguments": [
+        {
+          "name": "min_confidence",
+          "required": false
+        }
+      ],
+      "name": "nova-audit-confidence",
+      "summary": "Find the contradicted, low-confidence and stale shards, and decide what to do about each.",
+      "title": "Audit Corpus Confidence"
+    },
+    {
+      "arguments": [
+        {
+          "name": "path",
+          "required": true
+        }
+      ],
+      "name": "nova-ingest-document",
+      "summary": "Route a document into the shard graph or the wiki.",
+      "title": "Ingest a Document"
+    },
+    {
+      "arguments": [
+        {
+          "name": "project",
+          "required": true
+        }
+      ],
+      "name": "nova-orient",
+      "summary": "Load what NOVA already knows about a project and summarise the current state before doing any work.",
+      "title": "Orient in a Project"
+    },
+    {
+      "arguments": [
+        {
+          "name": "depth",
+          "required": false
+        },
+        {
+          "name": "shard_id",
+          "required": true
+        }
+      ],
+      "name": "nova-recall",
+      "summary": "Pull one shard and everything the graph connects it to.",
+      "title": "Recall Around a Shard"
+    },
+    {
+      "arguments": [
+        {
+          "name": "design_doc",
+          "required": true
+        },
+        {
+          "name": "shard_ids",
+          "required": false
+        },
+        {
+          "name": "sprint_id",
+          "required": true
+        }
+      ],
+      "name": "nova-run-sprint",
+      "summary": "Load context, then run the four-turn sprint pipeline.",
+      "title": "Run a Forgemaster Sprint"
+    },
+    {
+      "arguments": [
+        {
+          "name": "project",
+          "required": true
+        }
+      ],
+      "name": "nova-write-handoff",
+      "summary": "Decide whether this session needs a handoff shard, and write one if it does.",
+      "title": "Write a Session Handoff"
+    }
+  ],
+  "resource_templates": [
+    {
+      "description": "One shard by id, exactly as stored on disk \u2014 metadata, conversation history and context. The read-only equivalent of nova_shard_get.",
+      "mime_type": "application/json",
+      "name": "nova_shard",
+      "title": "Shard",
+      "uri_template": "nova://shard/{shard_id}"
+    },
+    {
+      "description": "One curated wiki page by slug, as Markdown. The read-only equivalent of nova_wiki_get.",
+      "mime_type": "text/markdown",
+      "name": "nova_wiki_page",
+      "title": "Wiki Page",
+      "uri_template": "nova://wiki/{slug}"
+    }
+  ],
   "resources": [
     {
       "description": "Every directed inter-shard relation as stored on disk.",
@@ -38,6 +218,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ExecuteTicketInput"
+        ],
         "properties": [
           "params"
         ],
@@ -47,6 +230,12 @@
       },
       "name": "gemini_execute_ticket",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "GeminiTicketResult",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -65,6 +254,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "LoadFileInput"
+        ],
         "properties": [
           "params"
         ],
@@ -74,6 +266,12 @@
       },
       "name": "gemini_load_file",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "GeminiFileLoaded",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -92,6 +290,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "NidhoggIngestInput"
+        ],
         "properties": [
           "params"
         ],
@@ -101,6 +302,15 @@
       },
       "name": "nidhogg_ingest",
       "output_schema": {
+        "defs": [
+          "NidhoggFileIngested",
+          "NidhoggFileSkipped",
+          "NidhoggMatch",
+          "NidhoggNoEmbedding",
+          "NidhoggNoMatches",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -119,6 +329,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "NidhoggScanInput"
+        ],
         "properties": [
           "params"
         ],
@@ -128,6 +341,17 @@
       },
       "name": "nidhogg_scan",
       "output_schema": {
+        "defs": [
+          "NidhoggFileIngested",
+          "NidhoggFileSkipped",
+          "NidhoggMatch",
+          "NidhoggNoEmbedding",
+          "NidhoggNoMatches",
+          "NidhoggNothingToIngest",
+          "NidhoggScanSummary",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -146,6 +370,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "NidhoggStatusInput"
+        ],
         "properties": [
           "params"
         ],
@@ -155,6 +382,13 @@
       },
       "name": "nidhogg_status",
       "output_schema": {
+        "defs": [
+          "NidhoggEmpty",
+          "NidhoggManifestEntry",
+          "NidhoggStatusReport",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -173,6 +407,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "CachePrewarmInput"
+        ],
         "properties": [
           "params"
         ],
@@ -182,6 +419,12 @@
       },
       "name": "nova_cache_prewarm",
       "output_schema": {
+        "defs": [
+          "CachePrewarmed",
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -200,6 +443,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "CalibrateRoutingInput"
+        ],
         "properties": [
           "params"
         ],
@@ -209,6 +455,15 @@
       },
       "name": "nova_calibrate_routing",
       "output_schema": {
+        "defs": [
+          "CalibrationReport",
+          "ForgemasterCalibration",
+          "HuginnBucketStat",
+          "HuginnCalibration",
+          "RejectCode",
+          "RejectPayload",
+          "ReplayDivergence"
+        ],
         "properties": [
           "result"
         ],
@@ -227,6 +482,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "CodeSearchInput"
+        ],
         "properties": [
           "params"
         ],
@@ -236,6 +494,13 @@
       },
       "name": "nova_code_search",
       "output_schema": {
+        "defs": [
+          "CodeMatch",
+          "CodeSearchResults",
+          "CodeSearchUnavailable",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -254,6 +519,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "NovaEvolveInput"
+        ],
         "properties": [
           "params"
         ],
@@ -263,6 +531,13 @@
       },
       "name": "nova_evolve",
       "output_schema": {
+        "defs": [
+          "EvolveCycle",
+          "EvolveNotRun",
+          "RejectCode",
+          "RejectPayload",
+          "RoutingHealth"
+        ],
         "properties": [
           "result"
         ],
@@ -281,6 +556,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ExternalRetrievalInput"
+        ],
         "properties": [
           "params"
         ],
@@ -290,6 +568,11 @@
       },
       "name": "nova_external_retrieval",
       "output_schema": {
+        "defs": [
+          "ExternalDeliberation",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -308,6 +591,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "FactsRebuildInput"
+        ],
         "properties": [
           "params"
         ],
@@ -317,6 +603,12 @@
       },
       "name": "nova_facts_rebuild",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "FactsRebuilt",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -335,6 +627,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "FactsSearchInput"
+        ],
         "properties": [
           "params"
         ],
@@ -344,6 +639,12 @@
       },
       "name": "nova_facts_search",
       "output_schema": {
+        "defs": [
+          "FactRow",
+          "FactsSearchResults",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -362,6 +663,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ForgemasterSprintInput"
+        ],
         "properties": [
           "params"
         ],
@@ -371,6 +675,13 @@
       },
       "name": "nova_forgemaster_sprint",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload",
+          "SprintSummary",
+          "TokenTotals"
+        ],
         "properties": [
           "result"
         ],
@@ -389,6 +700,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "GraphQueryInput"
+        ],
         "properties": [
           "params"
         ],
@@ -398,6 +712,14 @@
       },
       "name": "nova_graph_query",
       "output_schema": {
+        "defs": [
+          "GraphDirectResult",
+          "GraphHop",
+          "GraphRelation",
+          "GraphTransitiveResult",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -416,6 +738,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "GraphRelationInput"
+        ],
         "properties": [
           "params"
         ],
@@ -425,6 +750,11 @@
       },
       "name": "nova_graph_relate",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "RelationAdded"
+        ],
         "properties": [
           "result"
         ],
@@ -443,6 +773,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "HuginnCandidatesInput"
+        ],
         "properties": [
           "params"
         ],
@@ -452,6 +785,12 @@
       },
       "name": "nova_huginn_candidates",
       "output_schema": {
+        "defs": [
+          "HuginnCandidate",
+          "HuginnCandidates",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -470,6 +809,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ObsidianExportInput"
+        ],
         "properties": [
           "params"
         ],
@@ -479,6 +821,12 @@
       },
       "name": "nova_obsidian_export",
       "output_schema": {
+        "defs": [
+          "ObsidianDryRun",
+          "ObsidianExported",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -497,6 +845,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "SessionFlushInput"
+        ],
         "properties": [
           "params"
         ],
@@ -506,6 +857,13 @@
       },
       "name": "nova_session_flush",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload",
+          "SessionFlushed",
+          "TokenTotals"
+        ],
         "properties": [
           "result"
         ],
@@ -524,6 +882,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "SessionListInput"
+        ],
         "properties": [
           "params"
         ],
@@ -533,6 +894,11 @@
       },
       "name": "nova_session_list",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "SessionList"
+        ],
         "properties": [
           "result"
         ],
@@ -551,6 +917,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "SessionLoadInput"
+        ],
         "properties": [
           "params"
         ],
@@ -560,6 +929,13 @@
       },
       "name": "nova_session_load",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload",
+          "SessionLoaded",
+          "TokenTotals"
+        ],
         "properties": [
           "result"
         ],
@@ -578,6 +954,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardArchiveInput"
+        ],
         "properties": [
           "params"
         ],
@@ -587,6 +966,11 @@
       },
       "name": "nova_shard_archive",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardArchived"
+        ],
         "properties": [
           "result"
         ],
@@ -605,6 +989,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardConsolidateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -614,6 +1001,13 @@
       },
       "name": "nova_shard_consolidate",
       "output_schema": {
+        "defs": [
+          "ConsolidateLastReport",
+          "ConsolidateNoReport",
+          "ConsolidateScheduled",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -632,6 +1026,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardCreateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -641,6 +1038,11 @@
       },
       "name": "nova_shard_create",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardCreated"
+        ],
         "properties": [
           "result"
         ],
@@ -659,6 +1061,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardForgetInput"
+        ],
         "properties": [
           "params"
         ],
@@ -668,6 +1073,11 @@
       },
       "name": "nova_shard_forget",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardForgotten"
+        ],
         "properties": [
           "result"
         ],
@@ -686,6 +1096,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardGetInput"
+        ],
         "properties": [
           "params"
         ],
@@ -695,6 +1108,15 @@
       },
       "name": "nova_shard_get",
       "output_schema": {
+        "defs": [
+          "ConversationTurn",
+          "EpistemicProvenance",
+          "RejectCode",
+          "RejectPayload",
+          "Shard",
+          "ShardContext",
+          "ShardMetaTags"
+        ],
         "properties": [
           "result"
         ],
@@ -713,6 +1135,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardGetFullInput"
+        ],
         "properties": [
           "params"
         ],
@@ -722,6 +1147,12 @@
       },
       "name": "nova_shard_get_full",
       "output_schema": {
+        "defs": [
+          "ConversationTurn",
+          "RejectCode",
+          "RejectPayload",
+          "ShardBody"
+        ],
         "properties": [
           "result"
         ],
@@ -740,6 +1171,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardIndexInput"
+        ],
         "properties": [
           "params"
         ],
@@ -749,6 +1183,13 @@
       },
       "name": "nova_shard_index",
       "output_schema": {
+        "defs": [
+          "BrowseEnvelope",
+          "BrowseRow",
+          "RejectCode",
+          "RejectPayload",
+          "ThemeBucket"
+        ],
         "properties": [
           "result"
         ],
@@ -767,6 +1208,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardInteractInput"
+        ],
         "properties": [
           "params"
         ],
@@ -776,6 +1220,16 @@
       },
       "name": "nova_shard_interact",
       "output_schema": {
+        "defs": [
+          "EpistemicProvenance",
+          "FactRow",
+          "InteractLoaded",
+          "InteractNoShards",
+          "LoadedShard",
+          "RejectCode",
+          "RejectPayload",
+          "ShardMetaTags"
+        ],
         "properties": [
           "result"
         ],
@@ -794,6 +1248,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardListInput"
+        ],
         "properties": [
           "params"
         ],
@@ -803,6 +1260,16 @@
       },
       "name": "nova_shard_list",
       "output_schema": {
+        "defs": [
+          "ConversationTurn",
+          "EpistemicProvenance",
+          "LegacyShardDump",
+          "RejectCode",
+          "RejectPayload",
+          "Shard",
+          "ShardContext",
+          "ShardMetaTags"
+        ],
         "properties": [
           "result"
         ],
@@ -821,6 +1288,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardMergeInput"
+        ],
         "properties": [
           "params"
         ],
@@ -830,6 +1300,11 @@
       },
       "name": "nova_shard_merge",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardsMerged"
+        ],
         "properties": [
           "result"
         ],
@@ -848,6 +1323,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardStateQueryInput"
+        ],
         "properties": [
           "params"
         ],
@@ -857,6 +1335,15 @@
       },
       "name": "nova_shard_query_state",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "StateFilters",
+          "StateHit",
+          "StateQueryResults",
+          "StateStats",
+          "StateVector"
+        ],
         "properties": [
           "result"
         ],
@@ -875,6 +1362,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardSearchInput"
+        ],
         "properties": [
           "params"
         ],
@@ -884,6 +1374,12 @@
       },
       "name": "nova_shard_search",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "SearchHit",
+          "SearchResults"
+        ],
         "properties": [
           "result"
         ],
@@ -902,6 +1398,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardIndexInput"
+        ],
         "properties": [
           "params"
         ],
@@ -911,6 +1410,13 @@
       },
       "name": "nova_shard_summary",
       "output_schema": {
+        "defs": [
+          "BrowseEnvelope",
+          "BrowseRow",
+          "RejectCode",
+          "RejectPayload",
+          "ThemeBucket"
+        ],
         "properties": [
           "result"
         ],
@@ -929,6 +1435,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardUpdateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -938,6 +1447,11 @@
       },
       "name": "nova_shard_update",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "ShardUpdated"
+        ],
         "properties": [
           "result"
         ],
@@ -956,6 +1470,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardValidateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -965,6 +1482,12 @@
       },
       "name": "nova_shard_validate",
       "output_schema": {
+        "defs": [
+          "EpistemicProvenance",
+          "RejectCode",
+          "RejectPayload",
+          "ShardValidated"
+        ],
         "properties": [
           "result"
         ],
@@ -983,6 +1506,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "WikiGetInput"
+        ],
         "properties": [
           "params"
         ],
@@ -992,6 +1518,11 @@
       },
       "name": "nova_wiki_get",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiPageContent"
+        ],
         "properties": [
           "result"
         ],
@@ -1010,6 +1541,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "WikiIngestInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1019,6 +1553,12 @@
       },
       "name": "nova_wiki_ingest",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiIngestNoSchema",
+          "WikiIngested"
+        ],
         "properties": [
           "result"
         ],
@@ -1037,6 +1577,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "WikiLintInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1046,6 +1589,13 @@
       },
       "name": "nova_wiki_lint",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiBrokenLink",
+          "WikiLintReport",
+          "WikiStalePage"
+        ],
         "properties": [
           "result"
         ],
@@ -1064,6 +1614,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "WikiListInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1073,6 +1626,12 @@
       },
       "name": "nova_wiki_list",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiList",
+          "WikiListRow"
+        ],
         "properties": [
           "result"
         ],
@@ -1091,6 +1650,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "WikiQueryInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1100,6 +1662,12 @@
       },
       "name": "nova_wiki_query",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiQueryHit",
+          "WikiQueryResults"
+        ],
         "properties": [
           "result"
         ],
@@ -1118,6 +1686,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "WikiSchemaInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1127,6 +1698,14 @@
       },
       "name": "nova_wiki_schema",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "WikiSchema",
+          "WikiSpec",
+          "WikiSpecAdded",
+          "WikiSpecRemoved"
+        ],
         "properties": [
           "result"
         ],

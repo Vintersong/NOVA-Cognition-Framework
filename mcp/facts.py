@@ -13,7 +13,6 @@ Tools:
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -21,7 +20,14 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from config import FACTS_DIR, FACTS_INDEX_FILE
-from permissions import is_blocked, denial_payload
+from outputs import (
+    ErrorPayload,
+    FactsRebuildResult,
+    FactsRebuilt,
+    FactsSearchResult,
+    FactsSearchResults,
+)
+from permissions import denial_reject, is_blocked
 from shard_parser import ShardDB
 from tool_registry import nova_tool
 
@@ -61,29 +67,28 @@ def register_facts_tools(mcp: Any) -> None:
     """Register `nova_facts_search` and `nova_facts_rebuild` on the MCP server."""
 
     @nova_tool(mcp, name="nova_facts_search")
-    async def nova_facts_search(params: FactsSearchInput) -> str:
+    async def nova_facts_search(params: FactsSearchInput) -> FactsSearchResult:
         """Keyword search over the curated facts corpus (`.shard` files).
         Returns high-confidence facts as a HUGINN pre-filter."""
         if is_blocked("nova_facts_search"):
-            return denial_payload("nova_facts_search")
+            return denial_reject("nova_facts_search")
         results = search_facts(params.query, confidence=params.confidence, limit=params.limit)
-        return json.dumps({
-            "status": "ok",
-            "query": params.query,
-            "confidence_filter": params.confidence,
-            "count": len(results),
-            "results": results,
-        }, indent=2)
+        return FactsSearchResults(
+            query=params.query,
+            confidence_filter=params.confidence,
+            count=len(results),
+            results=results,
+        )
 
     @nova_tool(mcp, name="nova_facts_rebuild")
-    async def nova_facts_rebuild(params: FactsRebuildInput) -> str:
+    async def nova_facts_rebuild(params: FactsRebuildInput) -> FactsRebuildResult:
         """Re-scan FACTS_DIR and rebuild the SQLite index. Idempotent."""
         if is_blocked("nova_facts_rebuild"):
-            return denial_payload("nova_facts_rebuild")
+            return denial_reject("nova_facts_rebuild")
         try:
             with _open_db() as db:
                 count = db.rebuild_from_dir(FACTS_DIR)
-            return json.dumps({"status": "ok", "indexed": count, "facts_dir": FACTS_DIR})
+            return FactsRebuilt(indexed=count, facts_dir=str(FACTS_DIR))
         except Exception as exc:
             logger.warning("nova_facts_rebuild failed: %s", exc)
-            return json.dumps({"status": "error", "message": str(exc)})
+            return ErrorPayload(message=str(exc))

@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import json
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RejectCode(str, Enum):
@@ -83,7 +85,8 @@ _DEFAULTS: dict[RejectCode, tuple[bool, str]] = {
     ),
     RejectCode.DUPLICATE: (
         False,
-        "A shard with this content already exists; do not re-create.",
+        # Not shard-specific: nova_wiki_schema raises this for a taken slug too.
+        "Something with this identifier already exists; do not re-create it.",
     ),
     RejectCode.DEPENDENCY_MISSING: (
         False,
@@ -98,6 +101,61 @@ _DEFAULTS: dict[RejectCode, tuple[bool, str]] = {
         "This branch of the tool is not yet implemented.",
     ),
 }
+
+
+class RejectPayload(BaseModel):
+    """The reject envelope, as a model.
+
+    This is the single definition — ``reject_dict`` and ``reject_payload`` are
+    both derived from it, and tool handlers name it in their return annotation
+    so the published ``outputSchema`` describes the refusal shape alongside the
+    success shape.
+
+    ``extra="allow"`` because the envelope is open-ended by design: callers
+    merge context in through ``extra`` (``session_tools`` adds ``available``,
+    ``nidhogg`` adds ``allowed_roots``).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    status: Literal["rejected"] = "rejected"
+    code: RejectCode = Field(description="Machine-readable reject category.")
+    message: str = Field(description="Human-readable explanation for the proposer.")
+    retryable: bool = Field(
+        description="False means re-issuing the identical call will fail identically.",
+    )
+    hint: str = Field(default="", description="The next action the proposer can take.")
+    target: Optional[str] = Field(
+        default=None,
+        description="What was rejected — a shard_id, slug, sprint_id or path.",
+    )
+
+
+def reject_model(
+    code: RejectCode,
+    message: str,
+    *,
+    retryable: Optional[bool] = None,
+    hint: Optional[str] = None,
+    target: Optional[str] = None,
+    extra: Optional[dict] = None,
+) -> RejectPayload:
+    """Build the reject envelope. ``retryable`` and ``hint`` fall back to the
+    per-code defaults when omitted."""
+    default_retryable, default_hint = _DEFAULTS.get(code, (True, ""))
+    payload = RejectPayload(
+        code=code,
+        message=message,
+        retryable=default_retryable if retryable is None else retryable,
+        hint=default_hint if hint is None else hint,
+        target=target,
+    )
+    if extra:
+        for key, value in extra.items():
+            # Reserved keys are never overwritten by caller-supplied context.
+            if not hasattr(payload, key):
+                setattr(payload, key, value)
+    return payload
 
 
 def reject_dict(
@@ -115,24 +173,13 @@ def reject_dict(
     serialise; :func:`reject_payload` is the JSON-string form tool handlers
     return directly. Arguments are identical.
     """
-    default_retryable, default_hint = _DEFAULTS.get(code, (True, ""))
-    if retryable is None:
-        retryable = default_retryable
-    if hint is None:
-        hint = default_hint
-
-    payload: dict = {
-        "status": "rejected",
-        "code": code.value,
-        "message": message,
-        "retryable": retryable,
-        "hint": hint,
-    }
-    if target is not None:
-        payload["target"] = target
-    if extra:
-        for k, v in extra.items():
-            payload.setdefault(k, v)
+    payload = reject_model(
+        code, message,
+        retryable=retryable, hint=hint, target=target, extra=extra,
+    ).model_dump(mode="json")
+    # `target` is omitted rather than null when there is nothing to name.
+    if payload.get("target") is None:
+        payload.pop("target", None)
     return payload
 
 
@@ -168,10 +215,15 @@ def reject_payload(
     )
 
 
-def shard_not_found(shard_id: str) -> str:
+def shard_not_found_model(shard_id: str) -> RejectPayload:
     """Shortcut for the most common reject path."""
-    return reject_payload(
+    return reject_model(
         RejectCode.SHARD_NOT_FOUND,
         f"Shard '{shard_id}' not found.",
         target=shard_id,
     )
+
+
+def shard_not_found(shard_id: str) -> str:
+    """JSON-string form of :func:`shard_not_found_model`, for untyped handlers."""
+    return shard_not_found_model(shard_id).model_dump_json(indent=2)

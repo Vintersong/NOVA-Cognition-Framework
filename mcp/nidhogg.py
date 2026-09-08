@@ -49,13 +49,27 @@ from config import (
     SHARD_DIR,
     MERGE_SIMILARITY_THRESHOLD,
 )
-from gate_helpers import gate_check, log_executed
+from gate_helpers import gate_check_model, log_executed
 from graph import add_corroborated_by, load_graph, save_graph
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
-from permissions import is_blocked, denial_payload
+from outputs import (
+    NidhoggEmpty,
+    NidhoggFileIngested,
+    NidhoggFileResult,
+    NidhoggFileSkipped,
+    NidhoggIngestResult,
+    NidhoggNoEmbedding,
+    NidhoggNoMatches,
+    NidhoggNothingToIngest,
+    NidhoggScanResult,
+    NidhoggScanSummary,
+    NidhoggStatusReport,
+    NidhoggStatusResult,
+)
+from permissions import denial_reject, is_blocked
 from approval import Approval, was_approved
-from reject import RejectCode, reject_dict
+from reject import RejectCode, RejectPayload, reject_dict, reject_model
 from tool_registry import nova_tool
 from store import load_index, mutate_shard
 
@@ -502,12 +516,38 @@ def _resolve_allowed_ingest_path(file_path: str) -> str:
 # TOOL REGISTRATION
 # ═══════════════════════════════════════════════════════════
 
+#: Maps ``_ingest_file``'s status to the model describing that branch. The
+#: function returns five different shapes plus reject envelopes, so the handler
+#: dispatches rather than flattening them into one all-optional model.
+_FILE_RESULT_MODELS = {
+    "ingested":     NidhoggFileIngested,
+    "skipped":      NidhoggFileSkipped,
+    "no_embedding": NidhoggNoEmbedding,
+    "no_matches":   NidhoggNoMatches,
+    "rejected":     RejectPayload,
+}
+
+
+def _as_file_result(result: dict) -> NidhoggFileResult:
+    """Wrap one ``_ingest_file`` return in the model for its status."""
+    model = _FILE_RESULT_MODELS.get(result.get("status", ""))
+    if model is None:
+        # An unrecognised status can still be reported honestly rather than
+        # crashing the whole scan on one odd file.
+        return reject_model(
+            RejectCode.NOT_IMPLEMENTED,
+            f"Unrecognised ingest status: {result.get('status')!r}",
+            target=result.get("file"),
+        )
+    return model(**result)
+
+
 def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
     """Register Nidhogg ingestion tools onto an existing MCPServer instance.
     Called once in nova_server.py after server init — same pattern as Gemini.
 
     Both ingest and scan irreversibly append provenance blocks to matched
-    shards, so they route through the capability gate (``gate_check``) before
+    shards, so they route through the capability gate (``gate_check_model``) before
     writing and emit one ``log_executed`` audit record per annotated shard —
     the same contract the shard_tools writers use.
     """
@@ -516,7 +556,7 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
     async def nidhogg_ingest(
         params: NidhoggIngestInput,
         approval: Approval("nidhogg_ingest"),
-    ) -> str:
+    ) -> NidhoggIngestResult:
         """
         Ingest a single document into NOVA's shard graph.
         Embeds the file, finds matching shards by cosine similarity, and appends
@@ -524,8 +564,8 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
         Idempotent — re-ingesting the same file is a no-op.
         """
         if is_blocked("nidhogg_ingest"):
-            return denial_payload("nidhogg_ingest")
-        gate_err, request_id = await gate_check(
+            return denial_reject("nidhogg_ingest")
+        gate_err, request_id = await gate_check_model(
             ctx, "nidhogg_ingest", params.file_path,
             approval=was_approved(approval),
         )
@@ -536,20 +576,20 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
             shard_id = match.get("shard_id")
             if shard_id:
                 log_executed(ctx, request_id, "nidhogg_ingest", shard_id, ok=True)
-        return json.dumps(result, indent=2)
+        return _as_file_result(result)
 
     @nova_tool(mcp, name="nidhogg_scan")
     async def nidhogg_scan(
         params: NidhoggScanInput,
         approval: Approval("nidhogg_scan"),
-    ) -> str:
+    ) -> NidhoggScanResult:
         """
         Scan the intake/ directory and ingest all pending files.
         Skips files already in the manifest (idempotent).
         Supported formats: txt, md, rst, csv, json, yaml, toml, pdf (requires pypdf).
         """
         if is_blocked("nidhogg_scan"):
-            return denial_payload("nidhogg_scan")
+            return denial_reject("nidhogg_scan")
         os.makedirs(NIDHOGG_INTAKE_DIR, exist_ok=True)
         supported = _TEXT_EXTENSIONS | {".pdf"}
 
@@ -559,12 +599,9 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
         ]
 
         if not pending:
-            return json.dumps({
-                "status": "nothing_to_ingest",
-                "intake_dir": NIDHOGG_INTAKE_DIR,
-            }, indent=2)
+            return NidhoggNothingToIngest(intake_dir=str(NIDHOGG_INTAKE_DIR))
 
-        gate_err, request_id = await gate_check(
+        gate_err, request_id = await gate_check_model(
             ctx, "nidhogg_scan", NIDHOGG_INTAKE_DIR,
             approval=was_approved(approval),
         )
@@ -580,34 +617,37 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
                     log_executed(ctx, request_id, "nidhogg_scan", shard_id, ok=True)
             results.append(result)
 
-        summary = {
-            "files_found": len(pending),
-            "ingested": sum(1 for r in results if r.get("status") == "ingested"),
-            "skipped": sum(1 for r in results if r.get("status") == "skipped"),
-            "no_matches": sum(1 for r in results if r.get("status") == "no_matches"),
-            "errors": sum(1 for r in results if "error" in r),
-            "results": results,
-        }
-        return json.dumps(summary, indent=2)
+        # The old tally counted `"error" in r`, but no branch of _ingest_file
+        # ever sets an "error" key — a refused file (outside the allowlist,
+        # missing, empty) comes back as a reject envelope, so the count was
+        # always zero and those files appeared in no bucket at all.
+        return NidhoggScanSummary(
+            files_found=len(pending),
+            ingested=sum(1 for r in results if r.get("status") == "ingested"),
+            skipped=sum(1 for r in results if r.get("status") == "skipped"),
+            no_matches=sum(1 for r in results if r.get("status") == "no_matches"),
+            rejected=sum(1 for r in results if r.get("status") == "rejected"),
+            results=[_as_file_result(r) for r in results],
+        )
 
     @nova_tool(mcp, name="nidhogg_status")
-    async def nidhogg_status(params: NidhoggStatusInput) -> str:
+    async def nidhogg_status(params: NidhoggStatusInput) -> NidhoggStatusResult:
         """
         Show the Nidhogg ingestion manifest — what files have been ingested,
         which shards they matched, and which were flagged as merge candidates.
         """
         if is_blocked("nidhogg_status"):
-            return denial_payload("nidhogg_status")
+            return denial_reject("nidhogg_status")
         manifest = _load_manifest()
         if not manifest:
-            return json.dumps({"status": "empty", "message": "No files ingested yet."}, indent=2)
+            return NidhoggEmpty(message="No files ingested yet.")
 
-        summary = {
-            "total_ingested": len(manifest),
-            "total_merge_candidates": sum(
+        return NidhoggStatusReport(
+            total_ingested=len(manifest),
+            total_merge_candidates=sum(
                 len(v.get("merge_candidates", [])) for v in manifest.values()
             ),
-            "entries": [
+            entries=[
                 {
                     "file": v.get("file", ""),
                     "source_type": v.get("source_type", ""),
@@ -618,5 +658,4 @@ def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
                 }
                 for v in manifest.values()
             ],
-        }
-        return json.dumps(summary, indent=2)
+        )

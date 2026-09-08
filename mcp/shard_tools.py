@@ -1,9 +1,9 @@
 """
 shard_tools.py — NOVA shard CRUD, browse, and lifecycle tools.
 
-Fifteen handlers covering shard create/read/update/search/index/summary/list/
-get/get_full/merge/archive/forget/consolidate plus state-query and obsidian
-export. Registered via ``register_shard_tools(mcp, ctx)``.
+Sixteen handlers covering shard create/read/update/validate/search/index/
+summary/list/get/get_full/merge/archive/forget/consolidate plus state-query and
+obsidian export. Registered via ``register_shard_tools(mcp, ctx)``.
 
 The handler shapes match what previously lived in nova_server.py; only the
 glue (permission context, gate, audit log, ravens, hook bus, lock map) is
@@ -29,7 +29,7 @@ from config import (
     SHARD_DIR,
 )
 from facts import search_facts
-from gate_helpers import gate_check, log_executed, permission_error
+from gate_helpers import gate_check_model, log_executed, permission_reject
 from graph import (
     add_corroborated_by,
     add_relation,
@@ -43,7 +43,45 @@ from nott import NottTrigger
 from nova_embeddings_local import enrich_shard
 import provenance
 from approval import Approval, was_approved
-from reject import RejectCode, reject_payload, shard_not_found
+from outputs import (
+    BrowseEnvelope,
+    ConsolidateLastReport,
+    ConsolidateNoReport,
+    ConsolidateScheduled,
+    InteractLoaded,
+    InteractNoShards,
+    LegacyShardDump,
+    ObsidianDryRun,
+    ObsidianExportResult,
+    ObsidianExported,
+    SearchResults,
+    Shard,
+    ShardArchiveResult,
+    ShardArchived,
+    ShardBody,
+    ShardBrowseResult,
+    ShardConsolidateResult,
+    ShardCreateResult,
+    ShardCreated,
+    ShardDumpResult,
+    ShardForgetResult,
+    ShardForgotten,
+    ShardGetFullResult,
+    ShardGetResult,
+    ShardInteractResult,
+    ShardMergeResult,
+    ShardSearchResult,
+    ShardStateResult,
+    ShardUpdateResult,
+    ShardUpdated,
+    ShardValidateResult,
+    ShardValidated,
+    ShardsMerged,
+    StateFilters,
+    StateQueryResults,
+    StateStats,
+)
+from reject import RejectCode, reject_model, shard_not_found_model
 from schemas import (
     ObsidianExportInput,
     ShardArchiveInput,
@@ -145,10 +183,10 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
     """
 
     @nova_tool(mcp, name="nova_shard_interact")
-    async def nova_shard_interact(params: ShardInteractInput) -> str:
+    async def nova_shard_interact(params: ShardInteractInput) -> ShardInteractResult:
         """Load shards into context for synthesis. Auto-selects relevant shards if none specified. Confidence-weighted."""
         if ctx.permission_context.blocks("nova_shard_interact"):
-            return permission_error("nova_shard_interact")
+            return permission_reject("nova_shard_interact")
 
         shard_ids = [s.strip() for s in params.shard_ids.split(",") if s.strip()] if params.shard_ids else []
         inferred = False
@@ -188,11 +226,10 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             ctx.hooks.emit(NovaHookEvent.SESSION_START)
 
         if not shard_ids:
-            return json.dumps({
-                "status": "no_shards_found",
-                "message": "No shards matched the query.",
-                "suggestion": "Use nova_shard_search to find relevant shards, or nova_shard_create to start a new one."
-            }, indent=2)
+            return InteractNoShards(
+                message="No shards matched the query.",
+                suggestion="Use nova_shard_search to find relevant shards, or nova_shard_create to start a new one.",
+            )
 
         loaded = []
         errors = []
@@ -230,6 +267,11 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             "shards": loaded,
             "errors": errors
         }
+        # The serialised form is load-bearing beyond the wire: UsageSummary
+        # counts words in it, and the session transcript stores this exact
+        # string. Keep building it here rather than deriving it from the model,
+        # so returning a model does not silently rewrite token accounting or
+        # what a resumed session replays.
         response_str = json.dumps(response_payload, indent=2)
 
         ctx.session_usage = ctx.session_usage.add_turn(params.message, response_str)
@@ -257,13 +299,13 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         for sid in shard_ids:
             log_shard_access(sid, "nova_shard_interact")
 
-        return response_str
+        return InteractLoaded(**response_payload)
 
     @nova_tool(mcp, name="nova_shard_create")
-    async def nova_shard_create(params: ShardCreateInput) -> str:
+    async def nova_shard_create(params: ShardCreateInput) -> ShardCreateResult:
         """Create a new shard. Triggers post-write enrichment hook and registers in knowledge graph."""
         if ctx.permission_context.blocks("nova_shard_create"):
-            return permission_error("nova_shard_create")
+            return permission_reject("nova_shard_create")
         base_name = sanitize_filename(f"{params.theme}_{params.intent}")
         filename = get_unique_filename(base_name)
         filepath = os.path.join(SHARD_DIR, filename)
@@ -368,18 +410,16 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
 
         log_operation("nova_shard_create", [shard_id])
 
-        return json.dumps({
-            "status": "created",
-            "shard_id": shard_id,
-            "guiding_question": params.guiding_question,
-            "enrichment_status": "pending",
-        }, indent=2)
+        return ShardCreated(
+            shard_id=shard_id,
+            guiding_question=params.guiding_question,
+        )
 
     @nova_tool(mcp, name="nova_shard_update")
-    async def nova_shard_update(params: ShardUpdateInput) -> str:
+    async def nova_shard_update(params: ShardUpdateInput) -> ShardUpdateResult:
         """Append to a shard. Triggers post-write enrichment hook and auto-compaction if threshold exceeded."""
         if ctx.permission_context.blocks("nova_shard_update"):
-            return permission_error("nova_shard_update")
+            return permission_reject("nova_shard_update")
 
         loop = asyncio.get_running_loop()
         shard_lock = ctx.get_shard_lock(params.shard_id)
@@ -407,7 +447,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                 None, lambda: mutate_shard(params.shard_id, _append)
             )
             if not written:
-                return shard_not_found(params.shard_id)
+                return shard_not_found_model(params.shard_id)
             data = holder["data"]
             await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
@@ -443,16 +483,13 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
 
         log_operation("nova_shard_update", [params.shard_id])
 
-        return json.dumps({
-            "status": "updated",
-            "shard_id": params.shard_id,
-            "total_entries": len(data["conversation_history"]),
-            "nott_scheduled": True,
-            "enrichment_status": "pending",
-        }, indent=2)
+        return ShardUpdated(
+            shard_id=params.shard_id,
+            total_entries=len(data["conversation_history"]),
+        )
 
     @nova_tool(mcp, name="nova_shard_validate")
-    async def nova_shard_validate(params: ShardValidateInput) -> str:
+    async def nova_shard_validate(params: ShardValidateInput) -> ShardValidateResult:
         """Record an epistemic validation event on a shard.
 
         Sets the shard's authority chain (source_type, validator, mechanism),
@@ -462,7 +499,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         another shard. Mirrors nova_shard_update's atomic mutate-under-lock path.
         """
         if ctx.permission_context.blocks("nova_shard_validate"):
-            return permission_error("nova_shard_validate")
+            return permission_reject("nova_shard_validate")
 
         loop = asyncio.get_running_loop()
         shard_lock = ctx.get_shard_lock(params.shard_id)
@@ -487,9 +524,9 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                     None, lambda: mutate_shard(params.shard_id, _validate)
                 )
             except ValueError as exc:
-                return reject_payload(RejectCode.INVALID_INPUT, str(exc))
+                return reject_model(RejectCode.INVALID_INPUT, str(exc))
             if not written:
-                return shard_not_found(params.shard_id)
+                return shard_not_found_model(params.shard_id)
             data = holder["data"]
             await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
 
@@ -504,18 +541,17 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
 
         log_operation("nova_shard_validate", [params.shard_id])
 
-        return json.dumps({
-            "status": "validated",
-            "shard_id": params.shard_id,
-            "confidence": data.get("meta_tags", {}).get("confidence"),
-            "epistemic_provenance": holder.get("record"),
-        }, indent=2)
+        return ShardValidated(
+            shard_id=params.shard_id,
+            confidence=data.get("meta_tags", {}).get("confidence"),
+            epistemic_provenance=holder.get("record"),
+        )
 
     @nova_tool(mcp, name="nova_shard_search")
-    async def nova_shard_search(params: ShardSearchInput) -> str:
+    async def nova_shard_search(params: ShardSearchInput) -> ShardSearchResult:
         """Search shards with confidence weighting. High-confidence shards rank higher for same relevance score."""
         if ctx.permission_context.blocks("nova_shard_search"):
-            return permission_error("nova_shard_search")
+            return permission_reject("nova_shard_search")
 
         loop = asyncio.get_running_loop()
         index, results = await loop.run_in_executor(
@@ -558,17 +594,17 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         for sid in returned_ids:
             log_shard_access(sid, "nova_shard_search")
 
-        return json.dumps({
-            "query": params.query,
-            "results": results[:params.top_n],
-            "total_searched": len(index),
-            "huginn_confidence": round(huginn_confidence, 4),
-            "muninn_used": muninn_fired,
-            "huginn_ranking": huginn_ranking,
-        }, indent=2)
+        return SearchResults(
+            query=params.query,
+            results=results[:params.top_n],
+            total_searched=len(index),
+            huginn_confidence=round(huginn_confidence, 4),
+            muninn_used=muninn_fired,
+            huginn_ranking=huginn_ranking,
+        )
 
     @nova_tool(mcp, name="nova_shard_query_state")
-    async def nova_shard_query_state(params: ShardStateQueryInput) -> str:
+    async def nova_shard_query_state(params: ShardStateQueryInput) -> ShardStateResult:
         """Query the SQLite shard index by epistemic state vector.
 
         Uses the structured integer encoding (confidence × valence × arousal × epistemic)
@@ -582,15 +618,14 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
           - keyword="quarantine"         → filter by guiding_question/theme/intent
         """
         if ctx.permission_context.blocks("nova_shard_query_state"):
-            return permission_error("nova_shard_query_state")
+            return permission_reject("nova_shard_query_state")
 
         from nova_shard_db import get_nova_shard_db, decode_state
 
         db = get_nova_shard_db()
 
         if params.stats_only:
-            stats = db.stats()
-            return json.dumps({"stats": stats}, indent=2)
+            return StateStats(stats=db.stats())
 
         if params.keyword:
             rows = db.search(params.keyword, limit=params.limit)
@@ -629,20 +664,20 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             "returned": len(results),
         })
 
-        return json.dumps({
-            "returned": len(results),
-            "filters": {
-                "min_confidence": params.min_confidence,
-                "max_confidence": params.max_confidence,
-                "epistemic": params.epistemic,
-                "valence_min": params.valence_min,
-                "keyword": params.keyword,
-            },
-            "results": results,
-        }, indent=2)
+        return StateQueryResults(
+            returned=len(results),
+            filters=StateFilters(
+                min_confidence=params.min_confidence,
+                max_confidence=params.max_confidence,
+                epistemic=params.epistemic,
+                valence_min=params.valence_min,
+                keyword=params.keyword,
+            ),
+            results=results,
+        )
 
     @nova_tool(mcp, name="nova_obsidian_export")
-    async def nova_obsidian_export(params: ObsidianExportInput) -> str:
+    async def nova_obsidian_export(params: ObsidianExportInput) -> ObsidianExportResult:
         """Export all shards to an Obsidian vault as Markdown files with YAML frontmatter
         and [[wikilink]] edges derived from the knowledge graph.
 
@@ -650,7 +685,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         Skips archived and forgotten shards. Writes _NOVA_INDEX.md at the vault root.
         """
         if ctx.permission_context.blocks("nova_obsidian_export"):
-            return permission_error("nova_obsidian_export")
+            return permission_reject("nova_obsidian_export")
 
         from obsidian_export import export_shards, OBSIDIAN_DIR
 
@@ -664,12 +699,11 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                 1 for e in index.values()
                 if "forgotten" in e.get("tags", []) or "archived" in e.get("tags", [])
             )
-            return json.dumps({
-                "dry_run": True,
-                "would_export": len(index) - skippable,
-                "would_skip": skippable,
-                "out_dir": out_dir,
-            }, indent=2)
+            return ObsidianDryRun(
+                would_export=len(index) - skippable,
+                would_skip=skippable,
+                out_dir=out_dir,
+            )
 
         result = await asyncio.get_running_loop().run_in_executor(
             None,
@@ -683,19 +717,19 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             "out_dir": out_dir,
         })
 
-        return json.dumps({
-            "exported": result["exported"],
-            "skipped": result["skipped"],
-            "errors": result["errors"][:10],
-            "out_dir": out_dir,
-            "index_note": str(out_dir) + "/_NOVA_INDEX.md",
-        }, indent=2)
+        return ObsidianExported(
+            exported=result["exported"],
+            skipped=result["skipped"],
+            errors=result["errors"][:10],
+            out_dir=out_dir,
+            index_note=str(out_dir) + "/_NOVA_INDEX.md",
+        )
 
     @nova_tool(mcp, name="nova_shard_index")
-    async def nova_shard_index(params: ShardIndexInput) -> str:
+    async def nova_shard_index(params: ShardIndexInput) -> ShardBrowseResult:
         """Browse shards using compact metadata rows without loading conversation bodies."""
         if ctx.permission_context.blocks("nova_shard_index"):
-            return permission_error("nova_shard_index")
+            return permission_reject("nova_shard_index")
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: rebuild_summary_indexes(generate_missing=False))
@@ -710,27 +744,26 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             per_page=params.per_page,
         )
 
-        payload = {
-            "_v": 3,
-            "tool": "nova_shard_index",
-            "total": total,
-            "page": params.page,
-            "per_page": params.per_page,
-            "returned": len(page_rows),
-            "sort": params.sort,
-            "sort_order": params.sort_order,
-        }
-        if params.group_by_theme:
-            payload["themes"] = group_rows_by_theme(page_rows)
-        else:
-            payload["shards"] = page_rows
-        return json.dumps(payload, indent=2)
+        return BrowseEnvelope(
+            tool="nova_shard_index",
+            total=total,
+            page=params.page,
+            per_page=params.per_page,
+            returned=len(page_rows),
+            sort=params.sort,
+            sort_order=params.sort_order,
+            # Passed to the constructor rather than assigned after it: assignment
+            # skips validation, so the rows would stay plain dicts and pydantic
+            # would warn on every serialisation.
+            themes=group_rows_by_theme(page_rows) if params.group_by_theme else None,
+            shards=None if params.group_by_theme else page_rows,
+        )
 
     @nova_tool(mcp, name="nova_shard_summary")
-    async def nova_shard_summary(params: ShardIndexInput) -> str:
+    async def nova_shard_summary(params: ShardIndexInput) -> ShardBrowseResult:
         """Browse shards with compact metadata rows plus a short synopsis per shard."""
         if ctx.permission_context.blocks("nova_shard_summary"):
-            return permission_error("nova_shard_summary")
+            return permission_reject("nova_shard_summary")
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: rebuild_summary_indexes(generate_missing=False))
@@ -745,27 +778,26 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             per_page=params.per_page,
         )
 
-        payload = {
-            "_v": 3,
-            "tool": "nova_shard_summary",
-            "total": total,
-            "page": params.page,
-            "per_page": params.per_page,
-            "returned": len(page_rows),
-            "sort": params.sort,
-            "sort_order": params.sort_order,
-        }
-        if params.group_by_theme:
-            payload["themes"] = group_rows_by_theme(page_rows)
-        else:
-            payload["shards"] = page_rows
-        return json.dumps(payload, indent=2)
+        return BrowseEnvelope(
+            tool="nova_shard_summary",
+            total=total,
+            page=params.page,
+            per_page=params.per_page,
+            returned=len(page_rows),
+            sort=params.sort,
+            sort_order=params.sort_order,
+            # Passed to the constructor rather than assigned after it: assignment
+            # skips validation, so the rows would stay plain dicts and pydantic
+            # would warn on every serialisation.
+            themes=group_rows_by_theme(page_rows) if params.group_by_theme else None,
+            shards=None if params.group_by_theme else page_rows,
+        )
 
     @nova_tool(mcp, name="nova_shard_list")
-    async def nova_shard_list(params: ShardListInput) -> str:
+    async def nova_shard_list(params: ShardListInput) -> ShardDumpResult:
         """Return a legacy full shard dump. Prefer nova_shard_index or nova_shard_summary for browsing."""
         if ctx.permission_context.blocks("nova_shard_list"):
-            return permission_error("nova_shard_list")
+            return permission_reject("nova_shard_list")
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: rebuild_summary_indexes(generate_missing=False))
@@ -786,57 +818,55 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
 
         shards = await loop.run_in_executor(None, _load_all_shards, page_rows)
 
-        return json.dumps({
-            "_v": 3,
-            "deprecated": True,
-            "mode": params.mode,
-            "message": "Use nova_shard_index for browse and nova_shard_summary for pre-commit context.",
-            "total": total,
-            "offset": params.offset,
-            "limit": params.limit,
-            "returned": len(shards),
-            "shards": shards,
-        }, indent=2)
+        return LegacyShardDump(
+            mode=params.mode,
+            message="Use nova_shard_index for browse and nova_shard_summary for pre-commit context.",
+            total=total,
+            offset=params.offset,
+            limit=params.limit,
+            returned=len(shards),
+            shards=shards,
+        )
 
     @nova_tool(mcp, name="nova_shard_get")
-    async def nova_shard_get(params: ShardGetInput) -> str:
+    async def nova_shard_get(params: ShardGetInput) -> ShardGetResult:
         """Read the full raw content of a shard from disk. Read-only, no side effects."""
         if ctx.permission_context.blocks("nova_shard_get"):
-            return permission_error("nova_shard_get")
+            return permission_reject("nova_shard_get")
         loop = asyncio.get_running_loop()
         try:
             data, _ = await loop.run_in_executor(None, load_shard, params.shard_id)
         except FileNotFoundError:
-            return shard_not_found(params.shard_id)
+            return shard_not_found_model(params.shard_id)
 
-        return json.dumps(data, indent=2)
+        return Shard(**data)
 
     @nova_tool(mcp, name="nova_shard_get_full")
-    async def nova_shard_get_full(params: ShardGetFullInput) -> str:
+    async def nova_shard_get_full(params: ShardGetFullInput) -> ShardGetFullResult:
         """Cold-path full-body fetch. Returns conversation_history/turns payload without side effects. Use nova_shard_get for raw metadata."""
         if ctx.permission_context.blocks("nova_shard_get_full"):
-            return permission_error("nova_shard_get_full")
+            return permission_reject("nova_shard_get_full")
         loop = asyncio.get_running_loop()
         try:
             data, _ = await loop.run_in_executor(None, load_shard, params.shard_id)
         except FileNotFoundError:
-            return shard_not_found(params.shard_id)
+            return shard_not_found_model(params.shard_id)
 
         body = data.get("conversation_history") or data.get("turns") or []
-        return json.dumps({
-            "shard_id": params.shard_id,
-            "guiding_question": data.get("guiding_question", ""),
-            "source": data.get("meta_tags", {}).get("source", "agent_inference"),
-            "summary": data.get("meta_tags", {}).get("summary", ""),
-            "body": body,
-        }, indent=2)
+        return ShardBody(
+            shard_id=params.shard_id,
+            guiding_question=data.get("guiding_question", ""),
+            source=data.get("meta_tags", {}).get("source", "agent_inference"),
+            summary=data.get("meta_tags", {}).get("summary", ""),
+            body=body,
+        )
 
     @nova_tool(mcp, name="nova_shard_merge")
-    async def nova_shard_merge(params: ShardMergeInput) -> str:
+    async def nova_shard_merge(params: ShardMergeInput) -> ShardMergeResult:
         """Merge multiple shards into a meta-shard. Updates knowledge graph relations."""
         if ctx.permission_context.blocks("nova_shard_merge"):
-            return permission_error("nova_shard_merge")
-        gate_err, request_id = await gate_check(ctx, "nova_shard_merge", params.shard_ids)
+            return permission_reject("nova_shard_merge")
+        gate_err, request_id = await gate_check_model(ctx, "nova_shard_merge", params.shard_ids)
         if gate_err:
             return gate_err
         op_ok = False
@@ -852,7 +882,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
                     merged_history.extend(data.get("conversation_history", []))
                     source_questions.append(f"{sid}: {data.get('guiding_question', '')}")
                 except FileNotFoundError:
-                    return shard_not_found(sid)
+                    return shard_not_found_model(sid)
 
             merged_history.sort(key=lambda x: x.get("timestamp", ""))
 
@@ -904,13 +934,12 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             log_operation("nova_shard_merge", shard_ids_list + [new_id])
 
             op_ok = True
-            return json.dumps({
-                "status": "merged",
-                "new_shard_id": new_id,
-                "sources": shard_ids_list,
-                "total_entries": len(merged_history),
-                "originals_archived": params.archive_originals
-            }, indent=2)
+            return ShardsMerged(
+                new_shard_id=new_id,
+                sources=shard_ids_list,
+                total_entries=len(merged_history),
+                originals_archived=params.archive_originals,
+            )
         finally:
             log_executed(ctx, request_id, "nova_shard_merge", params.shard_ids, op_ok)
 
@@ -918,11 +947,11 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
     async def nova_shard_archive(
         params: ShardArchiveInput,
         approval: Approval("nova_shard_archive"),
-    ) -> str:
+    ) -> ShardArchiveResult:
         """Soft-archive a shard. Excluded from search. Memory decays through deprioritization, not deletion."""
         if ctx.permission_context.blocks("nova_shard_archive"):
-            return permission_error("nova_shard_archive")
-        gate_err, request_id = await gate_check(
+            return permission_reject("nova_shard_archive")
+        gate_err, request_id = await gate_check_model(
             ctx, "nova_shard_archive", params.shard_id,
             approval=was_approved(approval),
         )
@@ -934,7 +963,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             try:
                 data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
             except FileNotFoundError:
-                return shard_not_found(params.shard_id)
+                return shard_not_found_model(params.shard_id)
 
             data.setdefault("meta_tags", {})["intent"] = "archived"
             data["meta_tags"]["archived_at"] = datetime.now().isoformat()
@@ -942,11 +971,10 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             await loop.run_in_executor(None, patch_index_entry, params.shard_id, data)
             op_ok = True
 
-            return json.dumps({
-                "status": "archived",
-                "shard_id": params.shard_id,
-                "guiding_question": data.get("guiding_question", "")
-            }, indent=2)
+            return ShardArchived(
+                shard_id=params.shard_id,
+                guiding_question=data.get("guiding_question", ""),
+            )
         finally:
             log_executed(ctx, request_id, "nova_shard_archive", params.shard_id, op_ok)
 
@@ -954,7 +982,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
     async def nova_shard_forget(
         params: ShardForgetInput,
         approval: Approval("nova_shard_forget"),
-    ) -> str:
+    ) -> ShardForgetResult:
         """
         Hard soft-delete with provenance log.
         Shard is marked as forgotten and removed from all search/interact results.
@@ -963,8 +991,8 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         not just deprioritized.
         """
         if ctx.permission_context.blocks("nova_shard_forget"):
-            return permission_error("nova_shard_forget")
-        gate_err, request_id = await gate_check(
+            return permission_reject("nova_shard_forget")
+        gate_err, request_id = await gate_check_model(
             ctx, "nova_shard_forget", params.shard_id,
             approval=was_approved(approval),
         )
@@ -976,7 +1004,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             try:
                 data, filepath = await loop.run_in_executor(None, load_shard, params.shard_id)
             except FileNotFoundError:
-                return shard_not_found(params.shard_id)
+                return shard_not_found_model(params.shard_id)
 
             data.setdefault("meta_tags", {})["intent"] = "forgotten"
             data["meta_tags"]["forgotten_at"] = datetime.now().isoformat()
@@ -988,12 +1016,11 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
             log_operation("nova_shard_forget", [params.shard_id], {"reason": params.reason})
             op_ok = True
 
-            return json.dumps({
-                "status": "forgotten",
-                "shard_id": params.shard_id,
-                "reason": params.reason,
-                "note": "Shard preserved on disk for audit. Excluded from all search and interact operations."
-            }, indent=2)
+            return ShardForgotten(
+                shard_id=params.shard_id,
+                reason=params.reason,
+                note="Shard preserved on disk for audit. Excluded from all search and interact operations.",
+            )
         finally:
             log_executed(ctx, request_id, "nova_shard_forget", params.shard_id, op_ok)
 
@@ -1001,7 +1028,7 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
     async def nova_shard_consolidate(
         params: ShardConsolidateInput,
         approval: Approval("nova_shard_consolidate"),
-    ) -> str:
+    ) -> ShardConsolidateResult:
         """
         Trigger a full NÓTT maintenance cycle (fire-and-forget).
         Returns immediately — NÓTT runs entirely in the background.
@@ -1018,17 +1045,20 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         global _last_consolidation_report
 
         if ctx.permission_context.blocks("nova_shard_consolidate"):
-            return permission_error("nova_shard_consolidate")
+            return permission_reject("nova_shard_consolidate")
 
         if params.dry_run:
             if _last_consolidation_report:
-                return json.dumps({
-                    "status": "last_report",
-                    **_last_consolidation_report,
-                }, indent=2)
-            return json.dumps({"status": "no_report_yet", "hint": "Call with dry_run=false to trigger a cycle."}, indent=2)
+                # The report carries its own status — "consolidation_complete",
+                # "skipped" or "error". The envelope used to prepend a
+                # "last_report" literal that the splat immediately overwrote,
+                # so nothing on the wire changes by dropping it.
+                return ConsolidateLastReport(**_last_consolidation_report)
+            return ConsolidateNoReport(
+                hint="Call with dry_run=false to trigger a cycle.",
+            )
 
-        gate_err, request_id = await gate_check(
+        gate_err, request_id = await gate_check_model(
             ctx, "nova_shard_consolidate", approval=was_approved(approval),
         )
         if gate_err:
@@ -1056,15 +1086,16 @@ def register_shard_tools(mcp, ctx: "ServerContext") -> dict:
         threading.Thread(target=_nott_thread, daemon=True).start()
         log_executed(ctx, request_id, "nova_shard_consolidate", None, True)
 
-        return json.dumps({
-            "status": "scheduled",
-            "message": "NÓTT maintenance cycle started in background. Call with dry_run=true to check the last completed report.",
-        }, indent=2)
+        return ConsolidateScheduled(
+            message="NÓTT maintenance cycle started in background. "
+                    "Call with dry_run=true to check the last completed report.",
+        )
 
     return {
         "nova_shard_interact": nova_shard_interact,
         "nova_shard_create": nova_shard_create,
         "nova_shard_update": nova_shard_update,
+        "nova_shard_validate": nova_shard_validate,
         "nova_shard_search": nova_shard_search,
         "nova_shard_query_state": nova_shard_query_state,
         "nova_obsidian_export": nova_obsidian_export,

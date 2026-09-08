@@ -139,6 +139,38 @@ A failed call sets `isError` on the wire, and the payload always carries a
 
 `retryable: false` means re-issuing the identical call will fail identically.
 
+### Structured output
+
+Every tool publishes a real `outputSchema` and returns `structuredContent`
+matching it, so the payload does not have to be re-parsed out of the text block.
+A tool that can refuse publishes a union of its success shape and the reject
+envelope; for those, `structuredContent` is nested under a `result` key. The
+text block is still emitted, so either way of reading works.
+
+---
+
+## Resources and Prompts
+
+Four static resources, two templates, twenty prompts.
+
+| URI | Contents |
+|---|---|
+| `nova://skill` | This file |
+| `nova://index` | One metadata row per shard |
+| `nova://graph` | Every inter-shard relation |
+| `nova://usage` | Last 100 operations + session tokens |
+| `nova://shard/{shard_id}` | One shard — same data as `nova_shard_get` |
+| `nova://wiki/{slug}` | One wiki page — same data as `nova_wiki_get` |
+
+The two templated parameters support argument completion, so a shard id or a
+wiki slug can be offered by prefix instead of searched for first.
+
+Prompts: six workflow openers (`nova-orient`, `nova-recall`,
+`nova-write-handoff`, `nova-ingest-document`, `nova-run-sprint`,
+`nova-audit-confidence`) and one per core forgemaster skill
+(`forgemaster-orchestrator`, `forgemaster-verification`, …). Load a skill prompt
+instead of reading the file when you need the skill's instructions.
+
 ---
 
 ## Shard Schema (v2)

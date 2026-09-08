@@ -8,10 +8,9 @@ gated). Registered via ``register_graph_tools(mcp, ctx)``.
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import TYPE_CHECKING
 
-from gate_helpers import gate_check, log_executed, permission_error
+from gate_helpers import gate_check_model, log_executed, permission_reject
 from graph import (
     add_relation,
     load_graph,
@@ -19,7 +18,16 @@ from graph import (
     query_graph_transitive,
 )
 from maintenance import apply_confidence_corroboration
-from reject import RejectCode, reject_payload
+from outputs import (
+    GraphDirectResult,
+    GraphHop,
+    GraphQueryResult,
+    GraphRelateResult,
+    GraphRelation,
+    GraphTransitiveResult,
+    RelationAdded,
+)
+from reject import RejectCode, reject_model
 from schemas import GraphQueryInput, GraphRelationInput
 from store import load_shard, patch_index_entry, save_shard
 from tool_registry import nova_tool
@@ -31,7 +39,7 @@ if TYPE_CHECKING:
 def register_graph_tools(mcp, ctx: "ServerContext") -> None:
 
     @nova_tool(mcp, name="nova_graph_query")
-    async def nova_graph_query(params: GraphQueryInput) -> str:
+    async def nova_graph_query(params: GraphQueryInput) -> GraphQueryResult:
         """
         Query the inter-shard knowledge graph.
         Find what a shard influences, depends on, extends, contradicts, or references.
@@ -41,12 +49,12 @@ def register_graph_tools(mcp, ctx: "ServerContext") -> None:
         Relation types: influences, depends_on, contradicts, extends, references, merged_from, supersedes, corroborated_by
         """
         if ctx.permission_context.blocks("nova_graph_query"):
-            return permission_error("nova_graph_query")
+            return permission_reject("nova_graph_query")
         loop = asyncio.get_running_loop()
         if params.transitive:
             root_id = params.source or params.target
             if not root_id:
-                return reject_payload(
+                return reject_model(
                     RejectCode.INVALID_INPUT,
                     "Transitive query requires 'source' or 'target'.",
                 )
@@ -58,16 +66,15 @@ def register_graph_tools(mcp, ctx: "ServerContext") -> None:
                 max_depth=params.max_depth,
             )
             graph = await loop.run_in_executor(None, load_graph)
-            return json.dumps({
-                "mode": "transitive",
-                "root": root_id,
-                "direction": direction,
-                "relation_type": params.relation_type or "any",
-                "max_depth": params.max_depth,
-                "results": results,
-                "total_entities": len(graph.get("entities", {})),
-                "total_relations": len(graph.get("relations", []))
-            }, indent=2)
+            return GraphTransitiveResult(
+                root=root_id,
+                direction=direction,
+                relation_type=params.relation_type or "any",
+                max_depth=params.max_depth,
+                results=[GraphHop(**hop) for hop in results],
+                total_entities=len(graph.get("entities", {})),
+                total_relations=len(graph.get("relations", [])),
+            )
 
         pattern = {}
         if params.source:
@@ -84,22 +91,21 @@ def register_graph_tools(mcp, ctx: "ServerContext") -> None:
         for r in relations:
             source_entity = graph.get("entities", {}).get(r["source"], {})
             target_entity = graph.get("entities", {}).get(r["target"], {})
-            enriched.append({
+            enriched.append(GraphRelation(
                 **r,
-                "source_question": source_entity.get("guiding_question", ""),
-                "target_question": target_entity.get("guiding_question", ""),
-            })
+                source_question=source_entity.get("guiding_question", ""),
+                target_question=target_entity.get("guiding_question", ""),
+            ))
 
-        return json.dumps({
-            "mode": "direct",
-            "pattern": pattern,
-            "relations": enriched,
-            "total_entities": len(graph.get("entities", {})),
-            "total_relations": len(graph.get("relations", []))
-        }, indent=2)
+        return GraphDirectResult(
+            pattern=pattern,
+            relations=enriched,
+            total_entities=len(graph.get("entities", {})),
+            total_relations=len(graph.get("relations", [])),
+        )
 
     @nova_tool(mcp, name="nova_graph_relate")
-    async def nova_graph_relate(params: GraphRelationInput) -> str:
+    async def nova_graph_relate(params: GraphRelationInput) -> GraphRelateResult:
         """
         Manually add a directed relation between two shards in the knowledge graph.
         Use this when you notice a connection that wasn't auto-detected.
@@ -114,8 +120,10 @@ def register_graph_tools(mcp, ctx: "ServerContext") -> None:
           corroborated_by  — shard A is confirmed by shard B
         """
         if ctx.permission_context.blocks("nova_graph_relate"):
-            return permission_error("nova_graph_relate")
-        gate_err, request_id = await gate_check(ctx, "nova_graph_relate", params.source_id)
+            return permission_reject("nova_graph_relate")
+        gate_err, request_id = await gate_check_model(
+            ctx, "nova_graph_relate", params.source_id,
+        )
         if gate_err:
             return gate_err
         op_ok = False
@@ -134,17 +142,13 @@ def register_graph_tools(mcp, ctx: "ServerContext") -> None:
                 except Exception:
                     pass
 
-            result = {
-                "status": "relation_added",
-                "source": params.source_id,
-                "target": params.target_id,
-                "type": params.relation_type,
-                "notes": params.notes,
-            }
-            if confidence_bumped is not None:
-                result["confidence_after_corroboration"] = confidence_bumped
-
             op_ok = True
-            return json.dumps(result, indent=2)
+            return RelationAdded(
+                source=params.source_id,
+                target=params.target_id,
+                type=params.relation_type,
+                notes=params.notes,
+                confidence_after_corroboration=confidence_bumped,
+            )
         finally:
             log_executed(ctx, request_id, "nova_graph_relate", params.source_id, op_ok)

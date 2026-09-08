@@ -325,6 +325,29 @@ class NovaShardDB:
             logger.warning("nova_shard_db.search failed: %s", exc)
             return []
 
+    def ids_with_prefix(self, prefix: str, *, limit: int = 50) -> list[str]:
+        """Shard ids starting with *prefix*, for argument completion.
+
+        ``id`` is the table's primary key, so ``LIKE 'pfx%'`` is an index scan
+        rather than a table scan. :meth:`search` deliberately excludes ``id``
+        from its match columns, so this is a separate accessor rather than a
+        flag on that one. Highest state (confidence-dominant) first, so a
+        truncated list is the useful half.
+        """
+        # LIKE's own wildcards have to be escaped or a slug containing % or _
+        # would match far more than the user typed.
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        try:
+            rows = self.conn.execute(
+                "SELECT id FROM shards WHERE id LIKE ? ESCAPE '\\' "
+                "ORDER BY state DESC, id ASC LIMIT ?",
+                (escaped + "%", limit),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            logger.warning("nova_shard_db.ids_with_prefix failed: %s", exc)
+            return []
+        return [r["id"] for r in rows]
+
     def stats(self) -> dict:
         """Row count and state distribution summary."""
         try:

@@ -7,7 +7,6 @@ Run: cd mcp && python -m pytest test_recall.py -v
 import time
 from unittest.mock import patch
 
-import pytest
 
 import recall
 from recall import hook_recall, clear_cache

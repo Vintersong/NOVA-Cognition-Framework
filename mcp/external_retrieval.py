@@ -34,6 +34,9 @@ from config import (
     SHARD_DIR,
 )
 from graph import add_relation, add_shard_to_graph
+from outputs import ExternalDeliberation, ExternalRetrievalResult
+from permissions import denial_reject, is_blocked
+from reject import RejectCode, reject_model
 from schemas import ExternalRetrievalInput
 from store import get_unique_filename, patch_index_entry, sanitize_filename, save_shard
 from tool_registry import nova_tool
@@ -230,9 +233,12 @@ def _parse_arbiter(text: str, synthesis: str) -> dict:
         return {"verdict": "REJECT", "claim": "", "confidence": 0.0, "rejection_reason": text}
 
 
-def _err(reason: str) -> dict:
+def _err(reason: str, code: RejectCode = RejectCode.PRECONDITION_FAILED) -> dict:
+    """A pipeline failure. ``code`` is what the tool turns the dict into on the
+    wire — see the reject mapping in ``nova_external_retrieval``."""
     return {
         "verdict": "error",
+        "code": code.value,
         "claim": "",
         "confidence": 0.0,
         "shard_id": None,
@@ -252,7 +258,10 @@ async def run_external_retrieval(query: str, context: str = "") -> dict:
                    debate_shard_id, cost_estimate, rejection_reason}
     """
     if not CLAUDE_API_KEY:
-        return _err("CLAUDE_API_KEY not set — external retrieval requires Anthropic API access")
+        return _err(
+            "CLAUDE_API_KEY not set — external retrieval requires Anthropic API access",
+            RejectCode.DEPENDENCY_MISSING,
+        )
 
     cost_cap = float(os.environ.get("NOVA_EXTERNAL_COST_CAP", "0.10"))
     if _COST_ESTIMATE > cost_cap:
@@ -407,7 +416,7 @@ async def run_external_retrieval(query: str, context: str = "") -> dict:
 def register_external_retrieval_tools(mcp) -> None:
 
     @nova_tool(mcp, name="nova_external_retrieval")
-    async def nova_external_retrieval(params: ExternalRetrievalInput) -> str:
+    async def nova_external_retrieval(params: ExternalRetrievalInput) -> ExternalRetrievalResult:
         """
         External retrieval deliberation pipeline (v1.0).
 
@@ -427,5 +436,25 @@ def register_external_retrieval_tools(mcp) -> None:
         Returns JSON: {verdict, claim, confidence, shard_id,
                        debate_shard_id, cost_estimate, rejection_reason}
         """
+        if is_blocked("nova_external_retrieval"):
+            return denial_reject("nova_external_retrieval")
+
         result = await run_external_retrieval(params.query, params.context or "")
-        return json.dumps(result, indent=2)
+        # The cost cap is a refusal — the pipeline never ran — so it gets the
+        # reject envelope, which also means the middleware marks it isError.
+        # Every other verdict, REJECT included, is a real deliberation outcome.
+        if result.get("verdict") == "cap_exceeded":
+            return reject_model(
+                RejectCode.PRECONDITION_FAILED,
+                result.get("rejection_reason", "Estimated cost exceeds the cap."),
+                retryable=False,
+                hint="Raise NOVA_EXTERNAL_COST_CAP or narrow the query.",
+                extra={"cost_estimate": result.get("cost_estimate", 0.0)},
+            )
+        if result.get("verdict") == "error":
+            return reject_model(
+                RejectCode(result.get("code", RejectCode.PRECONDITION_FAILED)),
+                result.get("rejection_reason", "External retrieval failed."),
+                extra={"cost_estimate": result.get("cost_estimate", 0.0)},
+            )
+        return ExternalDeliberation(**result)

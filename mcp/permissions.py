@@ -72,11 +72,21 @@ def is_blocked(tool_name: str) -> bool:
     return _active.blocks(tool_name)
 
 
-def denial_payload(tool_name: str) -> str:
-    """Return the canonical typed reject envelope for a blocked tool call."""
-    from reject import RejectCode, reject_payload
-    return reject_payload(
+def denial_reject(tool_name: str):
+    """Return the canonical reject envelope for a blocked tool call, as a model.
+
+    The single definition of the permission-denied shape. Handlers with a typed
+    return annotation return this; :func:`denial_payload` is the JSON-string
+    form for those that do not.
+    """
+    from reject import RejectCode, reject_model
+    return reject_model(
         RejectCode.PERMISSION_DENIED,
         f"Tool '{tool_name}' is not permitted in the current permission context.",
         target=tool_name,
     )
+
+
+def denial_payload(tool_name: str) -> str:
+    """JSON-string form of :func:`denial_reject`."""
+    return denial_reject(tool_name).model_dump_json(indent=2)

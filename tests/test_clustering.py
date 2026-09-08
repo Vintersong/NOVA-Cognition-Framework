@@ -13,8 +13,6 @@ from clustering import (
     detect_communities,
     should_recompute,
     stamp_cluster_run,
-    _stable_labels,
-    _connected_components,
 )
 from recall import _walk_topk_with_cluster_collapse
 

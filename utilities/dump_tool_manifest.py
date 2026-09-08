@@ -2,10 +2,12 @@
 """
 dump_tool_manifest.py — snapshot what an MCP client actually sees.
 
-Renders NOVA's ``tools/list`` and ``resources/list`` into a compact, stable
+Renders every list a client can call — ``tools/list``, ``resources/list``,
+``resources/templates/list`` and ``prompts/list`` — into a compact, stable
 manifest. ``tests/test_tool_manifest.py`` diffs the live server against the
 committed copy, so a change to a tool's title, annotations, schema shape or
-output schema has to be made deliberately rather than drifting.
+output schema, or to the templates and prompts on offer, has to be made
+deliberately rather than drifting.
 
 This is the only check that inspects the wire format. The registry tests guard
 NOVA's internal metadata; this guards what leaves the process.
@@ -45,16 +47,23 @@ def _summarise(description: str) -> str:
 
 
 def _schema_shape(schema: dict | None) -> dict | None:
-    """Top-level shape of a JSON Schema — property names and required list.
+    """Top-level shape of a JSON Schema — properties, required, and model names.
 
-    Deliberately not the whole schema: the full document is mostly $defs noise,
-    while the property/required shape is what a model actually calls against.
+    Deliberately not the whole schema; the property/required shape is what a
+    model actually calls against.
+
+    ``defs`` matters for output schemas specifically. A handler annotated
+    ``-> str`` publishes ``{"result": {"type": "string"}}``, and one annotated
+    with a union of models publishes ``{"result": {"anyOf": [...]}}`` — both
+    have the single property ``result``, so properties alone cannot tell the
+    degenerate schema from a real one. The ``$defs`` names can.
     """
     if not schema:
         return None
     return {
         "properties": sorted((schema.get("properties") or {}).keys()),
         "required": sorted(schema.get("required") or []),
+        "defs": sorted((schema.get("$defs") or {}).keys()),
     }
 
 
@@ -75,6 +84,8 @@ async def build_manifest() -> dict:
     mcp = nova_server.mcp
     tools = await mcp.list_tools()
     resources = await mcp.list_resources()
+    templates = await mcp.list_resource_templates()
+    prompts = await mcp.list_prompts()
 
     tool_rows = []
     for t in sorted((_wire(x) for x in tools), key=lambda d: d["name"]):
@@ -99,7 +110,38 @@ async def build_manifest() -> dict:
         for r in sorted((_wire(x) for x in resources), key=lambda d: str(d["uri"]))
     ]
 
-    return {"tools": tool_rows, "resources": resource_rows}
+    template_rows = [
+        {
+            "uri_template": t.get("uriTemplate"),
+            "name": t.get("name"),
+            "title": t.get("title"),
+            "description": t.get("description"),
+            "mime_type": t.get("mimeType"),
+        }
+        for t in sorted((_wire(x) for x in templates), key=lambda d: str(d["uriTemplate"]))
+    ]
+
+    prompt_rows = [
+        {
+            "name": p["name"],
+            "title": p.get("title"),
+            "summary": _summarise(p.get("description") or ""),
+            # Argument names and requiredness are the calling contract; the
+            # descriptions are prose and would make this snapshot noisy.
+            "arguments": [
+                {"name": a["name"], "required": bool(a.get("required"))}
+                for a in sorted(p.get("arguments") or [], key=lambda a: a["name"])
+            ],
+        }
+        for p in sorted((_wire(x) for x in prompts), key=lambda d: d["name"])
+    ]
+
+    return {
+        "tools": tool_rows,
+        "resources": resource_rows,
+        "resource_templates": template_rows,
+        "prompts": prompt_rows,
+    }
 
 
 def main() -> int:
@@ -130,7 +172,9 @@ def main() -> int:
         MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
         MANIFEST_PATH.write_text(text, encoding="utf-8")
         print(f"wrote {MANIFEST_PATH.relative_to(REPO_ROOT)} "
-              f"({len(manifest['tools'])} tools, {len(manifest['resources'])} resources)")
+              f"({len(manifest['tools'])} tools, {len(manifest['resources'])} resources, "
+              f"{len(manifest['resource_templates'])} templates, "
+              f"{len(manifest['prompts'])} prompts)")
     else:
         sys.stdout.write(text)
     return 0

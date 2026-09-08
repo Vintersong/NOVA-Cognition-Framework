@@ -90,7 +90,6 @@ def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPatch) -
     denial payload instead of touching the SQLite index. Catches the gap
     Codex review flagged where _ALL_TOOL_NAMES inclusion alone wasn't
     enough to gate execution."""
-    import json
     import facts as facts_module
     import permissions
 
@@ -112,7 +111,7 @@ def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPatch) -
     )
     monkeypatch.setattr(permissions, "_active", ctx)
 
-    async def _run() -> tuple[str, str]:
+    async def _run():
         search_out = await mcp.tools["nova_facts_search"](facts_module.FactsSearchInput(query="x"))
         rebuild_out = await mcp.tools["nova_facts_rebuild"](facts_module.FactsRebuildInput())
         return search_out, rebuild_out
@@ -120,7 +119,7 @@ def test_facts_tools_honour_permission_denial(monkeypatch: pytest.MonkeyPatch) -
     search_out, rebuild_out = asyncio.run(_run())
 
     for out in (search_out, rebuild_out):
-        payload = json.loads(out)
+        payload = out.model_dump(mode="json", by_alias=True)
         assert payload["status"] == "rejected"
         assert payload["code"] == "permission_denied"
         assert payload["retryable"] is False

@@ -16,6 +16,11 @@ bench/
 nidhogg_manifest.json
 code_index_manifest.json
 
+# FileLock sentinels — written next to each runtime file above, so ignoring
+# only the file itself still leaves the lock untracked in the working tree
+*.json.lock
+*.md.lock
+
 # SQLite databases — runtime artifacts, never commit
 skill_audit.db*
 nova_shard_index.db*

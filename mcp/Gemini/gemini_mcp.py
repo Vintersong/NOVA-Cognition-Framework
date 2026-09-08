@@ -4,13 +4,19 @@ from typing import Optional
 from dotenv import load_dotenv
 from pathlib import Path
 import os
-import json
 import sys
 
 # Allow importing config from mcp/ when this module is loaded by nova_server.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import GEMINI_MODEL as MODEL
-from reject import RejectCode, reject_payload
+from outputs import (
+    ErrorPayload,
+    GeminiFileLoaded,
+    GeminiLoadFileOutcome,
+    GeminiTicketOutcome,
+    GeminiTicketResult,
+)
+from reject import RejectCode, reject_model
 from tool_registry import nova_tool
 _client = None
 _ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
@@ -78,7 +84,7 @@ def register_gemini_tools(mcp, gate=None, audit_log=None) -> None:
 
     # Title and annotations come from the registry (net.egress).
     @nova_tool(mcp, name="gemini_execute_ticket")
-    async def gemini_execute_ticket(params: ExecuteTicketInput) -> str:
+    async def gemini_execute_ticket(params: ExecuteTicketInput) -> GeminiTicketOutcome:
         """Send a structured ticket to Gemini Flash for code generation.
 
         Use this when an orchestrator has planned a task and needs a worker agent
@@ -86,9 +92,9 @@ def register_gemini_tools(mcp, gate=None, audit_log=None) -> None:
         and NOVA shard memory assembled by the injection layer. Provide the ticket
         with clear requirements and acceptance criteria.
         """
-        from permissions import is_blocked, denial_payload
+        from permissions import denial_reject, is_blocked
         if is_blocked("gemini_execute_ticket"):
-            return denial_payload("gemini_execute_ticket")
+            return denial_reject("gemini_execute_ticket")
         prompt = f"""You are a specialized code generation agent.
 
 {params.context if params.context else "No context provided — execute the ticket as specified, writing self-contained output."}
@@ -140,7 +146,7 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
                             target=params.output_file,
                         )
                     except (CapabilityDenied, HITLDenied) as exc:
-                        return reject_payload(
+                        return reject_model(
                             RejectCode.GATE_DENIED, f"Capability gate denied: {exc}"
                         )
 
@@ -159,7 +165,7 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
                             )
                         except Exception:
                             pass
-                    return reject_payload(
+                    return reject_model(
                         RejectCode.PERMISSION_DENIED,
                         "Access denied: output path is outside the allowed workspace directory.",
                     )
@@ -170,7 +176,7 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
                     with open(output_path, "w", encoding="utf-8") as f:
                         f.write(result)
                     write_ok = True
-                    return json.dumps({"status": "success", "saved_to": str(output_path), "code": result})
+                    return GeminiTicketResult(saved_to=str(output_path), code=result)
                 finally:
                     if request_id is not None and audit_log is not None:
                         try:
@@ -186,43 +192,43 @@ Return ONLY the output requested by the ticket. No explanation unless the ticket
                         except Exception:
                             pass
 
-            return json.dumps({"status": "success", "code": result})
+            return GeminiTicketResult(code=result)
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return ErrorPayload(message=str(e))
 
     # Title and annotations come from the registry (fs.read).
     @nova_tool(mcp, name="gemini_load_file")
-    async def gemini_load_file(params: LoadFileInput) -> str:
+    async def gemini_load_file(params: LoadFileInput) -> GeminiLoadFileOutcome:
         """Load a file from disk to use as codebase context for ticket execution.
 
         Use this before executing a ticket when the generated output needs to
         integrate with existing files in the project codebase. Supports any
         text-based file type.
         """
-        from permissions import is_blocked, denial_payload
+        from permissions import denial_reject, is_blocked
         if is_blocked("gemini_load_file"):
-            return denial_payload("gemini_load_file")
+            return denial_reject("gemini_load_file")
         try:
             resolved = Path(params.filepath).resolve()
             if not resolved.is_relative_to(_REPO_ROOT):
-                return reject_payload(
+                return reject_model(
                     RejectCode.PERMISSION_DENIED,
                     "Access denied: path is outside the allowed directory.",
                 )
             if _is_secret_path(resolved):
-                return reject_payload(
+                return reject_model(
                     RejectCode.PERMISSION_DENIED,
                     "Access denied: refusing to read a credential/secret file.",
                 )
             with open(resolved, "r", encoding="utf-8") as f:
                 content = f.read()
-            return json.dumps({"status": "success", "filepath": str(resolved), "content": content})
+            return GeminiFileLoaded(filepath=str(resolved), content=content)
         except FileNotFoundError:
-            return reject_payload(
+            return reject_model(
                 RejectCode.PRECONDITION_FAILED,
                 f"File not found: {params.filepath}",
                 target=params.filepath,
             )
         except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return ErrorPayload(message=str(e))
