@@ -453,7 +453,14 @@
       },
       "name": "nova_graph_query",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "GraphDirectResult",
+          "GraphHop",
+          "GraphRelation",
+          "GraphTransitiveResult",
+          "RejectCode",
+          "RejectPayload"
+        ],
         "properties": [
           "result"
         ],
@@ -484,7 +491,11 @@
       },
       "name": "nova_graph_relate",
       "output_schema": {
-        "defs": [],
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "RelationAdded"
+        ],
         "properties": [
           "result"
         ],

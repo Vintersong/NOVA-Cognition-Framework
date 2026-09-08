@@ -56,12 +56,12 @@ def permission_reject(tool_name: str) -> RejectPayload:
     )
 
 
-async def gate_check(
+async def gate_check_model(
     ctx: "ServerContext",
     tool_name: str,
     target: str | None = None,
     approval: bool | None = None,
-) -> tuple[str | None, str | None]:
+) -> tuple[RejectPayload | None, str | None]:
     """Run the capability gate for *tool_name* against the active skill.
 
     *approval* carries the operator's answer for a destructive tool, obtained by
@@ -69,12 +69,14 @@ async def gate_check(
     ``was_approved(approval_param)``; the gate records the decision and refuses
     when it is False.
 
-    Returns ``(err, request_id)``:
+    Returns ``(refusal, request_id)``:
       - On allow: ``(None, request_id_or_None)``. The handler must call
         :func:`log_executed` after the operation completes so the audit
         record reflects the real outcome.
-      - On block: ``(json_error_string, None)`` — the handler should
-        return the error string directly.
+      - On block: ``(RejectPayload, None)`` — the handler returns it directly.
+
+    :func:`gate_check` is the JSON-string form, for handlers that have not yet
+    been given a typed return annotation.
     """
     try:
         request_id = await ctx.capability_gate.async_check(
@@ -85,17 +87,28 @@ async def gate_check(
     except CapabilityDenied as exc:
         # The skill's @@capabilities do not cover this tool. Re-running as-is
         # cannot help — the manifest has to change.
-        return reject_payload(
+        return reject_model(
             RejectCode.GATE_DENIED, str(exc), target=tool_name, retryable=False,
         ), None
     except HITLDenied as exc:
         # A human declined (or the prompt timed out). A later call may be
         # approved, so this one is retryable.
-        return reject_payload(
+        return reject_model(
             RejectCode.GATE_DENIED, str(exc), target=tool_name, retryable=True,
             hint="A human declined or did not answer in time. Ask the operator "
                  "to approve, then retry.",
         ), None
+
+
+async def gate_check(
+    ctx: "ServerContext",
+    tool_name: str,
+    target: str | None = None,
+    approval: bool | None = None,
+) -> tuple[str | None, str | None]:
+    """JSON-string form of :func:`gate_check_model`, for untyped handlers."""
+    refusal, request_id = await gate_check_model(ctx, tool_name, target, approval)
+    return (None if refusal is None else refusal.model_dump_json(indent=2)), request_id
 
 
 def log_executed(

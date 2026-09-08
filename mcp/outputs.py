@@ -52,6 +52,13 @@ __all__ = [
     "SessionFlushResult",
     "SessionLoadResult",
     "SessionListResult",
+    "GraphRelation",
+    "GraphHop",
+    "GraphTransitiveResult",
+    "GraphDirectResult",
+    "RelationAdded",
+    "GraphQueryResult",
+    "GraphRelateResult",
 ]
 
 
@@ -195,3 +202,77 @@ class SessionList(NovaOutput):
 SessionFlushResult = Union[SessionFlushed, RejectPayload, ErrorPayload]
 SessionLoadResult = Union[SessionLoaded, RejectPayload, ErrorPayload]
 SessionListResult = Union[SessionList, RejectPayload]
+
+
+# ── Graph tools ──────────────────────────────────────────────────────────────
+
+class GraphRelation(NovaOutput):
+    """One stored relation, enriched with both endpoints' guiding questions."""
+
+    source: str
+    target: str
+    type: str = Field(description="See schemas.RelationType for the vocabulary.")
+    notes: str = ""
+    created_at: str = ""
+    reason: Optional[str] = Field(
+        default=None, description="Required for `supersedes`; absent otherwise.",
+    )
+    source_question: str = ""
+    target_question: str = ""
+
+
+class GraphHop(NovaOutput):
+    """One node reached by the transitive walk."""
+
+    shard_id: str
+    depth: int
+    path: list[str] = Field(default_factory=list)
+    relation_type: str = ""
+
+
+class GraphTransitiveResult(NovaOutput):
+    """``nova_graph_query`` with ``transitive=True`` — a BFS from one root."""
+
+    mode: Literal["transitive"] = "transitive"
+    root: str
+    direction: Literal["outbound", "inbound"]
+    relation_type: str = Field(description='The filter, or "any".')
+    max_depth: int
+    results: list[GraphHop] = Field(default_factory=list)
+    total_entities: int
+    total_relations: int
+
+
+class GraphDirectResult(NovaOutput):
+    """``nova_graph_query`` without ``transitive`` — relations matching a pattern."""
+
+    mode: Literal["direct"] = "direct"
+    pattern: dict[str, str] = Field(
+        default_factory=dict,
+        description="The filter that was applied — any of source, target, type.",
+    )
+    relations: list[GraphRelation] = Field(default_factory=list)
+    total_entities: int
+    total_relations: int
+
+
+class RelationAdded(NovaOutput):
+    """``nova_graph_relate`` — a directed relation was written to the graph."""
+
+    status: Literal["relation_added"] = "relation_added"
+    source: str
+    target: str
+    type: str
+    notes: str = ""
+    confidence_after_corroboration: Optional[float] = Field(
+        default=None,
+        description=(
+            "The source shard's new confidence. Non-null only for "
+            "relation_type='corroborated_by', and only when the raise succeeded. "
+            "This is the sanctioned path for raising a shard's confidence."
+        ),
+    )
+
+
+GraphQueryResult = Union[GraphTransitiveResult, GraphDirectResult, RejectPayload]
+GraphRelateResult = Union[RelationAdded, RejectPayload]
