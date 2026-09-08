@@ -45,16 +45,23 @@ def _summarise(description: str) -> str:
 
 
 def _schema_shape(schema: dict | None) -> dict | None:
-    """Top-level shape of a JSON Schema — property names and required list.
+    """Top-level shape of a JSON Schema — properties, required, and model names.
 
-    Deliberately not the whole schema: the full document is mostly $defs noise,
-    while the property/required shape is what a model actually calls against.
+    Deliberately not the whole schema; the property/required shape is what a
+    model actually calls against.
+
+    ``defs`` matters for output schemas specifically. A handler annotated
+    ``-> str`` publishes ``{"result": {"type": "string"}}``, and one annotated
+    with a union of models publishes ``{"result": {"anyOf": [...]}}`` — both
+    have the single property ``result``, so properties alone cannot tell the
+    degenerate schema from a real one. The ``$defs`` names can.
     """
     if not schema:
         return None
     return {
         "properties": sorted((schema.get("properties") or {}).keys()),
         "required": sorted(schema.get("required") or []),
+        "defs": sorted((schema.get("$defs") or {}).keys()),
     }
 
 

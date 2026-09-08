@@ -38,6 +38,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ExecuteTicketInput"
+        ],
         "properties": [
           "params"
         ],
@@ -47,6 +50,7 @@
       },
       "name": "gemini_execute_ticket",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -65,6 +69,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "LoadFileInput"
+        ],
         "properties": [
           "params"
         ],
@@ -74,6 +81,7 @@
       },
       "name": "gemini_load_file",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -92,6 +100,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "NidhoggIngestInput"
+        ],
         "properties": [
           "params"
         ],
@@ -101,6 +112,7 @@
       },
       "name": "nidhogg_ingest",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -119,6 +131,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "NidhoggScanInput"
+        ],
         "properties": [
           "params"
         ],
@@ -128,6 +143,7 @@
       },
       "name": "nidhogg_scan",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -146,6 +162,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "NidhoggStatusInput"
+        ],
         "properties": [
           "params"
         ],
@@ -155,6 +174,7 @@
       },
       "name": "nidhogg_status",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -173,6 +193,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "CachePrewarmInput"
+        ],
         "properties": [
           "params"
         ],
@@ -182,6 +205,7 @@
       },
       "name": "nova_cache_prewarm",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -200,6 +224,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "CalibrateRoutingInput"
+        ],
         "properties": [
           "params"
         ],
@@ -209,6 +236,7 @@
       },
       "name": "nova_calibrate_routing",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -227,6 +255,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "CodeSearchInput"
+        ],
         "properties": [
           "params"
         ],
@@ -236,6 +267,7 @@
       },
       "name": "nova_code_search",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -254,6 +286,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "NovaEvolveInput"
+        ],
         "properties": [
           "params"
         ],
@@ -263,6 +298,7 @@
       },
       "name": "nova_evolve",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -281,6 +317,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ExternalRetrievalInput"
+        ],
         "properties": [
           "params"
         ],
@@ -290,6 +329,7 @@
       },
       "name": "nova_external_retrieval",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -308,6 +348,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "FactsRebuildInput"
+        ],
         "properties": [
           "params"
         ],
@@ -317,6 +360,7 @@
       },
       "name": "nova_facts_rebuild",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -335,6 +379,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "FactsSearchInput"
+        ],
         "properties": [
           "params"
         ],
@@ -344,6 +391,7 @@
       },
       "name": "nova_facts_search",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -362,6 +410,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ForgemasterSprintInput"
+        ],
         "properties": [
           "params"
         ],
@@ -371,6 +422,7 @@
       },
       "name": "nova_forgemaster_sprint",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -389,6 +441,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "GraphQueryInput"
+        ],
         "properties": [
           "params"
         ],
@@ -398,6 +453,7 @@
       },
       "name": "nova_graph_query",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -416,6 +472,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "GraphRelationInput"
+        ],
         "properties": [
           "params"
         ],
@@ -425,6 +484,7 @@
       },
       "name": "nova_graph_relate",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -443,6 +503,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "HuginnCandidatesInput"
+        ],
         "properties": [
           "params"
         ],
@@ -452,6 +515,7 @@
       },
       "name": "nova_huginn_candidates",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -470,6 +534,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ObsidianExportInput"
+        ],
         "properties": [
           "params"
         ],
@@ -479,6 +546,7 @@
       },
       "name": "nova_obsidian_export",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -497,6 +565,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "SessionFlushInput"
+        ],
         "properties": [
           "params"
         ],
@@ -506,6 +577,13 @@
       },
       "name": "nova_session_flush",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload",
+          "SessionFlushed",
+          "TokenTotals"
+        ],
         "properties": [
           "result"
         ],
@@ -524,6 +602,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "SessionListInput"
+        ],
         "properties": [
           "params"
         ],
@@ -533,6 +614,11 @@
       },
       "name": "nova_session_list",
       "output_schema": {
+        "defs": [
+          "RejectCode",
+          "RejectPayload",
+          "SessionList"
+        ],
         "properties": [
           "result"
         ],
@@ -551,6 +637,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "SessionLoadInput"
+        ],
         "properties": [
           "params"
         ],
@@ -560,6 +649,13 @@
       },
       "name": "nova_session_load",
       "output_schema": {
+        "defs": [
+          "ErrorPayload",
+          "RejectCode",
+          "RejectPayload",
+          "SessionLoaded",
+          "TokenTotals"
+        ],
         "properties": [
           "result"
         ],
@@ -578,6 +674,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardArchiveInput"
+        ],
         "properties": [
           "params"
         ],
@@ -587,6 +686,7 @@
       },
       "name": "nova_shard_archive",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -605,6 +705,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardConsolidateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -614,6 +717,7 @@
       },
       "name": "nova_shard_consolidate",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -632,6 +736,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardCreateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -641,6 +748,7 @@
       },
       "name": "nova_shard_create",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -659,6 +767,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardForgetInput"
+        ],
         "properties": [
           "params"
         ],
@@ -668,6 +779,7 @@
       },
       "name": "nova_shard_forget",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -686,6 +798,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardGetInput"
+        ],
         "properties": [
           "params"
         ],
@@ -695,6 +810,7 @@
       },
       "name": "nova_shard_get",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -713,6 +829,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardGetFullInput"
+        ],
         "properties": [
           "params"
         ],
@@ -722,6 +841,7 @@
       },
       "name": "nova_shard_get_full",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -740,6 +860,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardIndexInput"
+        ],
         "properties": [
           "params"
         ],
@@ -749,6 +872,7 @@
       },
       "name": "nova_shard_index",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -767,6 +891,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardInteractInput"
+        ],
         "properties": [
           "params"
         ],
@@ -776,6 +903,7 @@
       },
       "name": "nova_shard_interact",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -794,6 +922,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardListInput"
+        ],
         "properties": [
           "params"
         ],
@@ -803,6 +934,7 @@
       },
       "name": "nova_shard_list",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -821,6 +953,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardMergeInput"
+        ],
         "properties": [
           "params"
         ],
@@ -830,6 +965,7 @@
       },
       "name": "nova_shard_merge",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -848,6 +984,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardStateQueryInput"
+        ],
         "properties": [
           "params"
         ],
@@ -857,6 +996,7 @@
       },
       "name": "nova_shard_query_state",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -875,6 +1015,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardSearchInput"
+        ],
         "properties": [
           "params"
         ],
@@ -884,6 +1027,7 @@
       },
       "name": "nova_shard_search",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -902,6 +1046,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "ShardIndexInput"
+        ],
         "properties": [
           "params"
         ],
@@ -911,6 +1058,7 @@
       },
       "name": "nova_shard_summary",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -929,6 +1077,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardUpdateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -938,6 +1089,7 @@
       },
       "name": "nova_shard_update",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -956,6 +1108,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "ShardValidateInput"
+        ],
         "properties": [
           "params"
         ],
@@ -965,6 +1120,7 @@
       },
       "name": "nova_shard_validate",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -983,6 +1139,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "WikiGetInput"
+        ],
         "properties": [
           "params"
         ],
@@ -992,6 +1151,7 @@
       },
       "name": "nova_wiki_get",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -1010,6 +1170,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "WikiIngestInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1019,6 +1182,7 @@
       },
       "name": "nova_wiki_ingest",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -1037,6 +1201,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "WikiLintInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1046,6 +1213,7 @@
       },
       "name": "nova_wiki_lint",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -1064,6 +1232,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "WikiListInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1073,6 +1244,7 @@
       },
       "name": "nova_wiki_list",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -1091,6 +1263,9 @@
         "readOnlyHint": true
       },
       "input_schema": {
+        "defs": [
+          "WikiQueryInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1100,6 +1275,7 @@
       },
       "name": "nova_wiki_query",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],
@@ -1118,6 +1294,9 @@
         "readOnlyHint": false
       },
       "input_schema": {
+        "defs": [
+          "WikiSchemaInput"
+        ],
         "properties": [
           "params"
         ],
@@ -1127,6 +1306,7 @@
       },
       "name": "nova_wiki_schema",
       "output_schema": {
+        "defs": [],
         "properties": [
           "result"
         ],

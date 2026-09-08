@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 from capability_gate import CapabilityDenied, HITLDenied
 from permissions import denial_payload
-from reject import RejectCode, reject_payload
+from reject import RejectCode, RejectPayload, reject_model, reject_payload
 
 if TYPE_CHECKING:
     from server_context import ServerContext
@@ -34,12 +34,26 @@ _logger = logging.getLogger(__name__)
 
 
 def permission_error(tool_name: str) -> str:
-    """Return the typed reject envelope for a blocked tool call.
+    """Return the typed reject envelope for a blocked tool call, as JSON.
 
     Delegates to ``permissions.denial_payload`` so the permission-denied shape
-    is defined once.
+    is defined once. Used by handlers that still return ``str``; handlers with
+    a typed return annotation use :func:`permission_reject` instead.
     """
     return denial_payload(tool_name)
+
+
+def permission_reject(tool_name: str) -> RejectPayload:
+    """The same envelope as :func:`permission_error`, as a model.
+
+    Handlers annotated with an output model return this so the refusal
+    validates against the published ``outputSchema``.
+    """
+    return reject_model(
+        RejectCode.PERMISSION_DENIED,
+        f"Tool '{tool_name}' is not permitted in the current permission context.",
+        target=tool_name,
+    )
 
 
 async def gate_check(
