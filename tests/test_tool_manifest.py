@@ -2,10 +2,9 @@
 Golden snapshot of NOVA's MCP wire surface.
 
 The registry tests guard NOVA's internal metadata; this one guards what
-actually leaves the process — the ``tools/list`` and ``resources/list`` a client
-sees. It is the check that makes titles, annotations, schema shape and output
-schemas regression-proof, and the one that will catch drift during the SDK v2
-port.
+actually leaves the process — every list a client can call: tools, resources,
+resource templates and prompts. It is the check that makes titles, annotations,
+schema shape, output schemas and the prompt/template inventory regression-proof.
 
 Regenerate deliberately after an intended change:
 
@@ -75,9 +74,10 @@ def test_every_tool_matches_golden(live, golden):
     )
 
 
-def test_resources_match_golden(live, golden):
-    assert live["resources"] == golden["resources"], (
-        "Published resource metadata drifted. If intended:\n"
+@pytest.mark.parametrize("section", ["resources", "resource_templates", "prompts"])
+def test_section_matches_golden(live, golden, section):
+    assert live[section] == golden[section], (
+        f"Published {section.replace('_', ' ')} drifted. If intended:\n"
         "  python utilities/dump_tool_manifest.py --write"
     )
 
@@ -88,3 +88,26 @@ def test_every_tool_is_annotated_and_titled(live):
         assert t["annotations"] is not None, f"{t['name']} publishes no annotations"
         assert t["title"], f"{t['name']} publishes no title"
         assert t["summary"], f"{t['name']} publishes no description"
+
+
+def test_every_tool_publishes_a_real_output_schema(live):
+    """A handler annotated ``-> str`` publishes ``{"result": string}`` — one
+    property and no ``$defs``. That is indistinguishable from a real union
+    schema by property name alone, which is why the snapshot records defs."""
+    degenerate = [
+        t["name"] for t in live["tools"]
+        if not (t["output_schema"] or {}).get("defs")
+    ]
+    assert not degenerate, (
+        "These tools publish a degenerate output schema — annotate the handler "
+        f"with a model from mcp/outputs.py: {degenerate}"
+    )
+
+
+def test_every_prompt_and_template_is_titled_and_described(live):
+    for row in live["resource_templates"]:
+        assert row["title"], f"{row['uri_template']} publishes no title"
+        assert row["description"], f"{row['uri_template']} publishes no description"
+    for row in live["prompts"]:
+        assert row["title"], f"{row['name']} publishes no title"
+        assert row["summary"], f"{row['name']} publishes no description"

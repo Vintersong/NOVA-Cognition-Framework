@@ -167,8 +167,17 @@ def _parse_frontmatter(fm_text: str) -> dict:
 # ═══════════════════════════════════════════════════════════
 
 def load_wiki_page(slug: str) -> Optional[WikiPage]:
-    path = _WIKI_DIR / f"{slug}.md"
-    if not path.exists():
+    """Load one page by slug, or None if there is no such page.
+
+    The slug is caller-supplied — it arrives straight from ``nova_wiki_get`` and
+    from the ``nova://wiki/{slug}`` resource template — so it is resolved and
+    checked against the wiki root before anything is opened. Without that,
+    ``../../.env`` reads a file outside the wiki. ``shard_format.load_shard_file``
+    has had the equivalent guard all along; this one did not.
+    """
+    root = _WIKI_DIR.resolve()
+    path = (root / f"{slug}.md").resolve()
+    if not path.is_relative_to(root) or not path.exists():
         return None
     try:
         return WikiPage.from_file(path)

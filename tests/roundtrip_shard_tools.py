@@ -122,12 +122,48 @@ async def drive() -> dict:
         await call(c, "nova_wiki_list", {}, key="wiki_list")
         await call(c, "nova_wiki_lint", {}, key="wiki_lint")
         await call(c, "nova_wiki_get", {"slug": "not_a_page"}, key="wiki_missing")
+        # WikiGetInput only requires min_length=1, so the slug reaches the
+        # loader unconstrained — the traversal guard lives there.
+        await call(c, "nova_wiki_get", {"slug": "../../.env"}, key="wiki_traversal_tool")
         await call(c, "nova_wiki_schema", {
             "action": "remove", "slug": "roundtrip",
         }, key="wiki_remove")
         await call(c, "nova_wiki_schema", {
             "action": "remove", "slug": "roundtrip",
         }, key="wiki_remove_again")
+
+        # ── Resource templates and completions ───────────────────────────────
+        async def read(uri, key):
+            try:
+                result = await c.read_resource(uri)
+                report["resources"][key] = {
+                    "ok": True,
+                    "text": result.contents[0].text[:400] if result.contents else "",
+                }
+            except Exception as exc:
+                report["resources"][key] = {"ok": False, "error": str(exc)}
+
+        report["resources"] = {}
+        await read(f"nova://shard/{shard_id}", "shard")
+        await read("nova://shard/does_not_exist", "shard_missing")
+        await read("nova://shard/../../etc/passwd", "shard_traversal")
+        await read("nova://wiki/roundtrip", "wiki_missing")
+        await read("nova://wiki/../../../etc/passwd", "wiki_traversal")
+        await read("nova://wiki/%2E%2E%2F%2E%2E%2Fetc%2Fpasswd", "wiki_traversal_encoded")
+        await read("nova://shard/%2E%2E%2F%2E%2E%2Fetc%2Fpasswd", "shard_traversal_encoded")
+        await read("nova://index", "index")
+
+        async def complete(uri, name, value, key):
+            result = await c.complete(
+                ref={"type": "ref/resource", "uri": uri},
+                argument={"name": name, "value": value},
+            )
+            report["completions"][key] = list(result.completion.values)
+
+        report["completions"] = {}
+        await complete("nova://shard/{shard_id}", "shard_id", "testing", "shard_prefix")
+        await complete("nova://shard/{shard_id}", "shard_id", "zzz_no_match", "shard_none")
+        await complete("nova://shard/{shard_id}", "shard_id", "%", "shard_wildcard")
 
         # Token accounting is asserted against the *persisted* transcript, which
         # is the string the handler serialised for the session store — not the
@@ -166,7 +202,7 @@ async def drive_probe() -> dict:
         "nova_external_retrieval": {"query": "x"},
     }
 
-    report: dict = {"calls": {}}
+    report: dict = {"calls": {}, "resources": {}}
     async with Client(nova_server.mcp) as c:
         for name in names:
             result = await c.call_tool(name, {"params": args[name]})
@@ -175,6 +211,24 @@ async def drive_probe() -> dict:
                 "has_text": bool(result.content and getattr(result.content[0], "text", "")),
                 "payload": (result.structured_content or {}).get("result"),
             }
+
+        # Resources are not tools, so a denial has to be applied by hand in the
+        # resource handler; probe the ones that mirror a gateable tool.
+        for uri, key in [
+            ("nova://index", "index"),
+            ("nova://graph", "graph"),
+            ("nova://shard/anything", "shard"),
+            ("nova://wiki/anything", "wiki"),
+            ("nova://skill", "skill"),
+        ]:
+            try:
+                result = await c.read_resource(uri)
+                report["resources"][key] = {
+                    "ok": True,
+                    "text": result.contents[0].text[:200] if result.contents else "",
+                }
+            except Exception as exc:
+                report["resources"][key] = {"ok": False, "error": str(exc)}
     return report
 
 

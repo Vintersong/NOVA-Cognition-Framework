@@ -61,13 +61,19 @@ UNGUARDED_TOOLS = [
     "nova_external_retrieval",
 ]
 
+#: Denied for the resource probe: each names a resource that serves the same
+#: data, so denying the tool must close the resource too.
+DENIED_FOR_RESOURCES = UNGUARDED_TOOLS + [
+    "nova_shard_index", "nova_graph_query", "nova_shard_get",
+]
+
 
 @pytest.fixture(scope="module")
 def denied_report(tmp_path_factory) -> dict:
     return run_driver(
         tmp_path_factory.mktemp("nova_denied"), "probe",
         ROUNDTRIP_TOOLS=",".join(UNGUARDED_TOOLS),
-        NOVA_DENIED_TOOLS=",".join(UNGUARDED_TOOLS),
+        NOVA_DENIED_TOOLS=",".join(DENIED_FOR_RESOURCES),
     )
 
 
@@ -298,3 +304,80 @@ def test_external_retrieval_translates_a_pipeline_failure(tmp_path_factory):
     entry = report["calls"]["nova_external_retrieval"]
     assert entry["is_error"] is True
     assert entry["payload"]["code"] == "dependency_missing"
+
+
+# ── Resource templates ───────────────────────────────────────────────────────
+
+def test_shard_template_serves_the_shard(report):
+    entry = report["resources"]["shard"]
+    assert entry["ok"], entry
+    assert '"shard_id": "testing_reflection"' in entry["text"]
+
+
+@pytest.mark.parametrize("key,fragment", [
+    ("shard_missing", "not found"),
+    ("wiki_missing", "No wiki page found"),
+])
+def test_templates_report_a_missing_instance(report, key, fragment):
+    entry = report["resources"][key]
+    assert entry["ok"] is False
+    assert fragment in entry["error"]
+
+
+@pytest.mark.parametrize("key", [
+    "shard_traversal", "wiki_traversal",
+    "shard_traversal_encoded", "wiki_traversal_encoded",
+])
+def test_templates_refuse_path_traversal(report, key):
+    """A `{param}` matches one URI segment, so a traversal never reaches the
+    handler — percent-encoded or not. The guard inside wiki.load_wiki_page is
+    the second layer, for the tool path where the slug is unconstrained."""
+    entry = report["resources"][key]
+    assert entry["ok"] is False
+    assert "/etc/passwd" not in entry.get("text", "")
+
+
+def test_wiki_get_refuses_a_traversal_slug(report):
+    """WikiGetInput only requires min_length=1, so `../../.env` reaches
+    load_wiki_page directly. Before the guard it resolved and was read."""
+    entry = call(report, "wiki_traversal_tool")
+    assert entry["is_error"] is True
+    assert entry["payload"]["code"] == "wiki_page_not_found"
+
+
+# ── Completions ──────────────────────────────────────────────────────────────
+
+def test_shard_id_completion_offers_real_ids(report):
+    values = report["completions"]["shard_prefix"]
+    assert "testing_reflection" in values
+    assert all(v.startswith("testing") for v in values)
+
+
+def test_completion_of_an_unmatched_prefix_is_empty(report):
+    assert report["completions"]["shard_none"] == []
+
+
+def test_completion_escapes_sql_wildcards(report):
+    """A bare "%" is a LIKE wildcard. Unescaped it would complete to the whole
+    corpus for a prefix the user never typed."""
+    assert report["completions"]["shard_wildcard"] == []
+
+
+@pytest.mark.parametrize("key,tool", [
+    ("index", "nova_shard_index"),
+    ("graph", "nova_graph_query"),
+    ("shard", "nova_shard_get"),
+    ("wiki", "nova_wiki_get"),
+])
+def test_denied_tools_close_the_resources_that_mirror_them(denied_report, key, tool):
+    """Resources are not tools, so nothing routed them through the permission
+    context: denying nova_shard_get left nova://shard/{id} handing out bodies."""
+    entry = denied_report["resources"][key]
+    assert entry["ok"] is False, f"{key} was served despite {tool} being denied"
+    assert tool in entry["error"]
+
+
+def test_the_skill_resource_stays_open(denied_report):
+    """nova://skill is NOVA's own operating instructions and mirrors no tool, so
+    it is deliberately not gated — a client that cannot read it cannot start."""
+    assert denied_report["resources"]["skill"]["ok"] is True

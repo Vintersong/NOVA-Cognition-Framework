@@ -1,4 +1,184 @@
 {
+  "prompts": [
+    {
+      "arguments": [],
+      "name": "forgemaster-code-review",
+      "summary": "Load this skill when reviewing any implementation before it merges to main.",
+      "title": "Code Review"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-emotional-state-routing",
+      "summary": "Load this skill **before** routing any sprint ticket when: - The task involves a high-stakes or irreversible decision - The user's phrasing signals urgency, frustration, or pressure (\"quickly\", \"need this now\", \"nothing is working\", \"desperate\") - A previous sprint produced contradicted or low-confidence results - N\u00d3TT's last cycle flagged shards with high arousal scores",
+      "title": "Emotional State Routing"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-git-workflow",
+      "summary": "Load this skill when setting up a branch, committing work, or creating a PR.",
+      "title": "Git Workflow"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-heavyskill",
+      "summary": "Load this skill when a task meets the activation predicate below.",
+      "title": "Heavyskill"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-implementation",
+      "summary": "Load this skill when executing a single implementation, boilerplate, or structured-output ticket.",
+      "title": "Implementation"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-nova-session-handoff",
+      "summary": "Load this skill when approaching context limit, ending a session, or handing work to another agent.",
+      "title": "NOVA Session Handoff"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-nova-session-start",
+      "summary": "Load this skill at the start of every session before doing any work.",
+      "title": "NOVA Session Start"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-nova-shard-triage",
+      "summary": "Load this skill when the shard corpus feels cluttered, after a consolidation run surfaces merge candidates, or on a scheduled hygiene pass (recommended every 10\u201315 sprints).",
+      "title": "NOVA Shard Triage"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-orchestrator",
+      "summary": "Load this skill at the start of every sprint, before decomposing any work.",
+      "title": "Orchestrator"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-parallel-lanes",
+      "summary": "Load this skill when dispatching 2 or more independent tickets in the same sprint wave.",
+      "title": "Parallel Lanes"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-qa-review",
+      "summary": "Load this skill when the review lane runs after any implementation ticket.",
+      "title": "QA Review"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-systematic-debugging",
+      "summary": "Load this skill whenever investigating any failure, error, or unexpected behavior \u2014 before attempting any fix.",
+      "title": "Systematic Debugging"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-verification",
+      "summary": "Load this skill before claiming any ticket, sprint, or feature is complete.",
+      "title": "Verification"
+    },
+    {
+      "arguments": [],
+      "name": "forgemaster-writing-plans",
+      "summary": "Load this skill when decomposing a design doc, feature request, or user story into a sprint plan.",
+      "title": "Writing Plans"
+    },
+    {
+      "arguments": [
+        {
+          "name": "min_confidence",
+          "required": false
+        }
+      ],
+      "name": "nova-audit-confidence",
+      "summary": "Find the contradicted, low-confidence and stale shards, and decide what to do about each.",
+      "title": "Audit Corpus Confidence"
+    },
+    {
+      "arguments": [
+        {
+          "name": "path",
+          "required": true
+        }
+      ],
+      "name": "nova-ingest-document",
+      "summary": "Route a document into the shard graph or the wiki.",
+      "title": "Ingest a Document"
+    },
+    {
+      "arguments": [
+        {
+          "name": "project",
+          "required": true
+        }
+      ],
+      "name": "nova-orient",
+      "summary": "Load what NOVA already knows about a project and summarise the current state before doing any work.",
+      "title": "Orient in a Project"
+    },
+    {
+      "arguments": [
+        {
+          "name": "depth",
+          "required": false
+        },
+        {
+          "name": "shard_id",
+          "required": true
+        }
+      ],
+      "name": "nova-recall",
+      "summary": "Pull one shard and everything the graph connects it to.",
+      "title": "Recall Around a Shard"
+    },
+    {
+      "arguments": [
+        {
+          "name": "design_doc",
+          "required": true
+        },
+        {
+          "name": "shard_ids",
+          "required": false
+        },
+        {
+          "name": "sprint_id",
+          "required": true
+        }
+      ],
+      "name": "nova-run-sprint",
+      "summary": "Load context, then run the four-turn sprint pipeline.",
+      "title": "Run a Forgemaster Sprint"
+    },
+    {
+      "arguments": [
+        {
+          "name": "project",
+          "required": true
+        }
+      ],
+      "name": "nova-write-handoff",
+      "summary": "Decide whether this session needs a handoff shard, and write one if it does.",
+      "title": "Write a Session Handoff"
+    }
+  ],
+  "resource_templates": [
+    {
+      "description": "One shard by id, exactly as stored on disk \u2014 metadata, conversation history and context. The read-only equivalent of nova_shard_get.",
+      "mime_type": "application/json",
+      "name": "nova_shard",
+      "title": "Shard",
+      "uri_template": "nova://shard/{shard_id}"
+    },
+    {
+      "description": "One curated wiki page by slug, as Markdown. The read-only equivalent of nova_wiki_get.",
+      "mime_type": "text/markdown",
+      "name": "nova_wiki_page",
+      "title": "Wiki Page",
+      "uri_template": "nova://wiki/{slug}"
+    }
+  ],
   "resources": [
     {
       "description": "Every directed inter-shard relation as stored on disk.",
