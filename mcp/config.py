@@ -121,6 +121,13 @@ FORGEMASTER_PLANNER_MODEL      = os.environ.get("FORGEMASTER_PLANNER_MODEL",    
 FORGEMASTER_REVIEWER_MODEL     = os.environ.get("FORGEMASTER_REVIEWER_MODEL",     MUNINN_MODEL)
 FORGEMASTER_IMPLEMENTER_MODEL  = os.environ.get("FORGEMASTER_IMPLEMENTER_MODEL",  GEMINI_MODEL)
 
+# A sprint verdict is the reviewer model's PASS/FAIL line; no tests run. Off by
+# default so an unverified model judgment does not write corroborated_by edges
+# (which shield shards from decay-on-read and boost spreading activation).
+FORGEMASTER_CORROBORATE_ON_REVIEW = os.environ.get(
+    "FORGEMASTER_CORROBORATE_ON_REVIEW", ""
+).lower() in ("1", "true", "yes")
+
 # ── Input validation patterns ──────────────────────────────────────────────────
 # Session IDs are persisted as filenames: keep strict and portable.
 # 1-128 chars total, start alnum, then alnum / dot / underscore / dash.

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import time
 from collections import defaultdict
@@ -37,10 +38,12 @@ from config import (
     FORGEMASTER_PLANNER_MODEL,
     FORGEMASTER_REVIEWER_MODEL,
     FORGEMASTER_IMPLEMENTER_MODEL,
+    FORGEMASTER_CORROBORATE_ON_REVIEW,
 )
+from atomic_io import atomic_write_text
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
-from graph import add_corroborated_by
+from graph import add_corroborated_by, register_external_entity
 from skill_manifest import SkillManifest, parse_skill_manifest
 from capability_gate import CapabilityGate, CapabilityDenied, HITLDenied
 
@@ -114,6 +117,18 @@ _ROLE_TO_MODEL: dict[str, str] = {
     "reviewer":     FORGEMASTER_REVIEWER_MODEL,
 }
 
+# Output-token budget per role. The implementer returns a whole file, so it
+# gets more room; a reply cut off at the limit is treated as a dispatch failure.
+_DEFAULT_MAX_TOKENS: int = 4096
+_ROLE_MAX_TOKENS: dict[str, int] = {
+    "implementer": int(os.environ.get("FORGEMASTER_IMPLEMENTER_MAX_TOKENS", "16384")),
+}
+
+# Empirical routing exploration: with this probability the router tries an
+# under-sampled candidate instead of the current best, so a model that once
+# cleared the bar does not lock the others out forever.
+_EXPLORE_RATE: float = float(os.environ.get("FORGEMASTER_EXPLORE_RATE", "0.1"))
+
 # Optional event log — one JSONL line per LLM call.
 _EVENT_LOG_PATH = os.environ.get("FORGEMASTER_EVENT_LOG", "")
 
@@ -140,10 +155,30 @@ def _log_event(entry: dict) -> None:
         logger.warning("event log write failed: %s", exc)
 
 
+def _fixed_roles_match(role_models: Optional[dict]) -> bool:
+    """
+    True when a verdict was produced with the same orchestrator, planner and
+    reviewer models as the current config.
+
+    Only the implementer varies with routed_model; a verdict produced under a
+    different planner or reviewer would credit (or blame) the implementer for
+    their effect. Verdicts without a ``role_models`` record predate it and
+    cannot be attributed, so they are skipped.
+    """
+    if not isinstance(role_models, dict):
+        return False
+    return all(
+        role_models.get(role) == _ROLE_TO_MODEL[role]
+        for role in ("orchestrator", "planner", "reviewer")
+    )
+
+
 def _load_empirical_stats() -> dict[tuple[str, str], dict[str, int]]:
     """
     Parse sprint_verdict events from forgemaster JSONL logs and accumulate
-    pass/fail counts per (task_type, routed_model).
+    pass/fail counts per (task_type, routed_model). Only verdicts produced with
+    the currently configured orchestrator/planner/reviewer models are counted
+    (see _fixed_roles_match), so pass rates isolate the implementer model.
 
     Checks FORGEMASTER_EVENT_LOG env var first; falls back to scanning all
     files under output/forgemaster_runs/. Returns {} on any IO error.
@@ -171,7 +206,9 @@ def _load_empirical_stats() -> dict[tuple[str, str], dict[str, int]]:
                     except json.JSONDecodeError:
                         continue
                     if ev.get("role") == "outcome" and ev.get("event") == "sprint_verdict":
-                        tt = ev.get("task_type", "")
+                        if not _fixed_roles_match(ev.get("role_models")):
+                            continue
+                        tt = (ev.get("task_type") or "").lower().strip()
                         model = ev.get("routed_model", "")
                         outcome = ev.get("outcome", "")
                         if tt and model and outcome in ("review_pass", "review_fail"):
@@ -218,6 +255,30 @@ def _compute_empirical_route(
     counts = viable[best_model]
     total = counts["pass"] + counts["fail"]
     return best_model, round(counts["pass"] / total, 4)
+
+
+def _exploration_candidate(
+    task_type: str,
+    best_model: str,
+    stats: dict[tuple[str, str], dict[str, int]],
+) -> str:
+    """
+    Return the least-sampled implementer candidate other than *best_model*.
+
+    Candidates are every model in the static routing lanes plus any model with
+    history for *task_type*. Returns "" when there is no alternative.
+    """
+    candidates = set(_ROUTING_TABLE.values()) | {_ROLE_TO_MODEL["implementer"]}
+    candidates |= {model for (tt, model) in stats if tt == task_type}
+    candidates.discard(best_model)
+    if not candidates:
+        return ""
+
+    def _samples(m: str) -> tuple[int, str]:
+        counts = stats.get((task_type, m), {"pass": 0, "fail": 0})
+        return (counts["pass"] + counts["fail"], m)
+
+    return min(candidates, key=_samples)
 
 
 def _provider_for(model: str) -> str:
@@ -268,7 +329,12 @@ def _call_anthropic(
         }]
 
     response = client.messages.create(**kwargs)
-    text = response.content[0].text if response.content else ""
+    text = "".join(
+        block.text for block in (response.content or [])
+        if getattr(block, "type", "") == "text"
+    )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise RuntimeError(f"{model} output truncated at max_tokens={max_tokens}")
     in_tok = getattr(response.usage, "input_tokens", 0)
     out_tok = getattr(response.usage, "output_tokens", 0)
     latency_ms = int((time.time() - t0) * 1000)
@@ -283,6 +349,7 @@ def _call_gemini(prompt: str, model: str = GEMINI_MODEL, max_tokens: int = 4096)
     Reads GEMINI_API_KEY at call time so .env changes are picked up without restart.
     """
     from google import genai
+    from google.genai import types
     from dotenv import load_dotenv
 
     load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
@@ -292,7 +359,15 @@ def _call_gemini(prompt: str, model: str = GEMINI_MODEL, max_tokens: int = 4096)
 
     t0 = time.time()
     client = genai.Client(api_key=key)
-    response = client.models.generate_content(model=model, contents=prompt)
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(max_output_tokens=max_tokens),
+    )
+    candidates = getattr(response, "candidates", None) or []
+    finish = getattr(candidates[0], "finish_reason", None) if candidates else None
+    if finish is not None and getattr(finish, "name", str(finish)) == "MAX_TOKENS":
+        raise RuntimeError(f"{model} output truncated at max_tokens={max_tokens}")
     text = response.text or ""
     usage = getattr(response, "usage_metadata", None)
     in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
@@ -321,11 +396,14 @@ def _dispatch(
     so sprint_verdict logs accurately reflect which model actually ran.
     """
     model = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+    max_tokens = _ROLE_MAX_TOKENS.get(role, _DEFAULT_MAX_TOKENS)
     provider = _provider_for(model)
     if provider == "anthropic":
-        text, in_tok, out_tok, lat = _call_anthropic(model, prompt, cached_system=cached_system)
+        text, in_tok, out_tok, lat = _call_anthropic(
+            model, prompt, max_tokens=max_tokens, cached_system=cached_system
+        )
     elif provider == "google":
-        text, in_tok, out_tok, lat = _call_gemini(prompt, model=model)
+        text, in_tok, out_tok, lat = _call_gemini(prompt, model=model, max_tokens=max_tokens)
     else:
         raise ValueError(f"Unknown model family for role={role!r}: {model!r}")
     return text, model, in_tok, out_tok, lat
@@ -357,6 +435,13 @@ def _extract_target_file(design_doc: str) -> Optional[str]:
         if m:
             return m.group(1).strip().strip("'\"")
     return None
+
+
+def _number_lines(code: str) -> str:
+    """Prefix each line with its 1-based number so the reviewer can cite lines."""
+    lines = code.splitlines()
+    width = len(str(len(lines))) if lines else 1
+    return "\n".join(f"{i:>{width}} | {line}" for i, line in enumerate(lines, 1))
 
 
 _FENCE_RE = re.compile(r"^\s*```")
@@ -478,8 +563,16 @@ def _write_implementation_file(rel_path: str, code: str) -> str:
         )
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(code, encoding="utf-8")
+    if target.exists():
+        # Keep the previous version: the implementer output is unreviewed.
+        backup = target.with_name(target.name + ".bak")
+        atomic_write_text(backup, target.read_text(encoding="utf-8"))
+    atomic_write_text(target, code)
     return str(target)
+
+
+class SprintAborted(RuntimeError):
+    """A sprint turn failed to dispatch; nothing downstream of it ran."""
 
 
 class ForgemasterRuntime:
@@ -503,6 +596,8 @@ class ForgemasterRuntime:
         self._permission_context = permission_context
         self._gate = gate
         self._audit = audit_log
+        # Set by run_turn: the dispatch error of the most recent turn, or None.
+        self.last_dispatch_error: Optional[str] = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -558,6 +653,14 @@ class ForgemasterRuntime:
         if _empirical_routing_stats:
             emp_model, emp_confidence = _compute_empirical_route(normalized, _empirical_routing_stats)
             if emp_model and emp_confidence > 0.6:
+                if random.random() < _EXPLORE_RATE:
+                    explore = _exploration_candidate(normalized, emp_model, _empirical_routing_stats)
+                    if explore:
+                        logger.info(
+                            "route_ticket: exploring task_type=%r -> %s (best=%s)",
+                            normalized, explore, emp_model,
+                        )
+                        return explore, emp_confidence
                 logger.info(
                     "route_ticket: empirical route task_type=%r -> %s (conf=%.3f)",
                     normalized, emp_model, emp_confidence,
@@ -636,6 +739,7 @@ class ForgemasterRuntime:
             response_text = f"[DISPATCH FAILED: {exc}]"
             model_used = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
             in_tok = out_tok = latency_ms = 0
+        self.last_dispatch_error = dispatch_error
 
         session = session.add_message_with_usage("assistant", response_text, in_tok, out_tok)
         self._session_store.update(session)
@@ -662,6 +766,29 @@ class ForgemasterRuntime:
 
         return session, response_text, active_skill
 
+    def _abort_if_dispatch_failed(self, sprint_id: str, role: str) -> None:
+        """
+        Stop the sprint when the turn just run failed to dispatch.
+
+        run_turn returns the failure as ``[DISPATCH FAILED: ...]`` text; passing
+        it on would hand an error string to the next turn — and, for the
+        implementer, write it over the target file. Flushes the session so the
+        transcript up to the failure is kept, then raises SprintAborted.
+        """
+        error = self.last_dispatch_error
+        if error is None:
+            return
+        self._session_store.flush(sprint_id)
+        _log_event({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sprint_id": sprint_id,
+            "role": "outcome",
+            "event": "sprint_aborted",
+            "failed_role": role,
+            "error": error,
+        })
+        raise SprintAborted(f"Sprint {sprint_id} aborted: {role} dispatch failed — {error}")
+
     def run_sprint(
         self,
         sprint_id: str,
@@ -683,7 +810,18 @@ class ForgemasterRuntime:
         6. flush session to disk
         7. return sprint summary including the path of any file written
 
-        Each turn's output is passed forward as context to the next turn.
+        Each turn's output is passed forward as context to the next turn. If any
+        turn fails to dispatch the sprint stops there and raises SprintAborted:
+        no file is written and no verdict is recorded.
+
+        The implementer runs on the routed model only when route_ticket() made a
+        real decision (confidence > 0); otherwise it uses
+        FORGEMASTER_IMPLEMENTER_MODEL.
+
+        The verdict is the reviewer model's PASS/FAIL line — nothing executes the
+        code. It feeds empirical routing, but only raises trust in the
+        contributing shards (corroborated_by edges) when
+        FORGEMASTER_CORROBORATE_ON_REVIEW is enabled.
 
         cached_system: system prompt string returned by nova_cache_prewarm. When
         provided, every Anthropic turn sends it with cache_control so the API
@@ -696,6 +834,10 @@ class ForgemasterRuntime:
 
         # ── Routing decision (logged for calibration) ─────────────────────
         routed_model, routing_confidence = self.route_ticket(task_type)
+        # Confidence 0.0 is route_ticket's no-information default (Sonnet), not
+        # a decision — keep the configured implementer model in that case.
+        if routing_confidence <= 0.0:
+            routed_model = _ROLE_TO_MODEL["implementer"]
         _log_event({
             "ts": datetime.now(timezone.utc).isoformat(),
             "sprint_id": sprint_id,
@@ -719,6 +861,7 @@ class ForgemasterRuntime:
             ),
             cached_system=cached_system,
         )
+        self._abort_if_dispatch_failed(sprint_id, "orchestrator")
 
         # ── Turn 2: Planner ───────────────────────────────────────────────
         session, plan_out, _ = self.run_turn(
@@ -736,6 +879,7 @@ class ForgemasterRuntime:
             ),
             cached_system=cached_system,
         )
+        self._abort_if_dispatch_failed(sprint_id, "planner")
 
         # ── Turn 3: Implementer ───────────────────────────────────────────
         # routed_model from route_ticket() is passed as model_override so the
@@ -758,6 +902,7 @@ class ForgemasterRuntime:
             cached_system=cached_system,
             model_override=routed_model,
         )
+        self._abort_if_dispatch_failed(sprint_id, "implementer")
 
         # Write implementer output to disk if a target file is named in the design doc.
         # Gate check: the implementer skill must declare fs.write.irrev.
@@ -786,6 +931,8 @@ class ForgemasterRuntime:
                 write_ok = False
                 try:
                     code = _strip_code_fences(impl_out)
+                    if not code.strip():
+                        raise ValueError("implementer returned no code")
                     impl_file_path = _write_implementation_file(target_rel, code)
                     write_ok = True
                     logger.info(
@@ -827,6 +974,8 @@ class ForgemasterRuntime:
                     exc,
                 )
 
+        reviewer_input = _number_lines(reviewer_input)
+
         session, review_out, _ = self.run_turn(
             session,
             role="reviewer",
@@ -834,7 +983,7 @@ class ForgemasterRuntime:
             prompt=(
                 "DESIGN DOC:\n"
                 f"{design_doc}\n\n"
-                "IMPLEMENTATION:\n"
+                f"IMPLEMENTATION ({target_rel or 'implementer output'}, line-numbered):\n"
                 f"{reviewer_input}\n\n"
                 "Review against the design doc's acceptance criteria. "
                 "State PASS or FAIL on the first line. "
@@ -842,6 +991,7 @@ class ForgemasterRuntime:
             ),
             cached_system=cached_system,
         )
+        self._abort_if_dispatch_failed(sprint_id, "reviewer")
 
         # ── Flush session to disk ─────────────────────────────────────────
         token_totals = {
@@ -891,10 +1041,25 @@ class ForgemasterRuntime:
             "runtime_class": runtime_class,
             "routed_model": routed_model,
             "routing_confidence": round(routing_confidence, 4),
+            "role_models": {**_ROLE_TO_MODEL, "implementer": routed_model},
+            "verdict_source": "reviewer_llm",
         })
         contributing_shards = shard_ids or []
+        corroborate = sprint_passed and FORGEMASTER_CORROBORATE_ON_REVIEW
 
-        if sprint_passed and contributing_shards:
+        if corroborate and contributing_shards:
+            try:
+                register_external_entity(sprint_id, {
+                    "type": "ForgemasterSprint",
+                    "task_type": task_type,
+                    "implementer_model": routed_model,
+                    "implementation_file": target_rel if impl_file_path else None,
+                })
+            except Exception as exc:
+                logger.warning(
+                    "ForgemasterRuntime.run_sprint: sprint entity registration failed "
+                    "sprint=%s — %s", sprint_id, exc
+                )
             for shard_id in contributing_shards:
                 try:
                     add_corroborated_by(shard_id, sprint_id)
@@ -930,7 +1095,7 @@ class ForgemasterRuntime:
             "task_type": task_type,
             "runtime_class": runtime_class,
             "routed_model": routed_model,
-            "corroborated_shards": contributing_shards if sprint_passed else [],
+            "corroborated_shards": contributing_shards if corroborate else [],
             "biconditional_check": biconditional_result,
         }
 
