@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import time
 from collections import defaultdict
@@ -42,7 +43,7 @@ from config import (
 from atomic_io import atomic_write_text
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
-from graph import add_corroborated_by
+from graph import add_corroborated_by, register_external_entity
 from skill_manifest import SkillManifest, parse_skill_manifest
 from capability_gate import CapabilityGate, CapabilityDenied, HITLDenied
 
@@ -115,6 +116,18 @@ _ROLE_TO_MODEL: dict[str, str] = {
     "implementer":  FORGEMASTER_IMPLEMENTER_MODEL,
     "reviewer":     FORGEMASTER_REVIEWER_MODEL,
 }
+
+# Output-token budget per role. The implementer returns a whole file, so it
+# gets more room; a reply cut off at the limit is treated as a dispatch failure.
+_DEFAULT_MAX_TOKENS: int = 4096
+_ROLE_MAX_TOKENS: dict[str, int] = {
+    "implementer": int(os.environ.get("FORGEMASTER_IMPLEMENTER_MAX_TOKENS", "16384")),
+}
+
+# Empirical routing exploration: with this probability the router tries an
+# under-sampled candidate instead of the current best, so a model that once
+# cleared the bar does not lock the others out forever.
+_EXPLORE_RATE: float = float(os.environ.get("FORGEMASTER_EXPLORE_RATE", "0.1"))
 
 # Optional event log — one JSONL line per LLM call.
 _EVENT_LOG_PATH = os.environ.get("FORGEMASTER_EVENT_LOG", "")
@@ -244,6 +257,30 @@ def _compute_empirical_route(
     return best_model, round(counts["pass"] / total, 4)
 
 
+def _exploration_candidate(
+    task_type: str,
+    best_model: str,
+    stats: dict[tuple[str, str], dict[str, int]],
+) -> str:
+    """
+    Return the least-sampled implementer candidate other than *best_model*.
+
+    Candidates are every model in the static routing lanes plus any model with
+    history for *task_type*. Returns "" when there is no alternative.
+    """
+    candidates = set(_ROUTING_TABLE.values()) | {_ROLE_TO_MODEL["implementer"]}
+    candidates |= {model for (tt, model) in stats if tt == task_type}
+    candidates.discard(best_model)
+    if not candidates:
+        return ""
+
+    def _samples(m: str) -> tuple[int, str]:
+        counts = stats.get((task_type, m), {"pass": 0, "fail": 0})
+        return (counts["pass"] + counts["fail"], m)
+
+    return min(candidates, key=_samples)
+
+
 def _provider_for(model: str) -> str:
     if model.startswith("claude-"):
         return "anthropic"
@@ -292,7 +329,12 @@ def _call_anthropic(
         }]
 
     response = client.messages.create(**kwargs)
-    text = response.content[0].text if response.content else ""
+    text = "".join(
+        block.text for block in (response.content or [])
+        if getattr(block, "type", "") == "text"
+    )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise RuntimeError(f"{model} output truncated at max_tokens={max_tokens}")
     in_tok = getattr(response.usage, "input_tokens", 0)
     out_tok = getattr(response.usage, "output_tokens", 0)
     latency_ms = int((time.time() - t0) * 1000)
@@ -307,6 +349,7 @@ def _call_gemini(prompt: str, model: str = GEMINI_MODEL, max_tokens: int = 4096)
     Reads GEMINI_API_KEY at call time so .env changes are picked up without restart.
     """
     from google import genai
+    from google.genai import types
     from dotenv import load_dotenv
 
     load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
@@ -316,7 +359,15 @@ def _call_gemini(prompt: str, model: str = GEMINI_MODEL, max_tokens: int = 4096)
 
     t0 = time.time()
     client = genai.Client(api_key=key)
-    response = client.models.generate_content(model=model, contents=prompt)
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(max_output_tokens=max_tokens),
+    )
+    candidates = getattr(response, "candidates", None) or []
+    finish = getattr(candidates[0], "finish_reason", None) if candidates else None
+    if finish is not None and getattr(finish, "name", str(finish)) == "MAX_TOKENS":
+        raise RuntimeError(f"{model} output truncated at max_tokens={max_tokens}")
     text = response.text or ""
     usage = getattr(response, "usage_metadata", None)
     in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
@@ -345,11 +396,14 @@ def _dispatch(
     so sprint_verdict logs accurately reflect which model actually ran.
     """
     model = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
+    max_tokens = _ROLE_MAX_TOKENS.get(role, _DEFAULT_MAX_TOKENS)
     provider = _provider_for(model)
     if provider == "anthropic":
-        text, in_tok, out_tok, lat = _call_anthropic(model, prompt, cached_system=cached_system)
+        text, in_tok, out_tok, lat = _call_anthropic(
+            model, prompt, max_tokens=max_tokens, cached_system=cached_system
+        )
     elif provider == "google":
-        text, in_tok, out_tok, lat = _call_gemini(prompt, model=model)
+        text, in_tok, out_tok, lat = _call_gemini(prompt, model=model, max_tokens=max_tokens)
     else:
         raise ValueError(f"Unknown model family for role={role!r}: {model!r}")
     return text, model, in_tok, out_tok, lat
@@ -381,6 +435,13 @@ def _extract_target_file(design_doc: str) -> Optional[str]:
         if m:
             return m.group(1).strip().strip("'\"")
     return None
+
+
+def _number_lines(code: str) -> str:
+    """Prefix each line with its 1-based number so the reviewer can cite lines."""
+    lines = code.splitlines()
+    width = len(str(len(lines))) if lines else 1
+    return "\n".join(f"{i:>{width}} | {line}" for i, line in enumerate(lines, 1))
 
 
 _FENCE_RE = re.compile(r"^\s*```")
@@ -592,6 +653,14 @@ class ForgemasterRuntime:
         if _empirical_routing_stats:
             emp_model, emp_confidence = _compute_empirical_route(normalized, _empirical_routing_stats)
             if emp_model and emp_confidence > 0.6:
+                if random.random() < _EXPLORE_RATE:
+                    explore = _exploration_candidate(normalized, emp_model, _empirical_routing_stats)
+                    if explore:
+                        logger.info(
+                            "route_ticket: exploring task_type=%r -> %s (best=%s)",
+                            normalized, explore, emp_model,
+                        )
+                        return explore, emp_confidence
                 logger.info(
                     "route_ticket: empirical route task_type=%r -> %s (conf=%.3f)",
                     normalized, emp_model, emp_confidence,
@@ -905,6 +974,8 @@ class ForgemasterRuntime:
                     exc,
                 )
 
+        reviewer_input = _number_lines(reviewer_input)
+
         session, review_out, _ = self.run_turn(
             session,
             role="reviewer",
@@ -912,7 +983,7 @@ class ForgemasterRuntime:
             prompt=(
                 "DESIGN DOC:\n"
                 f"{design_doc}\n\n"
-                "IMPLEMENTATION:\n"
+                f"IMPLEMENTATION ({target_rel or 'implementer output'}, line-numbered):\n"
                 f"{reviewer_input}\n\n"
                 "Review against the design doc's acceptance criteria. "
                 "State PASS or FAIL on the first line. "
@@ -977,6 +1048,18 @@ class ForgemasterRuntime:
         corroborate = sprint_passed and FORGEMASTER_CORROBORATE_ON_REVIEW
 
         if corroborate and contributing_shards:
+            try:
+                register_external_entity(sprint_id, {
+                    "type": "ForgemasterSprint",
+                    "task_type": task_type,
+                    "implementer_model": routed_model,
+                    "implementation_file": target_rel if impl_file_path else None,
+                })
+            except Exception as exc:
+                logger.warning(
+                    "ForgemasterRuntime.run_sprint: sprint entity registration failed "
+                    "sprint=%s — %s", sprint_id, exc
+                )
             for shard_id in contributing_shards:
                 try:
                     add_corroborated_by(shard_id, sprint_id)

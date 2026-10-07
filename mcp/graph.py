@@ -62,6 +62,17 @@ def build_shard_entity(shard_data: dict) -> dict:
     }
 
 
+def register_external_entity(entity_id: str, data: dict) -> None:
+    """Register a non-shard graph entity (e.g. a sprint) so edges pointing at
+    it resolve to a typed node. No-op when the id is already registered."""
+    graph = load_graph()
+    entities = graph.setdefault("entities", {})
+    if entity_id in entities:
+        return
+    entities[entity_id] = {**data, "registered_at": datetime.now().isoformat()}
+    save_graph(graph)
+
+
 def add_shard_to_graph(shard_id: str, shard_data: dict):
     """Register a shard as an entity in the knowledge graph on create."""
     graph = load_graph()
