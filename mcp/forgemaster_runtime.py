@@ -37,7 +37,9 @@ from config import (
     FORGEMASTER_PLANNER_MODEL,
     FORGEMASTER_REVIEWER_MODEL,
     FORGEMASTER_IMPLEMENTER_MODEL,
+    FORGEMASTER_CORROBORATE_ON_REVIEW,
 )
+from atomic_io import atomic_write_text
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
 from graph import add_corroborated_by
@@ -140,10 +142,30 @@ def _log_event(entry: dict) -> None:
         logger.warning("event log write failed: %s", exc)
 
 
+def _fixed_roles_match(role_models: Optional[dict]) -> bool:
+    """
+    True when a verdict was produced with the same orchestrator, planner and
+    reviewer models as the current config.
+
+    Only the implementer varies with routed_model; a verdict produced under a
+    different planner or reviewer would credit (or blame) the implementer for
+    their effect. Verdicts without a ``role_models`` record predate it and
+    cannot be attributed, so they are skipped.
+    """
+    if not isinstance(role_models, dict):
+        return False
+    return all(
+        role_models.get(role) == _ROLE_TO_MODEL[role]
+        for role in ("orchestrator", "planner", "reviewer")
+    )
+
+
 def _load_empirical_stats() -> dict[tuple[str, str], dict[str, int]]:
     """
     Parse sprint_verdict events from forgemaster JSONL logs and accumulate
-    pass/fail counts per (task_type, routed_model).
+    pass/fail counts per (task_type, routed_model). Only verdicts produced with
+    the currently configured orchestrator/planner/reviewer models are counted
+    (see _fixed_roles_match), so pass rates isolate the implementer model.
 
     Checks FORGEMASTER_EVENT_LOG env var first; falls back to scanning all
     files under output/forgemaster_runs/. Returns {} on any IO error.
@@ -171,7 +193,9 @@ def _load_empirical_stats() -> dict[tuple[str, str], dict[str, int]]:
                     except json.JSONDecodeError:
                         continue
                     if ev.get("role") == "outcome" and ev.get("event") == "sprint_verdict":
-                        tt = ev.get("task_type", "")
+                        if not _fixed_roles_match(ev.get("role_models")):
+                            continue
+                        tt = (ev.get("task_type") or "").lower().strip()
                         model = ev.get("routed_model", "")
                         outcome = ev.get("outcome", "")
                         if tt and model and outcome in ("review_pass", "review_fail"):
@@ -478,8 +502,16 @@ def _write_implementation_file(rel_path: str, code: str) -> str:
         )
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(code, encoding="utf-8")
+    if target.exists():
+        # Keep the previous version: the implementer output is unreviewed.
+        backup = target.with_name(target.name + ".bak")
+        atomic_write_text(backup, target.read_text(encoding="utf-8"))
+    atomic_write_text(target, code)
     return str(target)
+
+
+class SprintAborted(RuntimeError):
+    """A sprint turn failed to dispatch; nothing downstream of it ran."""
 
 
 class ForgemasterRuntime:
@@ -503,6 +535,8 @@ class ForgemasterRuntime:
         self._permission_context = permission_context
         self._gate = gate
         self._audit = audit_log
+        # Set by run_turn: the dispatch error of the most recent turn, or None.
+        self.last_dispatch_error: Optional[str] = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -636,6 +670,7 @@ class ForgemasterRuntime:
             response_text = f"[DISPATCH FAILED: {exc}]"
             model_used = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
             in_tok = out_tok = latency_ms = 0
+        self.last_dispatch_error = dispatch_error
 
         session = session.add_message_with_usage("assistant", response_text, in_tok, out_tok)
         self._session_store.update(session)
@@ -662,6 +697,29 @@ class ForgemasterRuntime:
 
         return session, response_text, active_skill
 
+    def _abort_if_dispatch_failed(self, sprint_id: str, role: str) -> None:
+        """
+        Stop the sprint when the turn just run failed to dispatch.
+
+        run_turn returns the failure as ``[DISPATCH FAILED: ...]`` text; passing
+        it on would hand an error string to the next turn — and, for the
+        implementer, write it over the target file. Flushes the session so the
+        transcript up to the failure is kept, then raises SprintAborted.
+        """
+        error = self.last_dispatch_error
+        if error is None:
+            return
+        self._session_store.flush(sprint_id)
+        _log_event({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sprint_id": sprint_id,
+            "role": "outcome",
+            "event": "sprint_aborted",
+            "failed_role": role,
+            "error": error,
+        })
+        raise SprintAborted(f"Sprint {sprint_id} aborted: {role} dispatch failed — {error}")
+
     def run_sprint(
         self,
         sprint_id: str,
@@ -683,7 +741,18 @@ class ForgemasterRuntime:
         6. flush session to disk
         7. return sprint summary including the path of any file written
 
-        Each turn's output is passed forward as context to the next turn.
+        Each turn's output is passed forward as context to the next turn. If any
+        turn fails to dispatch the sprint stops there and raises SprintAborted:
+        no file is written and no verdict is recorded.
+
+        The implementer runs on the routed model only when route_ticket() made a
+        real decision (confidence > 0); otherwise it uses
+        FORGEMASTER_IMPLEMENTER_MODEL.
+
+        The verdict is the reviewer model's PASS/FAIL line — nothing executes the
+        code. It feeds empirical routing, but only raises trust in the
+        contributing shards (corroborated_by edges) when
+        FORGEMASTER_CORROBORATE_ON_REVIEW is enabled.
 
         cached_system: system prompt string returned by nova_cache_prewarm. When
         provided, every Anthropic turn sends it with cache_control so the API
@@ -696,6 +765,10 @@ class ForgemasterRuntime:
 
         # ── Routing decision (logged for calibration) ─────────────────────
         routed_model, routing_confidence = self.route_ticket(task_type)
+        # Confidence 0.0 is route_ticket's no-information default (Sonnet), not
+        # a decision — keep the configured implementer model in that case.
+        if routing_confidence <= 0.0:
+            routed_model = _ROLE_TO_MODEL["implementer"]
         _log_event({
             "ts": datetime.now(timezone.utc).isoformat(),
             "sprint_id": sprint_id,
@@ -719,6 +792,7 @@ class ForgemasterRuntime:
             ),
             cached_system=cached_system,
         )
+        self._abort_if_dispatch_failed(sprint_id, "orchestrator")
 
         # ── Turn 2: Planner ───────────────────────────────────────────────
         session, plan_out, _ = self.run_turn(
@@ -736,6 +810,7 @@ class ForgemasterRuntime:
             ),
             cached_system=cached_system,
         )
+        self._abort_if_dispatch_failed(sprint_id, "planner")
 
         # ── Turn 3: Implementer ───────────────────────────────────────────
         # routed_model from route_ticket() is passed as model_override so the
@@ -758,6 +833,7 @@ class ForgemasterRuntime:
             cached_system=cached_system,
             model_override=routed_model,
         )
+        self._abort_if_dispatch_failed(sprint_id, "implementer")
 
         # Write implementer output to disk if a target file is named in the design doc.
         # Gate check: the implementer skill must declare fs.write.irrev.
@@ -786,6 +862,8 @@ class ForgemasterRuntime:
                 write_ok = False
                 try:
                     code = _strip_code_fences(impl_out)
+                    if not code.strip():
+                        raise ValueError("implementer returned no code")
                     impl_file_path = _write_implementation_file(target_rel, code)
                     write_ok = True
                     logger.info(
@@ -842,6 +920,7 @@ class ForgemasterRuntime:
             ),
             cached_system=cached_system,
         )
+        self._abort_if_dispatch_failed(sprint_id, "reviewer")
 
         # ── Flush session to disk ─────────────────────────────────────────
         token_totals = {
@@ -891,10 +970,13 @@ class ForgemasterRuntime:
             "runtime_class": runtime_class,
             "routed_model": routed_model,
             "routing_confidence": round(routing_confidence, 4),
+            "role_models": {**_ROLE_TO_MODEL, "implementer": routed_model},
+            "verdict_source": "reviewer_llm",
         })
         contributing_shards = shard_ids or []
+        corroborate = sprint_passed and FORGEMASTER_CORROBORATE_ON_REVIEW
 
-        if sprint_passed and contributing_shards:
+        if corroborate and contributing_shards:
             for shard_id in contributing_shards:
                 try:
                     add_corroborated_by(shard_id, sprint_id)
@@ -930,7 +1012,7 @@ class ForgemasterRuntime:
             "task_type": task_type,
             "runtime_class": runtime_class,
             "routed_model": routed_model,
-            "corroborated_shards": contributing_shards if sprint_passed else [],
+            "corroborated_shards": contributing_shards if corroborate else [],
             "biconditional_check": biconditional_result,
         }
 

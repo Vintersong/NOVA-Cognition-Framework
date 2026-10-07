@@ -1014,7 +1014,10 @@ class SprintSummary(NovaOutput):
     routed_model: str = ""
     corroborated_shards: list[str] = Field(
         default_factory=list,
-        description="Shards confirmed by a passing sprint. Empty on a failure.",
+        description=(
+            "Shards given a corroborated_by edge by a passing sprint. Empty on a "
+            "failure, or when FORGEMASTER_CORROBORATE_ON_REVIEW is off (default)."
+        ),
     )
     biconditional_check: Optional[dict[str, Any]] = Field(
         default=None,

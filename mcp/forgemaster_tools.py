@@ -68,7 +68,9 @@ def register_forgemaster_tools(mcp, ctx: "ServerContext") -> None:
         op_ok = False
         try:
             try:
-                summary = runtime.run_sprint(
+                # Four blocking LLM calls — keep them off the event loop.
+                summary = await asyncio.to_thread(
+                    runtime.run_sprint,
                     params.sprint_id,
                     params.design_doc,
                     shard_id_list,

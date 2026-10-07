@@ -50,3 +50,94 @@ def test_run_turn_dispatch_failure_surfaces_error(tmp_path: Path, monkeypatch: p
     )
     assert "[DISPATCH FAILED: boom]" in response
     assert updated.messages[-1]["content"] == response
+
+
+def _fake_dispatch(calls: list, fail_role: str = ""):
+    def _dispatch(role, prompt, cached_system="", model_override=""):
+        model = model_override or runtime._ROLE_TO_MODEL[role]
+        calls.append((role, model))
+        if role == fail_role:
+            raise RuntimeError("boom")
+        text = "PASS\nlooks fine" if role == "reviewer" else "print('new')\n"
+        return text, model, 1, 1, 1
+    return _dispatch
+
+
+def _sprint_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime, "_REPO_ROOT", tmp_path)
+    monkeypatch.setenv("FORGEMASTER_EVENT_LOG", str(tmp_path / "events.jsonl"))
+    monkeypatch.setattr(runtime, "_empirical_stats_loaded", False)
+
+
+_DOC = "Target file: `output/app.py`\nDo the thing."
+
+
+def test_implementer_dispatch_failure_aborts_without_writing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _sprint_env(tmp_path, monkeypatch)
+    target = tmp_path / "output" / "app.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("original\n", encoding="utf-8")
+    calls: list = []
+    monkeypatch.setattr(runtime, "_dispatch", _fake_dispatch(calls, fail_role="implementer"))
+
+    rt = _build_runtime(tmp_path)
+    with pytest.raises(runtime.SprintAborted, match="implementer"):
+        rt.run_sprint("s-abort", _DOC)
+
+    assert target.read_text(encoding="utf-8") == "original\n"
+    assert [role for role, _ in calls] == ["orchestrator", "planner", "implementer"]
+
+
+def test_overwrite_keeps_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime, "_REPO_ROOT", tmp_path)
+    runtime._write_implementation_file("output/a.py", "v1\n")
+    runtime._write_implementation_file("output/a.py", "v2\n")
+    assert (tmp_path / "output" / "a.py").read_text(encoding="utf-8") == "v2\n"
+    assert (tmp_path / "output" / "a.py.bak").read_text(encoding="utf-8") == "v1\n"
+
+
+def test_untyped_ticket_uses_configured_implementer_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _sprint_env(tmp_path, monkeypatch)
+    calls: list = []
+    monkeypatch.setattr(runtime, "_dispatch", _fake_dispatch(calls))
+
+    summary = _build_runtime(tmp_path).run_sprint("s-route", _DOC)
+
+    impl_model = dict(calls)["implementer"]
+    assert impl_model == runtime._ROLE_TO_MODEL["implementer"]
+    assert summary["routed_model"] == impl_model
+
+
+def test_review_pass_does_not_corroborate_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _sprint_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(runtime, "_dispatch", _fake_dispatch([]))
+    written: list = []
+    monkeypatch.setattr(runtime, "add_corroborated_by", lambda a, b: written.append((a, b)))
+    monkeypatch.setattr(runtime, "FORGEMASTER_CORROBORATE_ON_REVIEW", False)
+
+    summary = _build_runtime(tmp_path).run_sprint("s-corr", _DOC, shard_ids=["shard_a"])
+
+    assert summary["outcome"] == "pass"
+    assert summary["corroborated_shards"] == []
+    assert written == []
+
+
+def test_empirical_stats_skip_verdicts_from_other_reviewers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    log = tmp_path / "events.jsonl"
+    monkeypatch.setenv("FORGEMASTER_EVENT_LOG", str(log))
+    same = dict(runtime._ROLE_TO_MODEL)
+    other = {**same, "reviewer": "claude-other-reviewer"}
+    events = [
+        {"role": "outcome", "event": "sprint_verdict", "task_type": "Boilerplate",
+         "routed_model": "gemini-x", "outcome": "review_pass", "role_models": same},
+        {"role": "outcome", "event": "sprint_verdict", "task_type": "boilerplate",
+         "routed_model": "gemini-x", "outcome": "review_fail", "role_models": other},
+        {"role": "outcome", "event": "sprint_verdict", "task_type": "boilerplate",
+         "routed_model": "gemini-x", "outcome": "review_fail"},
+    ]
+    log.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+    stats = runtime._load_empirical_stats()
+    assert stats == {("boilerplate", "gemini-x"): {"pass": 1, "fail": 0}}
