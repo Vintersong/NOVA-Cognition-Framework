@@ -74,20 +74,22 @@ Do not execute any action until the user confirms or modifies the list.
 
 ### Step 4: Execute confirmed decisions
 
-**For archives:**
+**For archives** (asks for approval; takes no reason — record it in the Step 6 summary):
 ```python
-nova_shard_archive(shard_id="[id]", reason="[one-line reason]")
+nova_shard_archive(shard_id="[id]")
 ```
 
 **For merges:**
 ```python
 nova_shard_merge(
-    shard_ids=["[id_A]", "[id_B]"],
-    guiding_question="[combined north-star question]"
+    shard_ids="[id_A],[id_B]",                       # comma-separated string
+    new_guiding_question="[combined north-star question]",
+    new_theme="[theme]",
+    archive_originals=True,                          # optional; default False
 )
 ```
 
-**For forgets:**
+**For forgets** (asks for approval):
 ```python
 nova_shard_forget(shard_id="[id]", reason="[why this is being excluded]")
 ```
@@ -96,19 +98,24 @@ nova_shard_forget(shard_id="[id]", reason="[why this is being excluded]")
 ```python
 nova_shard_get_full(shard_id="[id]")
 # Read content, then either:
-# - nova_shard_update() to boost confidence via a new turn
+# - raise confidence with a validation event (appending a turn never changes confidence):
+#   nova_shard_validate(shard_id="[id]", source_type="peer_validated",
+#                       validator="[who]", mechanism="triage_review", confidence_delta=0.1)
+#   source_type cannot rank below the shard's current one — it is refused, not downgraded
 # - or move it to archive/forget if content is stale
 ```
 
-### Step 5: Post-triage consolidation
+### Step 5: Post-triage maintenance
 
-After all decisions are executed:
+No action needed: NÓTT runs decay, compaction and merge detection on its own
+(after a sprint and on a shard-count threshold). To see what the last cycle found:
 
 ```python
-nova_shard_consolidate()
+nova_shard_consolidate(dry_run=True)   # reads the last report; starts nothing
 ```
 
-This resets decay baselines on surviving shards and surfaces any new merge candidates created by the triage.
+Force a cycle with `nova_shard_consolidate()` only if you need merge candidates
+recomputed now — it asks for approval.
 
 ### Step 6: Write triage summary to project shard
 
@@ -134,7 +141,7 @@ Before closing the triage session:
 - [ ] All four buckets were assessed (even if some are empty)
 - [ ] No shard was forgotten without an explicit reason logged
 - [ ] All merges produced a meta-shard with a clear guiding question
-- [ ] Post-triage consolidation was run
+- [ ] Archive and forget reasons were recorded in the triage summary
 - [ ] Triage summary was written to the project shard
 
 ## Common Mistakes

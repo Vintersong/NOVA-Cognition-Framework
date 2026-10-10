@@ -46,6 +46,7 @@ NOVA-Whitepaper/
     arrow_cache.py           ← Arrow-format embedding cache
     spreading_activation.py  ← graph-based score propagation, MUNINN third pass
     embedding_integrity.py   ← HMAC-SHA256 signing/verification of shard embeddings
+    huginn_prefilter.py      ← keyword + confidence pre-filter behind nova_huginn_candidates
 
     # Permissions, gating & audit
     permissions.py           ← env-driven tool allow/deny (NOVA_DENIED_TOOLS / NOVA_DENIED_PREFIXES)
@@ -88,6 +89,7 @@ NOVA-Whitepaper/
     evolve.py                ← nova_evolve tool (self-improvement loop)
     nidhogg.py               ← nidhogg_ingest/scan/status tools
     code_index.py            ← nova_code_search tool (AST-chunked semantic code search over mcp/)
+    huginn_tools.py          ← nova_huginn_candidates tool (HUGINN candidate pre-filter)
     facts.py                 ← nova_facts_search / nova_facts_rebuild tools
     wiki.py                  ← wiki storage backend
     wiki_ingest.py           ← wiki ingestion pipeline
@@ -100,6 +102,9 @@ NOVA-Whitepaper/
 
     # Experimental
     ternary_net.py           ← ternary epistemic memory encoder (not yet wired into retrieval)
+    nova_hotpool.py          ← 8-slot L1 confidence cache, C backend or pure-Python fallback (not wired into retrieval)
+    nova_hotpool.c           ← C backend for nova_hotpool.py (build to _nova_hotpool.so / .dll)
+    bench_hotpool.py         ← micro-benchmark: Python dict vs C hot pool
 
     Gemini/
       gemini_mcp.py          ← Gemini Flash tools registered into nova_server
@@ -140,11 +145,11 @@ NOVA-Whitepaper/
   output/                    ← built artifacts (games, experiments)
   forgemaster/
     AGENTS.md                ← orchestration config and model routing
-    SKILL_LIBRARY.md         ← index of all skills across 15 domains
+    SKILL_LIBRARY.md         ← index of all skills across 24 categories
     STANDARDS.md             ← authoring standard for all forgemaster content
     skills/                  ← core orchestration skills (14 files)
-    library/                 ← domain skill library (324 files, 24 categories)
-    agents/                  ← agent persona definitions (322 files, 18 divisions)
+    library/                 ← domain skill library (324 .md files, 24 categories)
+    agents/                  ← agent persona definitions (322 .md files, 18 divisions)
   docs/                      ← reference and roadmap documents
   .env                       ← API keys (never commit)
 ```
@@ -230,7 +235,9 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-git-workflow` | Branch setup, integration, PR creation |
 | `forgemaster-code-review` | Two-stage spec + quality review |
 | `forgemaster-qa-review` | Stage 3 structural QA |
+| `forgemaster-nova-session-start` | Session start — load NOVA context and surface open threads before any work |
 | `forgemaster-nova-session-handoff` | Persisting state across sessions |
+| `forgemaster-nova-shard-triage` | Corpus hygiene — archive / merge / forget / revive stale or redundant shards |
 | `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
 | `forgemaster-emotional-state-routing` | Routing hook: escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
@@ -318,6 +325,7 @@ Next session starts with `nova_shard_interact(message="[project name] current st
 - A new resource that serves the same data as a tool must call `_require(<tool>)`
   in `nova_server.py` — resources do not go through the permission context on
   their own
+- In update() and equivalent per-frame or per-tick entry points, check call sites before adding any new call. Duplicate registrations and duplicate update calls have caused bugs when AI-written and hand-written code meet.
 
 ---
 
@@ -348,7 +356,7 @@ Next session starts with `nova_shard_interact(message="[project name] current st
   compaction and merge detection automatically, and the tool asks for approval.
   Use `dry_run=true` to read the last report without starting a cycle
 - Do not start implementation without loading NOVA context first
-- Do not end a session without the handoff write
+- Do not skip the handoff when one of the four handoff conditions applies.
 - Do not commit the shards directory — personal data
 - Do not use OpenAI models — Haiku for research/docs, Gemini Flash for implementation, Sonnet for architecture/review
 - If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN fall back to local embeddings silently

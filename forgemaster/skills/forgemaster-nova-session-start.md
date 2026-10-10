@@ -54,18 +54,21 @@ Session loaded. Active threads:
 Suggested starting point: [NEXT ACTION from most recent handoff, or "none found — state your task"]
 ```
 
-### Step 4: Check consolidation status (if applicable)
+### Step 4: Check the last maintenance report (if applicable)
 
-If the last consolidation run was more than 3 sprints ago, note it:
+NÓTT runs decay, compaction and merge detection on its own — on session start,
+after a sprint, and on a shard-count threshold. Do not schedule
+`nova_shard_consolidate()`. To see what the last cycle found:
+```python
+nova_shard_consolidate(dry_run=True)   # reads the last report; starts nothing
 ```
-⚠️ Consolidation due. Run nova_shard_consolidate() before the next sprint.
-```
+Surface any merge candidates or contradictions it lists.
 
 ## What to Do If No Shards Load
 
 If `nova_shard_interact` returns no shards or an empty result:
 1. This may be a fresh install — read `mcp/ONBOARDING.md` and run the onboarding flow
-2. Or the shard index is stale — run `nova_shard_index(rebuild=True)` to rebuild it
+2. Or the shard index is stale — rebuild it with `python utilities/shard_index.py` (`nova_shard_index` only browses; it has no rebuild option)
 3. Do not proceed with work until context is loaded
 
 ## Initialization Quality Checklist
@@ -75,7 +78,7 @@ Before accepting any task, confirm:
 - [ ] `nova_shard_interact` has been called with a relevant query
 - [ ] Any `NEXT ACTION` from a prior handoff has been surfaced to the user
 - [ ] Any `contradicts` graph relations in loaded shards have been flagged
-- [ ] Consolidation status has been noted if overdue
+- [ ] The last maintenance report was checked if merge candidates or contradictions matter
 
 ## Common Mistakes
 
