@@ -23,6 +23,7 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -370,6 +371,29 @@ class ArrowShardCache:
             cur = -1
         return cur == self._index_mtime_ns
 
+    def _load_entry(self, shard_id: str, entry: dict) -> tuple[dict, str]:
+        """Read one indexed shard in either format.
+
+        Prefers the index's ``filename`` (a shard's file can be named apart
+        from its shard_id), switching to the ``.md`` counterpart when the shard
+        has been migrated — NÓTT converts on compaction, and reading that file
+        as JSON used to drop it from the cache and the decay fast path. Falls
+        back to looking the shard up by id.
+        """
+        from shard_format import load_shard_file, md_to_shard  # lazy, like store below
+
+        fname = entry.get("filename")
+        if fname:
+            path = Path(self.shard_dir) / fname
+            if path.suffix == ".json" and path.with_suffix(".md").exists():
+                path = path.with_suffix(".md")
+            if path.exists():
+                text = path.read_text(encoding="utf-8")
+                if path.suffix == ".md":
+                    return md_to_shard(text, path.stem), str(path)
+                return json.loads(text), str(path)
+        return load_shard_file(shard_id, self.shard_dir)
+
     def _rebuild_locked(self) -> None:
         """Caller must hold ``self._lock``."""
         from store import load_index  # lazy: store imports nothing from arrow_cache at module load
@@ -412,16 +436,9 @@ class ArrowShardCache:
         except ImportError:
             _integrity_available = False
 
-        from shard_format import load_shard_file  # lazy, like store above
-
         for shard_id, entry in index.items():
-            # load_shard_file reads either format (.md first, then .json). The
-            # index's "filename" can't be trusted for this: patch_index_entry
-            # always records "<id>.json", and NÓTT converts shards to .md on
-            # compaction, so reading the filename as JSON dropped every
-            # migrated shard from the cache — and from the decay fast path.
             try:
-                data, fpath = load_shard_file(shard_id, self.shard_dir)
+                data, fpath = self._load_entry(shard_id, entry)
                 stat_res = os.stat(fpath)
             except FileNotFoundError:
                 continue

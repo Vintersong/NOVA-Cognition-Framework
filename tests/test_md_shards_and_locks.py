@@ -144,3 +144,20 @@ def test_adversarial_pass_persists_contradicts_edges(tmp_path: Path, monkeypatch
     assert out["contradictions_found"] == 1
     assert [r["type"] for r in saved["relations"]] == ["contradicts"]
     assert saved["_adversarial_meta"]["last_pass_id"] == out["pass_id"]
+
+
+def test_arrow_cache_reads_shard_named_apart_from_its_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    arrow_cache = pytest.importorskip("arrow_cache")
+    if not arrow_cache.ARROW_AVAILABLE:
+        pytest.skip("pyarrow not installed")
+    shard_dir = tmp_path / "shards"
+    shard_dir.mkdir()
+    monkeypatch.setattr(store, "SHARD_DIR", str(shard_dir))
+    monkeypatch.setattr(store, "INDEX_FILE", str(tmp_path / "shard_index.json"))
+    (shard_dir / "legacy_name.json").write_text(json.dumps(_shard("real_id")), encoding="utf-8")
+    store.update_index()
+
+    cache = arrow_cache.ArrowShardCache(str(shard_dir), store.INDEX_FILE)
+    data, path = cache._load_entry("real_id", store.load_index()["real_id"])
+    assert data["shard_id"] == "real_id"
+    assert path.endswith("legacy_name.json")
