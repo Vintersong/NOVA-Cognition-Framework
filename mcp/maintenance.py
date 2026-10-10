@@ -9,12 +9,12 @@ in tool handlers (NÓTT owns scheduling).
 
 from __future__ import annotations
 
-import json
 import math
 import os
 from datetime import datetime
 
 from nova_embeddings_local import _generate_compaction_summary
+from shard_format import load_shard_file
 from config import (
     SHARD_DIR,
     COMPACT_THRESHOLD,
@@ -163,13 +163,9 @@ def find_merge_candidates(shard_id: str, shard_data: dict, index: dict) -> list[
         if "archived" in entry.get("tags", []):
             continue
 
-        other_path = os.path.join(SHARD_DIR, other_id + ".json")
-        if not os.path.exists(other_path):
-            continue
-
         try:
-            with open(other_path, "r", encoding="utf-8") as f:
-                other_data = json.load(f)
+            # Either format; .md shards keep their embedding in a sidecar.
+            other_data, _ = load_shard_file(other_id, SHARD_DIR)
             other_embedding = other_data.get("context", {}).get("embedding")
             if not other_embedding:
                 continue

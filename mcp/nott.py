@@ -35,7 +35,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from timeutils import parse_iso, now_utc
 
@@ -163,6 +163,9 @@ class Nott:
         mutate_fields_fn: Optional[Callable[[str, dict, dict], bool]] = None,
         mutate_cas_fn: Optional[Callable[[str, Callable[[dict], None], str], bool]] = None,
         revision_fn: Optional[Callable[[dict], str]] = None,
+        # Locked read-modify-write of the graph (graph.update_graph). Same
+        # fallback pattern as above: omitted → non-atomic load+save.
+        update_graph_fn: Optional[Callable[[Callable[[dict], Any]], Any]] = None,
     ):
         self.shard_dir = shard_dir
         self.graph_file = graph_file
@@ -177,6 +180,15 @@ class Nott:
         self._find_merge_candidates = merge_fn
         self._load_graph = load_graph_fn
         self._save_graph = save_graph_fn
+        if update_graph_fn is not None:
+            self._update_graph = update_graph_fn
+        else:
+            def _update_graph(mutator):
+                graph = load_graph_fn()
+                result = mutator(graph)
+                save_graph_fn(graph)
+                return result
+            self._update_graph = _update_graph
         self._pre_compact = pre_compact_fn  # optional: extract facts before compacting
 
         # ── Atomic shard mutation (with non-atomic fallbacks) ──────────────
@@ -687,9 +699,10 @@ class Nott:
             assigned += 1
 
         if not dry_run:
+            # Stamp a fresh copy: `graph` was loaded before the shard writes
+            # above, and saving it would drop edges added meanwhile.
             edge_count = len(graph.get("relations", []))
-            stamp_cluster_run(graph, edge_count)
-            self._save_graph(graph)
+            self._update_graph(lambda g: stamp_cluster_run(g, edge_count))
 
         return {
             "recomputed": True,
@@ -718,7 +731,7 @@ class Nott:
         return run_adversarial_pass(
             index=index,
             graph=graph,
-            save_graph_fn=self._save_graph,
+            update_graph_fn=self._update_graph,
             add_relation_fn=add_relation,
             dry_run=dry_run,
         )
@@ -961,22 +974,20 @@ class Nott:
 
     def _graph_sync(self, index: dict, dry_run: bool) -> int:
         """Update confidence values of graph entities to match current shard state."""
-        graph = self._load_graph()
-        entities = graph.get("entities", {})
-        synced = 0
+        def _sync(graph: dict) -> int:
+            entities = graph.get("entities", {})
+            synced = 0
+            for shard_id, entry in index.items():
+                if shard_id in entities:
+                    current_conf = entry.get("confidence", 1.0)
+                    if entities[shard_id].get("confidence") != current_conf:
+                        entities[shard_id]["confidence"] = current_conf
+                        synced += 1
+            return synced
 
-        for shard_id, entry in index.items():
-            if shard_id in entities:
-                current_conf = entry.get("confidence", 1.0)
-                if entities[shard_id].get("confidence") != current_conf:
-                    entities[shard_id]["confidence"] = current_conf
-                    synced += 1
-
-        if synced > 0 and not dry_run:
-            graph["entities"] = entities
-            self._save_graph(graph)
-
-        return synced
+        if dry_run:
+            return _sync(self._load_graph())
+        return self._update_graph(_sync)
 
     # ── Usage logging ────────────────────────────────────────────────────
 

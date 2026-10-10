@@ -50,7 +50,7 @@ from config import (
     MERGE_SIMILARITY_THRESHOLD,
 )
 from gate_helpers import gate_check_model, log_executed
-from graph import add_corroborated_by, load_graph, save_graph
+from graph import add_corroborated_by, register_external_entity
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from outputs import (
@@ -68,6 +68,7 @@ from outputs import (
     NidhoggStatusResult,
 )
 from permissions import denial_reject, is_blocked
+from shard_format import load_shard_file
 from approval import Approval, was_approved
 from reject import RejectCode, RejectPayload, reject_dict, reject_model
 from tool_registry import nova_tool
@@ -161,17 +162,11 @@ def _file_hash(path: str) -> str:
 def _register_doc_entity(doc_id: str, path: str, source_type: str) -> None:
     """Register an external doc as a graph entity so corroborated_by edges
     point at proper ids rather than raw filesystem paths."""
-    graph = load_graph()
-    entities = graph.setdefault("entities", {})
-    if doc_id in entities:
-        return
-    entities[doc_id] = {
+    register_external_entity(doc_id, {
         "type": "ExternalDoc",
         "path": path,
         "source_type": source_type,
-        "registered_at": datetime.now().isoformat(),
-    }
-    save_graph(graph)
+    })
 
 
 # ═══════════════════════════════════════════════════════════
@@ -255,13 +250,9 @@ def _match_shards(content_embedding: list[float], top_n: int) -> list[dict]:
         if "archived" in tags or "forgotten" in tags:
             continue
 
-        shard_path = os.path.join(SHARD_DIR, shard_id + ".json")
-        if not os.path.exists(shard_path):
-            continue
-
         try:
-            with open(shard_path, "r", encoding="utf-8") as f:
-                shard_data = json.load(f)
+            # Either format; .md shards keep their embedding in a sidecar.
+            shard_data, _ = load_shard_file(shard_id, SHARD_DIR)
             shard_embedding = shard_data.get("context", {}).get("embedding")
             if not shard_embedding:
                 continue

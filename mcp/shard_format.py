@@ -4,16 +4,20 @@ shard_format.py — YAML frontmatter + Markdown body serialization for NOVA shar
 New format (.md files) solves context-window bloat:
   - YAML frontmatter: all metadata (~20 lines, machine-parseable)
   - Markdown body: conversation turns as human-readable prose
-  - Embedding NOT stored (regenerated on demand by nova_embeddings_local.py)
+  - Embedding kept out of the .md, in a sidecar <id>.emb (JSON) next to it,
+    so reading a shard into context never pulls in a 384-float vector
 
 Old JSON shards remain readable — load_shard() tries .md first, falls back
 to .json. Migration is lazy: NÓTT converts a shard on its first compact pass.
 
 Round-trip guarantee: md_to_shard(shard_to_md(data)) == data (minus embedding).
+load_shard_file and store's shard writer carry the embedding through the
+sidecar, so a full load → save round-trip keeps it.
 
 File layout in shards/:
   foo.json   ← old format (still valid, will be migrated lazily)
   foo.md     ← new format (preferred; save_shard writes this when it exists)
+  foo.emb    ← embedding sidecar for foo.md ({"embedding": [...], "embedding_model": ...})
 """
 
 from __future__ import annotations
@@ -26,6 +30,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from atomic_io import atomic_write_json, atomic_write_text
 
 
 # ═══════════════════════════════════════════════════════════
@@ -261,6 +267,49 @@ def is_md_shard(filepath: str | Path) -> bool:
     return str(filepath).endswith(".md")
 
 
+# Not ".json": every shard scan globs *.json and would read the sidecar as a shard.
+EMBEDDING_SIDECAR_SUFFIX = ".emb"
+
+
+def embedding_path_for(md_path: str | Path) -> Path:
+    """Return the embedding sidecar path for a .md shard path."""
+    return Path(str(md_path).removesuffix(".md") + EMBEDDING_SIDECAR_SUFFIX)
+
+
+def write_embedding_sidecar(md_path: str | Path, data: dict) -> None:
+    """Persist ``data["context"]["embedding"]`` next to a .md shard.
+
+    No-op when the shard has no embedding, so a shard loaded without its
+    vector never erases a sidecar written earlier.
+    """
+    context = data.get("context") or {}
+    embedding = context.get("embedding")
+    if not embedding:
+        return
+    atomic_write_json(
+        embedding_path_for(md_path),
+        {"embedding": embedding, "embedding_model": context.get("embedding_model")},
+        indent=None,
+    )
+
+
+def _attach_embedding(data: dict, md_path: Path) -> dict:
+    """Fill ``context.embedding`` from the sidecar, if one exists."""
+    sidecar = embedding_path_for(md_path)
+    if not sidecar.exists():
+        return data
+    try:
+        stored = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return data
+    if stored.get("embedding"):
+        context = data.setdefault("context", {})
+        context["embedding"] = stored["embedding"]
+        if stored.get("embedding_model"):
+            context["embedding_model"] = stored["embedding_model"]
+    return data
+
+
 def convert_shard_file(json_path: str | Path, *, delete_json: bool = True) -> Path:
     """Convert one .json shard to .md in-place.
 
@@ -273,7 +322,8 @@ def convert_shard_file(json_path: str | Path, *, delete_json: bool = True) -> Pa
 
     md_content = shard_to_md(data)
     out = md_path_for(json_path)
-    out.write_text(md_content, encoding="utf-8")
+    write_embedding_sidecar(out, data)
+    atomic_write_text(out, md_content)
 
     if delete_json:
         json_path.unlink(missing_ok=True)
@@ -300,7 +350,7 @@ def load_shard_file(shard_id: str, shard_dir: str | Path) -> tuple[dict, str]:
 
     if md_path.exists():
         text = md_path.read_text(encoding="utf-8")
-        return md_to_shard(text, shard_id), str(md_path)
+        return _attach_embedding(md_to_shard(text, shard_id), md_path), str(md_path)
 
     if json_path.exists():
         with open(json_path, "r", encoding="utf-8") as f:

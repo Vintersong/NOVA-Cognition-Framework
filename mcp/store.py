@@ -12,6 +12,7 @@ import logging
 import os
 import random
 import re
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -87,10 +88,12 @@ def _write_shard_locked(filepath: str, data: dict) -> str:
     Returns the path actually written (may switch .json → .md). Does not touch
     the Arrow cache or SQLite index — see :func:`_post_write_sync`.
     """
-    from shard_format import shard_to_md, is_md_shard
+    from shard_format import shard_to_md, is_md_shard, write_embedding_sidecar
     filepath = _resolve_write_path(filepath)
     if is_md_shard(filepath):
-        Path(filepath).write_text(shard_to_md(data), encoding="utf-8")
+        # The .md drops the embedding; the sidecar keeps it.
+        write_embedding_sidecar(filepath, data)
+        atomic_write_text(filepath, shard_to_md(data))
     else:
         atomic_write_json(filepath, data)
     return filepath
@@ -287,72 +290,100 @@ def classify_tags(shard: dict) -> list[str]:
     return tags
 
 
-def update_index() -> dict:
-    index = {}
-    if not os.path.exists(SHARD_DIR):
-        return index
+# update_index re-reads, under the lock, every shard file modified after its
+# unlocked scan began (minus this margin, for coarse filesystem mtimes).
+_RESCAN_MARGIN_NS = 2_000_000_000
 
-    from shard_format import load_shard_file
 
-    # Collect all shard IDs from both .md and .json files.
-    # When both exist for the same ID, prefer .md (it's the migrated format).
-    seen: dict[str, str] = {}  # shard_id -> filename
+def _list_shard_files() -> dict[str, str]:
+    """Map shard file stem → filename. When both exist, .md (migrated) wins."""
+    seen: dict[str, str] = {}
     for fname in sorted(os.listdir(SHARD_DIR)):
         if fname.endswith(".md"):
-            sid = fname[:-3]
-            seen[sid] = fname  # .md wins unconditionally
+            seen[fname[:-3]] = fname
         elif fname.endswith(".json") and not fname.endswith(".lock"):
-            sid = fname[:-5]
-            if sid not in seen:
-                seen[sid] = fname
+            seen.setdefault(fname[:-5], fname)
+    return seen
 
-    for sid, fname in seen.items():
+
+def _index_entry(shard: dict, fname: str) -> dict:
+    """Build one index row. Single source of the index entry schema."""
+    context_summary = shard.get("context", {}).get("summary", "")
+    # Mirror context.summary into meta.summary so adversarial.py and recall.py
+    # filters that read entry["meta"]["summary"] aren't silent no-ops.
+    meta = dict(shard.get("meta_tags", {}))
+    if context_summary and not meta.get("summary"):
+        meta["summary"] = context_summary
+    return {
+        "shard_id": shard.get("shard_id", fname.rsplit(".", 1)[0]),
+        "filename": fname,
+        "guiding_question": shard.get("guiding_question", ""),
+        "tags": classify_tags(shard),
+        "meta": meta,
+        "context_summary": context_summary,
+        "context_topics": shard.get("context", {}).get("topics", []),
+        "confidence": shard.get("meta_tags", {}).get("confidence", 1.0),
+    }
+
+
+def _scan_into(index: dict, files: dict[str, str]) -> None:
+    from shard_format import load_shard_file
+
+    for stem, fname in files.items():
         try:
-            shard, _ = load_shard_file(sid, SHARD_DIR)
+            shard, _ = load_shard_file(stem, SHARD_DIR)
         except Exception as exc:
             _record_error("update_index", exc)
             continue
+        entry = _index_entry(shard, fname)
+        index[entry["shard_id"]] = entry
 
-        shard_id = shard.get("shard_id", sid)
-        context_summary = shard.get("context", {}).get("summary", "")
-        # Mirror context.summary into meta.summary so adversarial.py and recall.py
-        # filters that read entry["meta"]["summary"] aren't silent no-ops.
-        meta = dict(shard.get("meta_tags", {}))
-        if context_summary and not meta.get("summary"):
-            meta["summary"] = context_summary
-        index[shard_id] = {
-            "shard_id": shard_id,
-            "filename": fname,
-            "guiding_question": shard.get("guiding_question", ""),
-            "tags": classify_tags(shard),
-            "meta": meta,
-            "context_summary": context_summary,
-            "context_topics": shard.get("context", {}).get("topics", []),
-            "confidence": shard.get("meta_tags", {}).get("confidence", 1.0),
-        }
 
-    save_index(index)
+def update_index() -> dict:
+    """Rebuild the index from every shard on disk and save it.
+
+    The full scan runs without the lock so tool writes are not blocked behind
+    it. Under the lock, shards written or removed while it ran are re-read, so
+    a concurrent patch_index_entry is never overwritten by a stale scan.
+    """
+    if not os.path.exists(SHARD_DIR):
+        return {}
+
+    scan_started_ns = time.time_ns() - _RESCAN_MARGIN_NS
+    index: dict = {}
+    _scan_into(index, _list_shard_files())
+
+    with FileLock(INDEX_FILE + ".lock", timeout=5):
+        files = _list_shard_files()
+        present = set(files.values())
+        index = {sid: e for sid, e in index.items() if e["filename"] in present}
+        changed = {}
+        for stem, fname in files.items():
+            try:
+                mtime_ns = os.stat(os.path.join(SHARD_DIR, fname)).st_mtime_ns
+            except FileNotFoundError:
+                continue
+            if mtime_ns >= scan_started_ns:
+                changed[stem] = fname
+        _scan_into(index, changed)
+        atomic_write_json(INDEX_FILE, index)
     return index
 
 
 def patch_index_entry(shard_id: str, shard_data: dict) -> dict:
-    """Update a single shard entry in the index without full rescan."""
-    index = load_index()
-    context_summary = shard_data.get("context", {}).get("summary", "")
-    meta = dict(shard_data.get("meta_tags", {}))
-    if context_summary and not meta.get("summary"):
-        meta["summary"] = context_summary
-    index[shard_id] = {
-        "shard_id": shard_id,
-        "filename": shard_id + ".json",
-        "guiding_question": shard_data.get("guiding_question", ""),
-        "tags": classify_tags(shard_data),
-        "meta": meta,
-        "context_summary": context_summary,
-        "context_topics": shard_data.get("context", {}).get("topics", []),
-        "confidence": shard_data.get("meta_tags", {}).get("confidence", 1.0),
-    }
-    save_index(index)
+    """Update a single shard entry in the index without full rescan.
+
+    The load → edit → save runs under the index lock so two concurrent patches
+    (tool calls run in executor threads) cannot drop each other's entry.
+    """
+    md_name = shard_id + ".md"
+    # Match update_index: a migrated shard lives in <id>.md.
+    fname = md_name if os.path.exists(os.path.join(SHARD_DIR, md_name)) else shard_id + ".json"
+    entry = {**_index_entry(shard_data, fname), "shard_id": shard_id}
+    with FileLock(INDEX_FILE + ".lock", timeout=5):
+        index = load_index()
+        index[shard_id] = entry
+        atomic_write_json(INDEX_FILE, index)
     return index
 
 

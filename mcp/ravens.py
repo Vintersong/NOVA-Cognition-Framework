@@ -37,12 +37,12 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from collections import Counter
 from typing import Any
 
 import anthropic
 from config import parse_bool_env, NOVA_AGENT_INFERENCE_WEIGHT, NOVA_PROJECT_CONTEXT, QUARANTINE_PENALTY
+from shard_format import load_shard_file
 from store import passes_state_gate
 
 logger = logging.getLogger(__name__)
@@ -436,12 +436,10 @@ class Muninn:
             try:
                 shard_blobs = []
                 for sid in candidates.shard_ids:
-                    shard_path = Path(self.shard_dir) / (sid + ".json")
                     entry = index.get(sid, {})
                     turns_preview = ""
                     try:
-                        with open(shard_path, "r", encoding="utf-8") as f:
-                            shard_data = json.load(f)
+                        shard_data, _ = load_shard_file(sid, self.shard_dir)
                         turns = shard_data.get("conversation_history", [])
                         turns_preview = " | ".join(
                             f"{t.get('user', '')} → {t.get('ai', '')}"[:120]
@@ -693,11 +691,9 @@ class Muninn:
 
         rescored = []
         for shard_id in candidates.shard_ids:
-            shard_path = Path(self.shard_dir) / (shard_id + ".json")
             shard_embedding = None
             try:
-                with open(shard_path, "r", encoding="utf-8") as f:
-                    shard_data = json.load(f)
+                shard_data, _ = load_shard_file(shard_id, self.shard_dir)
                 shard_embedding = shard_data.get("context", {}).get("embedding")
             except Exception as exc:
                 _record_error("muninn_local_rerank_read", exc)
