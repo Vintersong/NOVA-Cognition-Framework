@@ -88,6 +88,7 @@ NOVA-Whitepaper/
     evolve.py                ← nova_evolve tool (self-improvement loop)
     nidhogg.py               ← nidhogg_ingest/scan/status tools
     code_index.py            ← nova_code_search tool (AST-chunked semantic code search over mcp/)
+    huginn_tools.py          ← nova_huginn_candidates tool (HUGINN candidate pre-filter)
     facts.py                 ← nova_facts_search / nova_facts_rebuild tools
     wiki.py                  ← wiki storage backend
     wiki_ingest.py           ← wiki ingestion pipeline
@@ -140,11 +141,11 @@ NOVA-Whitepaper/
   output/                    ← built artifacts (games, experiments)
   forgemaster/
     AGENTS.md                ← orchestration config and model routing
-    SKILL_LIBRARY.md         ← index of all skills across 15 domains
+    SKILL_LIBRARY.md         ← index of all skills across 24 categories
     STANDARDS.md             ← authoring standard for all forgemaster content
     skills/                  ← core orchestration skills (14 files)
-    library/                 ← domain skill library (324 files, 24 categories)
-    agents/                  ← agent persona definitions (322 files, 18 divisions)
+    library/                 ← domain skill library (324 .md files, 24 categories)
+    agents/                  ← agent persona definitions (322 .md files, 18 divisions)
   docs/                      ← reference and roadmap documents
   .env                       ← API keys (never commit)
 ```
@@ -318,6 +319,7 @@ Next session starts with `nova_shard_interact(message="[project name] current st
 - A new resource that serves the same data as a tool must call `_require(<tool>)`
   in `nova_server.py` — resources do not go through the permission context on
   their own
+- In update() and equivalent per-frame or per-tick entry points, check call sites before adding any new call. Duplicate registrations and duplicate update calls have caused bugs when AI-written and hand-written code meet.
 
 ---
 
@@ -348,7 +350,7 @@ Next session starts with `nova_shard_interact(message="[project name] current st
   compaction and merge detection automatically, and the tool asks for approval.
   Use `dry_run=true` to read the last report without starting a cycle
 - Do not start implementation without loading NOVA context first
-- Do not end a session without the handoff write
+- Do not skip the handoff when one of the four handoff conditions applies.
 - Do not commit the shards directory — personal data
 - Do not use OpenAI models — Haiku for research/docs, Gemini Flash for implementation, Sonnet for architecture/review
 - If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN fall back to local embeddings silently
