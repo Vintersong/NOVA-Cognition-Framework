@@ -46,6 +46,10 @@ NOVA-Whitepaper/
     arrow_cache.py           ← Arrow-format embedding cache
     spreading_activation.py  ← graph-based score propagation, MUNINN third pass
     embedding_integrity.py   ← HMAC-SHA256 signing/verification of shard embeddings
+    huginn_prefilter.py      ← keyword + confidence pre-filter behind nova_huginn_candidates
+    nova_hotpool.py          ← 8-slot L1 confidence cache used by ravens.py (C backend or pure-Python fallback)
+    nova_hotpool.c           ← C backend for nova_hotpool.py (build to _nova_hotpool.so / .dll)
+    bench_hotpool.py         ← micro-benchmark: Python dict vs C hot pool
 
     # Permissions, gating & audit
     permissions.py           ← env-driven tool allow/deny (NOVA_DENIED_TOOLS / NOVA_DENIED_PREFIXES)
@@ -231,7 +235,9 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-git-workflow` | Branch setup, integration, PR creation |
 | `forgemaster-code-review` | Two-stage spec + quality review |
 | `forgemaster-qa-review` | Stage 3 structural QA |
+| `forgemaster-nova-session-start` | Session start — load NOVA context and surface open threads before any work |
 | `forgemaster-nova-session-handoff` | Persisting state across sessions |
+| `forgemaster-nova-shard-triage` | Corpus hygiene — archive / merge / forget / revive stale or redundant shards |
 | `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
 | `forgemaster-emotional-state-routing` | Routing hook: escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
