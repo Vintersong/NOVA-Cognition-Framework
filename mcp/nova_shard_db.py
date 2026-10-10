@@ -227,11 +227,11 @@ class NovaShardDB:
     # ── Rebuild ───────────────────────────────────────────────────────────
 
     def rebuild_from_dir(self, shard_dir: str | None = None) -> dict:
-        """Wipe and repopulate from all JSON files in shard_dir.
+        """Wipe and repopulate from every shard in shard_dir (.md or .json).
 
         Returns {"indexed": N, "failed": M}.
         """
-        import json as _json
+        from shard_format import load_shard_file  # lazy: avoids an import cycle
 
         root = Path(shard_dir or SHARD_DIR)
         if not root.is_dir():
@@ -244,17 +244,21 @@ class NovaShardDB:
             return {"indexed": 0, "failed": 0, "error": str(exc)}
 
         indexed = failed = 0
-        for path in sorted(root.glob("*.json")):
+        # NÓTT converts shards to .md on compaction; a .md and .json for the
+        # same id means a migrated shard, and load_shard_file prefers the .md.
+        shard_ids = sorted(
+            {p.stem for p in root.glob("*.md")} | {p.stem for p in root.glob("*.json")}
+        )
+        for shard_id in shard_ids:
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = _json.load(f)
-                mtime_ns = path.stat().st_mtime_ns
+                data, fpath = load_shard_file(shard_id, root)
+                mtime_ns = os.stat(fpath).st_mtime_ns
                 if self.upsert_from_shard(data, mtime_ns):
                     indexed += 1
                 else:
                     failed += 1
             except Exception as exc:
-                logger.warning("nova_shard_db.rebuild skipping %s: %s", path.name, exc)
+                logger.warning("nova_shard_db.rebuild skipping %s: %s", shard_id, exc)
                 failed += 1
 
         return {"indexed": indexed, "failed": failed}

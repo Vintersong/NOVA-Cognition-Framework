@@ -9,12 +9,15 @@ from __future__ import annotations
 import json
 import os
 from collections import deque
+from typing import Callable, TypeVar
 from datetime import datetime
 
 from filelock import FileLock
 
 from atomic_io import atomic_write_json
 from config import GRAPH_FILE
+
+T = TypeVar("T")
 
 
 # Relation types whose meaning does not depend on direction. Endpoints are
@@ -42,8 +45,27 @@ def load_graph() -> dict:
 
 
 def save_graph(graph: dict):
+    """Overwrite the graph file with *graph*.
+
+    Only safe for a graph built from scratch. To change the existing graph use
+    update_graph: a load_graph() → edit → save_graph() sequence drops any edge
+    another writer (NÓTT runs in a background thread) saved in between.
+    """
     with FileLock(GRAPH_FILE + ".lock", timeout=5):
         atomic_write_json(GRAPH_FILE, graph)
+
+
+def update_graph(mutator: Callable[[dict], T]) -> T:
+    """Load, mutate and save the graph under one file lock.
+
+    *mutator* edits the graph dict in place; its return value is passed back.
+    Keep it short — no I/O or model calls — since every graph writer waits on it.
+    """
+    with FileLock(GRAPH_FILE + ".lock", timeout=5):
+        graph = load_graph()
+        result = mutator(graph)
+        atomic_write_json(GRAPH_FILE, graph)
+    return result
 
 
 # ═══════════════════════════════════════════════════════════
@@ -65,19 +87,22 @@ def build_shard_entity(shard_data: dict) -> dict:
 def register_external_entity(entity_id: str, data: dict) -> None:
     """Register a non-shard graph entity (e.g. a sprint) so edges pointing at
     it resolve to a typed node. No-op when the id is already registered."""
-    graph = load_graph()
-    entities = graph.setdefault("entities", {})
-    if entity_id in entities:
-        return
-    entities[entity_id] = {**data, "registered_at": datetime.now().isoformat()}
-    save_graph(graph)
+    def _register(graph: dict) -> None:
+        entities = graph.setdefault("entities", {})
+        if entity_id not in entities:
+            entities[entity_id] = {**data, "registered_at": datetime.now().isoformat()}
+
+    update_graph(_register)
 
 
 def add_shard_to_graph(shard_id: str, shard_data: dict):
     """Register a shard as an entity in the knowledge graph on create."""
-    graph = load_graph()
-    graph["entities"][shard_id] = build_shard_entity(shard_data)
-    save_graph(graph)
+    entity = build_shard_entity(shard_data)
+
+    def _add(graph: dict) -> None:
+        graph.setdefault("entities", {})[shard_id] = entity
+
+    update_graph(_add)
 
 
 def add_relation(source_id: str, target_id: str, relation_type: str, notes: str = "", reason: str = ""):
@@ -89,7 +114,6 @@ def add_relation(source_id: str, target_id: str, relation_type: str, notes: str 
     """
     if relation_type in SYMMETRIC_RELATION_TYPES and target_id < source_id:
         source_id, target_id = target_id, source_id
-    graph = load_graph()
     relation = {
         "source": source_id,
         "target": target_id,
@@ -99,15 +123,17 @@ def add_relation(source_id: str, target_id: str, relation_type: str, notes: str 
     }
     if reason:
         relation["reason"] = reason
-    existing = graph.get("relations", [])
-    for r in existing:
-        if (r["source"] == source_id
-                and r["target"] == target_id
-                and r["type"] == relation_type):
-            return
-    existing.append(relation)
-    graph["relations"] = existing
-    save_graph(graph)
+
+    def _add(graph: dict) -> None:
+        existing = graph.setdefault("relations", [])
+        for r in existing:
+            if (r["source"] == source_id
+                    and r["target"] == target_id
+                    and r["type"] == relation_type):
+                return
+        existing.append(relation)
+
+    update_graph(_add)
 
 
 def add_supersedes(source_id: str, target_id: str, reason: str) -> None:

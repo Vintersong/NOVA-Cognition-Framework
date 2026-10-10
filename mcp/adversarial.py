@@ -157,7 +157,7 @@ def _parse_contradictions(
 def run_adversarial_pass(
     index: dict,
     graph: dict,
-    save_graph_fn,
+    update_graph_fn,
     add_relation_fn,
     dry_run: bool = False,
 ) -> dict:
@@ -245,8 +245,10 @@ def run_adversarial_pass(
         })
 
     if not dry_run:
-        stamp_run(graph, pass_id)
-        save_graph_fn(graph)
+        # Stamp a fresh copy under the graph lock. Saving `graph` — loaded
+        # before the model call — would overwrite the contradicts edges that
+        # add_relation_fn just wrote.
+        update_graph_fn(lambda g: stamp_run(g, pass_id))
 
     return {
         "pass_id": pass_id,

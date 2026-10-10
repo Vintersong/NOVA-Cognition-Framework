@@ -35,7 +35,7 @@ from config import (
     SKILL_AUDIT_LOG_FILE,
     USAGE_LOG_FILE,
 )
-from graph import load_graph, save_graph
+from graph import load_graph, save_graph, update_graph
 from hooks import NovaHookEvent, NovaHookRegistry
 from maintenance import (
     apply_confidence_decay,
@@ -77,12 +77,13 @@ def _pre_compact_stub(_data: dict, _shard_id: str) -> None:
 
 def _update_graph_entity_confidence(shard_id: str, data: dict) -> None:
     """Update graph entity confidence — runs in executor to keep event loop free."""
-    graph = load_graph()
-    if shard_id in graph.get("entities", {}):
-        graph["entities"][shard_id]["confidence"] = (
-            data.get("meta_tags", {}).get("confidence", 1.0)
-        )
-        save_graph(graph)
+    confidence = data.get("meta_tags", {}).get("confidence", 1.0)
+
+    def _set(graph: dict) -> None:
+        if shard_id in graph.get("entities", {}):
+            graph["entities"][shard_id]["confidence"] = confidence
+
+    update_graph(_set)
 
 
 @dataclass
@@ -212,6 +213,7 @@ class ServerContext:
             merge_fn=find_merge_candidates,
             load_graph_fn=load_graph,
             save_graph_fn=save_graph,
+            update_graph_fn=update_graph,
             pre_compact_fn=_pre_compact_stub,
             mutate_fields_fn=mutate_shard_fields,
             mutate_cas_fn=lambda sid, mut, rev: mutate_shard(sid, mut, expect_revision=rev),

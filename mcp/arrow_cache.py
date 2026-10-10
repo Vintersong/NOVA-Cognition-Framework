@@ -23,7 +23,6 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -413,20 +412,21 @@ class ArrowShardCache:
         except ImportError:
             _integrity_available = False
 
-        shard_dir = Path(self.shard_dir)
+        from shard_format import load_shard_file  # lazy, like store above
 
         for shard_id, entry in index.items():
-            fname = entry.get("filename") or (shard_id + ".json")
-            fpath = shard_dir / fname
+            # load_shard_file reads either format (.md first, then .json). The
+            # index's "filename" can't be trusted for this: patch_index_entry
+            # always records "<id>.json", and NÓTT converts shards to .md on
+            # compaction, so reading the filename as JSON dropped every
+            # migrated shard from the cache — and from the decay fast path.
             try:
-                stat_res = fpath.stat()
+                data, fpath = load_shard_file(shard_id, self.shard_dir)
+                stat_res = os.stat(fpath)
             except FileNotFoundError:
                 continue
-            try:
-                with open(fpath, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
             except Exception as exc:
-                logger.debug("arrow_cache: skipping %s (%s)", fname, exc)
+                logger.debug("arrow_cache: skipping %s (%s)", shard_id, exc)
                 continue
 
             meta = data.get("meta_tags") or {}

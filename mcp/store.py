@@ -336,15 +336,20 @@ def update_index() -> dict:
 
 
 def patch_index_entry(shard_id: str, shard_data: dict) -> dict:
-    """Update a single shard entry in the index without full rescan."""
-    index = load_index()
+    """Update a single shard entry in the index without full rescan.
+
+    The load → edit → save runs under the index lock so two concurrent patches
+    (tool calls run in executor threads) cannot drop each other's entry.
+    """
     context_summary = shard_data.get("context", {}).get("summary", "")
     meta = dict(shard_data.get("meta_tags", {}))
     if context_summary and not meta.get("summary"):
         meta["summary"] = context_summary
-    index[shard_id] = {
+    md_name = shard_id + ".md"
+    entry = {
         "shard_id": shard_id,
-        "filename": shard_id + ".json",
+        # Match update_index: a migrated shard lives in <id>.md.
+        "filename": md_name if os.path.exists(os.path.join(SHARD_DIR, md_name)) else shard_id + ".json",
         "guiding_question": shard_data.get("guiding_question", ""),
         "tags": classify_tags(shard_data),
         "meta": meta,
@@ -352,7 +357,10 @@ def patch_index_entry(shard_id: str, shard_data: dict) -> dict:
         "context_topics": shard_data.get("context", {}).get("topics", []),
         "confidence": shard_data.get("meta_tags", {}).get("confidence", 1.0),
     }
-    save_index(index)
+    with FileLock(INDEX_FILE + ".lock", timeout=5):
+        index = load_index()
+        index[shard_id] = entry
+        atomic_write_json(INDEX_FILE, index)
     return index
 
 

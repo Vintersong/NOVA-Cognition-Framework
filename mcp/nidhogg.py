@@ -50,7 +50,7 @@ from config import (
     MERGE_SIMILARITY_THRESHOLD,
 )
 from gate_helpers import gate_check_model, log_executed
-from graph import add_corroborated_by, load_graph, save_graph
+from graph import add_corroborated_by, register_external_entity
 from maintenance import cosine_similarity
 from nova_embeddings_local import generate_local_embedding
 from outputs import (
@@ -161,17 +161,11 @@ def _file_hash(path: str) -> str:
 def _register_doc_entity(doc_id: str, path: str, source_type: str) -> None:
     """Register an external doc as a graph entity so corroborated_by edges
     point at proper ids rather than raw filesystem paths."""
-    graph = load_graph()
-    entities = graph.setdefault("entities", {})
-    if doc_id in entities:
-        return
-    entities[doc_id] = {
+    register_external_entity(doc_id, {
         "type": "ExternalDoc",
         "path": path,
         "source_type": source_type,
-        "registered_at": datetime.now().isoformat(),
-    }
-    save_graph(graph)
+    })
 
 
 # ═══════════════════════════════════════════════════════════
