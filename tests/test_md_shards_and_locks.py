@@ -161,3 +161,67 @@ def test_arrow_cache_reads_shard_named_apart_from_its_id(tmp_path: Path, monkeyp
     data, path = cache._load_entry("real_id", store.load_index()["real_id"])
     assert data["shard_id"] == "real_id"
     assert path.endswith("legacy_name.json")
+
+
+# ── .md embedding sidecar ───────────────────────────────────────────────────
+
+def _embedded(shard_id: str, vector: list[float]) -> dict:
+    data = _shard(shard_id)
+    data["context"] = {"summary": "s", "embedding": vector, "embedding_model": "all-MiniLM-L6-v2"}
+    return data
+
+
+def test_md_conversion_keeps_embedding_in_sidecar(tmp_path: Path) -> None:
+    (tmp_path / "a.json").write_text(json.dumps(_embedded("a", [0.1, 0.2, 0.3])), encoding="utf-8")
+    md = shard_format.convert_shard_file(tmp_path / "a.json")
+
+    assert "0.1" not in md.read_text(encoding="utf-8")  # vector stays out of the .md
+    data, path = shard_format.load_shard_file("a", tmp_path)
+    assert path.endswith("a.md")
+    assert data["context"]["embedding"] == [0.1, 0.2, 0.3]
+
+
+def test_md_shard_write_updates_sidecar(shard_env: Path) -> None:
+    store.save_shard(str(shard_env / "as_md.json"), _embedded("as_md", [0.5, 0.5]))
+    data, _ = store.load_shard("as_md")
+    assert data["context"]["embedding"] == [0.5, 0.5]
+
+    # A later write without a vector (e.g. a metadata-only save) keeps the old one.
+    store.save_shard(str(shard_env / "as_md.json"), _shard("as_md"))
+    data, _ = store.load_shard("as_md")
+    assert data["context"]["embedding"] == [0.5, 0.5]
+
+
+def test_sidecar_is_not_indexed_as_a_shard(shard_env: Path) -> None:
+    store.save_shard(str(shard_env / "as_md.json"), _embedded("as_md", [0.5, 0.5]))
+    assert (shard_env / "as_md.emb").exists()
+    assert sorted(store.update_index()) == ["as_json", "as_md"]
+
+
+def test_merge_candidates_see_md_shards(shard_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import maintenance
+
+    monkeypatch.setattr(maintenance, "SHARD_DIR", str(shard_env))
+    store.save_shard(str(shard_env / "as_md.json"), _embedded("as_md", [1.0, 0.0]))
+    me = _embedded("me", [1.0, 0.0])
+    found = maintenance.find_merge_candidates("me", me, store.load_index())
+    assert [c["shard_id"] for c in found] == ["as_md"]
+
+
+# ── update_index vs concurrent writes ───────────────────────────────────────
+
+def test_update_index_rereads_shards_written_during_scan(shard_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_scan = store._scan_into
+    calls = {"n": 0}
+
+    def scan_then_concurrent_write(index, files):
+        real_scan(index, files)
+        calls["n"] += 1
+        if calls["n"] == 1:  # the unlocked full scan just read the old value
+            (shard_env / "as_json.json").write_text(
+                json.dumps(_shard("as_json", confidence=0.2)), encoding="utf-8"
+            )
+
+    monkeypatch.setattr(store, "_scan_into", scan_then_concurrent_write)
+    index = store.update_index()
+    assert index["as_json"]["confidence"] == 0.2

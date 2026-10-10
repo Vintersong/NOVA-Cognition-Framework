@@ -37,7 +37,6 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from collections import Counter
 from typing import Any
 
@@ -692,11 +691,9 @@ class Muninn:
 
         rescored = []
         for shard_id in candidates.shard_ids:
-            shard_path = Path(self.shard_dir) / (shard_id + ".json")
             shard_embedding = None
             try:
-                with open(shard_path, "r", encoding="utf-8") as f:
-                    shard_data = json.load(f)
+                shard_data, _ = load_shard_file(shard_id, self.shard_dir)
                 shard_embedding = shard_data.get("context", {}).get("embedding")
             except Exception as exc:
                 _record_error("muninn_local_rerank_read", exc)

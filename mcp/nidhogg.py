@@ -68,6 +68,7 @@ from outputs import (
     NidhoggStatusResult,
 )
 from permissions import denial_reject, is_blocked
+from shard_format import load_shard_file
 from approval import Approval, was_approved
 from reject import RejectCode, RejectPayload, reject_dict, reject_model
 from tool_registry import nova_tool
@@ -249,13 +250,9 @@ def _match_shards(content_embedding: list[float], top_n: int) -> list[dict]:
         if "archived" in tags or "forgotten" in tags:
             continue
 
-        shard_path = os.path.join(SHARD_DIR, shard_id + ".json")
-        if not os.path.exists(shard_path):
-            continue
-
         try:
-            with open(shard_path, "r", encoding="utf-8") as f:
-                shard_data = json.load(f)
+            # Either format; .md shards keep their embedding in a sidecar.
+            shard_data, _ = load_shard_file(shard_id, SHARD_DIR)
             shard_embedding = shard_data.get("context", {}).get("embedding")
             if not shard_embedding:
                 continue
