@@ -9,8 +9,18 @@ Two backends, same interface:
                shared library is absent. Same 8-slot, lowest-confidence-eviction
                policy; uses shard_id strings as keys directly (no FNV needed).
 
-ravens.py imports lookup/insert and checks _HOTPOOL_AVAILABLE. Both backends
-expose the same four public functions so callers need no conditional logic.
+Both backends expose the same public functions so callers need no conditional
+logic.
+
+Not wired into retrieval. ravens.py used to score from this cache, but nothing
+invalidated it when NÓTT decay, nova_shard_validate or archive changed a
+shard's confidence, so it served stale values; the shard index is the
+authoritative source. A caller that wires this back in must refresh or
+reset() it on every confidence change.
+
+The C backend keys slots by a 32-bit FNV-1a hash. The wrapper records which
+shard_id last claimed each hash, so a colliding id reads as a miss rather than
+returning another shard's confidence.
 """
 
 from __future__ import annotations
@@ -144,11 +154,20 @@ def fnv32(shard_id: str) -> int:
 
 _HOTPOOL_AVAILABLE = True  # always True — Python fallback guarantees availability
 
+# C backend only: hash -> shard_id that last inserted it. Guards lookups
+# against FNV-1a collisions. Cleared when it outgrows _OWNER_CAP; a cleared
+# entry just reads as a miss.
+_c_owner: dict[int, str] = {}
+_OWNER_CAP = 4096
+
 
 def lookup(shard_id: str) -> float | None:
     """Return cached confidence for shard_id, or None on a miss."""
     if _C_AVAILABLE:
-        result = _lib.hotpool_lookup(c_uint32(fnv32(shard_id)))
+        h = fnv32(shard_id)
+        if _c_owner.get(h) != shard_id:
+            return None
+        result = _lib.hotpool_lookup(c_uint32(h))
         return None if result < 0.0 else float(result)
     return _py_lookup(shard_id)
 
@@ -157,7 +176,11 @@ def insert(shard_id: str, confidence: float, kind: str) -> None:
     """Insert a shard into the hot pool (evicts lowest confidence slot if full)."""
     kind_idx = KIND_MAP.get(kind, KIND_MAP["reflection"])
     if _C_AVAILABLE:
-        _lib.hotpool_insert(c_uint32(fnv32(shard_id)), c_float(confidence), c_uint8(kind_idx))
+        h = fnv32(shard_id)
+        if len(_c_owner) >= _OWNER_CAP and h not in _c_owner:
+            _c_owner.clear()
+        _c_owner[h] = shard_id
+        _lib.hotpool_insert(c_uint32(h), c_float(confidence), c_uint8(kind_idx))
     else:
         _py_insert(shard_id, confidence, kind_idx)
 
@@ -173,6 +196,7 @@ def stats() -> dict[str, int]:
 def reset() -> None:
     """Zero all pool slots and counters."""
     if _C_AVAILABLE:
+        _c_owner.clear()
         _lib.hotpool_reset()
     else:
         _py_reset()

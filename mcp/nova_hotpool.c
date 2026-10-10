@@ -102,12 +102,23 @@ float hotpool_lookup(uint32_t hash)
 /*
  * hotpool_insert — exported.
  *
- * Inserts a shard into the first empty slot. If all 8 slots are occupied,
+ * Updates the slot already holding *hash*, else inserts into the first empty
+ * slot. If all 8 slots are occupied,
  * calls hotpool_evict_lowest() to free the weakest slot before inserting.
  */
 void hotpool_insert(uint32_t hash, float confidence, uint8_t kind)
 {
     int i;
+
+    /* Refresh an existing slot first, so a re-insert never leaves a stale
+     * duplicate that lookup would find before the new value. */
+    for (i = 0; i < HOTPOOL_SIZE; i++) {
+        if (_valid[i] && _pool[i].id == hash) {
+            _pool[i].confidence = confidence;
+            _pool[i].kind       = kind;
+            return;
+        }
+    }
 
     for (i = 0; i < HOTPOOL_SIZE; i++) {
         if (!_valid[i]) {
