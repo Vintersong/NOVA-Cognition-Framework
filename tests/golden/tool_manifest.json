@@ -2,6 +2,12 @@
   "prompts": [
     {
       "arguments": [],
+      "name": "forgemaster-advisor",
+      "summary": "Load this skill when an implementer-lane ticket (cheap model) is about to start substantive work, is stuck, or is about to be declared done.",
+      "title": "Advisor"
+    },
+    {
+      "arguments": [],
       "name": "forgemaster-code-review",
       "summary": "Load this skill when reviewing any implementation before it merges to main.",
       "title": "Code Review"
