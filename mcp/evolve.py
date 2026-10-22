@@ -615,7 +615,7 @@ For each improvement, create a nova_shard with:
 - Each task must have a measurable outcome (test passes, bug fixed, tool added)
 - Prefer targeted changes over architectural rewrites
 - Create 3-5 shards MAX — quality over quantity
-- Route implementation: Haiku (research/docs) | Gemini Flash (implementation) | Sonnet (architecture)
+- Route implementation: Haiku (research/docs/implementation) | Sonnet (architecture/review)
 - DO NOT implement changes yourself in this step — only create planning shards
 
 ## Process
@@ -766,7 +766,7 @@ def run_evolve_cycle(dry_run: bool = False, force: bool = False) -> dict[str, An
 
 def register_evolve_tools(mcp, ctx: "ServerContext") -> None:
     """Register the nova_evolve tool onto an existing MCPServer instance.
-    Called once in nova_server.py — same pattern as Gemini and Nidhogg.
+    Called once in nova_server.py — same pattern as Nidhogg.
     """
 
     @nova_tool(mcp, name="nova_evolve")

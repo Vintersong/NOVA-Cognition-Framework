@@ -79,10 +79,6 @@ Principle Library (reasoning methodology)
 
 `nova_facts_search`, `nova_facts_rebuild` — SQLite-backed `.shard` facts corpus.
 
-### Gemini (2)
-
-`gemini_execute_ticket`, `gemini_load_file`
-
 ### Calibrate (1)
 
 `nova_calibrate_routing` — analyse HUGINN consistency and sprint pass rates to suggest routing threshold adjustments.

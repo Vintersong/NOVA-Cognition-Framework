@@ -11,7 +11,6 @@
 | Variable | Default | Notes |
 |---|---|---|
 | `CLAUDE_API_KEY` | *(unset)* | Powers HUGINN, MUNINN, wiki routing/synthesis, and summary index generation. If absent, HUGINN and MUNINN fall back to local-only retrieval silently. |
-| `GEMINI_API_KEY` | *(unset)* | Required for `gemini_execute_ticket` and `gemini_load_file`. Forgemaster's implementation lane is unavailable without this. |
 | `NOVA_EMBEDDING_HMAC_KEY` | *(unset)* | Hex or UTF-8 secret for HMAC-SHA256 embedding signing (VectorPin). If unset, embedding signing is skipped and integrity checks do not run. Set this in production to protect against tampered vectors. |
 
 ---
@@ -137,15 +136,22 @@ The facts layer uses discrete `{-1, 0, 1}` confidence — distinct from the floa
 
 ---
 
-## Gemini / Forgemaster
+## Forgemaster agents
+
+Each Forgemaster role, and the NÓTT adversarial pass, resolves to an agent from env vars sharing a prefix: `FORGEMASTER_ORCHESTRATOR`, `FORGEMASTER_PLANNER`, `FORGEMASTER_IMPLEMENTER`, `FORGEMASTER_REVIEWER`, `NOVA_ADVERSARIAL`. Each prefix accepts `_PROVIDER`, `_MODEL`, `_BASE_URL` and `_API_KEY_ENV`. An unsupported provider, or `openai_compatible` without a base URL, fails at startup rather than mid-sprint.
 
 | Variable | Default | Impact |
 |---|---|---|
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used for the implementation lane. Swap to a newer Flash model to pick up capability improvements. |
 | `FORGEMASTER_ORCHESTRATOR_MODEL` | inherits `MUNINN_MODEL` | Model used by the orchestrator role (task decomposition + ticket routing). Defaults to Sonnet. Set to an Opus model alias on high-stakes sprints where mis-routing a ticket would cascade into many review iterations downstream — orchestrator output multiplies across every downstream ticket, so the upgrade is high-leverage spend. |
 | `FORGEMASTER_PLANNER_MODEL`      | inherits `MUNINN_MODEL` | Model used by the planner role (expanding the orchestrator's decomposition into concrete steps). Defaults to Sonnet. Opus pays off less here than at the orchestrator, but is the right choice when the planner is the bottleneck on ambiguous specs. |
 | `FORGEMASTER_REVIEWER_MODEL`     | inherits `MUNINN_MODEL` | Model used by the reviewer role (spec + quality review). Defaults to Sonnet. Set to an Opus model alias when catching subtle correctness issues matters more than throughput — e.g. before a release cut. |
-| `FORGEMASTER_IMPLEMENTER_MODEL`  | inherits `GEMINI_MODEL` | Model used by the implementer role. Defaults to Gemini Flash. Override only when you specifically want an Anthropic model writing code (e.g. languages/frameworks where Flash underperforms). The `_dispatch` provider detection routes `claude-*` IDs to Anthropic and `gemini-*` IDs to Google automatically, so cross-provider overrides work without extra wiring. |
+| `FORGEMASTER_IMPLEMENTER_MODEL`  | inherits `HUGINN_MODEL` | Model used by the implementer role. Defaults to Haiku. Raise to Sonnet when the implementer's output keeps failing review, or point it at a local model with the variables below. |
+| `FORGEMASTER_<ROLE>_PROVIDER` | `anthropic` | `anthropic` or `openai_compatible`. |
+| `FORGEMASTER_<ROLE>_BASE_URL` | *(unset)* | Endpoint root. Required for `openai_compatible` (e.g. `http://127.0.0.1:1234/v1`). For `anthropic` it points the SDK at an Anthropic-compatible server such as LM Studio. |
+| `FORGEMASTER_<ROLE>_API_KEY_ENV` | `CLAUDE_API_KEY` for hosted Anthropic, none otherwise | The *name* of the variable holding the API key, never the key. Leave unset for local servers. |
+| `NOVA_ADVERSARIAL_PROVIDER` / `_MODEL` / `_BASE_URL` / `_API_KEY_ENV` | `anthropic` / inherits `MUNINN_MODEL` | Agent for the NÓTT adversarial contradiction pass. Point it at a non-Claude model to keep a second training distribution reviewing the corpus. |
+| `NOVA_PROVIDER_TIMEOUT_S` | `300` | Request timeout in seconds for `openai_compatible` calls; local models can be slow on long outputs. |
+| `AUTORESEARCH_MODEL` | `claude-haiku-4-5-20251001` | Model used by `utilities/autoresearch.py`. Also `AUTORESEARCH_MAX_TOKENS` (default `4096`) and `AUTORESEARCH_WEB_SEARCH=1` (or the `--search` flag) to enable Anthropic web search. |
 | `FORGEMASTER_EVENT_LOG` | *(unset)* | Override path for the sprint JSONL event log. Defaults to `output/forgemaster_runs/<sprint_id>.jsonl` (read directly by `forgemaster_runtime.py`). |
 
 ---
@@ -165,11 +171,11 @@ prompt — use it for a hard block, not for caution.
 
 | Variable | Default | Impact |
 |---|---|---|
-| `NOVA_HITL_BROKER` | `interactive` | Fallback broker only. MCP tool calls ask the operator through **elicitation** (the client shows the prompt), so this setting does not affect them. It governs the paths with no MCP client to ask: forgemaster's per-file writes, the Gemini worker, and bare CLI use. `interactive` — prompts on a controlling terminal, denying when there is none. `policy` — always-deny without prompting (used in Docker and CI). |
+| `NOVA_HITL_BROKER` | `interactive` | Fallback broker only. MCP tool calls ask the operator through **elicitation** (the client shows the prompt), so this setting does not affect them. It governs the paths with no MCP client to ask: forgemaster's per-file writes and bare CLI use. `interactive` — prompts on a controlling terminal, denying when there is none. `policy` — always-deny without prompting (used in Docker and CI). |
 | `NOVA_HITL_TIMEOUT_S` | `30` | Seconds to wait for a terminal decision before auto-denying in interactive mode. Elicitation prompts are not bounded by this — the client owns that timeout. |
 | `NOVA_SKILL_AUDIT_LOG` | `skill_audit.db` | SQLite file for the four-state HITL lifecycle (irreversible.request / decision / executed / capability.denied) and post-session biconditional audit. |
 | `NOVA_DENIED_TOOLS` | *(unset)* | Comma-separated tool names to block at runtime (e.g. `nova_evolve,nova_shard_forget`). Takes effect immediately without a server restart. Read directly by `permissions.py`. |
-| `NOVA_DENIED_PREFIXES` | *(unset)* | Comma-separated tool name prefixes to block (e.g. `gemini_` to disable all Gemini tools). Read directly by `permissions.py`. |
+| `NOVA_DENIED_PREFIXES` | *(unset)* | Comma-separated tool name prefixes to block (e.g. `nidhogg_` to disable all Nidhogg tools). Read directly by `permissions.py`. |
 
 ---
 

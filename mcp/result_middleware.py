@@ -9,7 +9,7 @@ shape, which is the inverse of what the spec intends: ``isError`` exists exactly
 so a client can tell a failed call from a successful one without understanding
 the body.
 
-Doing this as server middleware rather than per handler keeps all 41 tools
+Doing this as server middleware rather than per handler keeps all 39 tools
 consistent and means a new tool gets the behaviour for free.
 
 The mapping follows the two-shape envelope contract in ``reject.py``:

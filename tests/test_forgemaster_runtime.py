@@ -131,16 +131,16 @@ def test_empirical_stats_skip_verdicts_from_other_reviewers(tmp_path: Path, monk
     other = {**same, "reviewer": "claude-other-reviewer"}
     events = [
         {"role": "outcome", "event": "sprint_verdict", "task_type": "Boilerplate",
-         "routed_model": "gemini-x", "outcome": "review_pass", "role_models": same},
+         "routed_model": "claude-x", "outcome": "review_pass", "role_models": same},
         {"role": "outcome", "event": "sprint_verdict", "task_type": "boilerplate",
-         "routed_model": "gemini-x", "outcome": "review_fail", "role_models": other},
+         "routed_model": "claude-x", "outcome": "review_fail", "role_models": other},
         {"role": "outcome", "event": "sprint_verdict", "task_type": "boilerplate",
-         "routed_model": "gemini-x", "outcome": "review_fail"},
+         "routed_model": "claude-x", "outcome": "review_fail"},
     ]
     log.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
 
     stats = runtime._load_empirical_stats()
-    assert stats == {("boilerplate", "gemini-x"): {"pass": 1, "fail": 0}}
+    assert stats == {("boilerplate", "claude-x"): {"pass": 1, "fail": 0}}
 
 
 def test_number_lines() -> None:
@@ -170,7 +170,7 @@ def test_call_anthropic_joins_text_blocks_and_flags_truncation(monkeypatch: pyte
     reply = {"stop_reason": "end_turn"}
 
     class _Client:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **kwargs):
             self.messages = self
 
         def create(self, **kwargs):
@@ -182,7 +182,9 @@ def test_call_anthropic_joins_text_blocks_and_flags_truncation(monkeypatch: pyte
 
     monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=_Client))
     monkeypatch.setenv("CLAUDE_API_KEY", "k")
-    monkeypatch.setattr(runtime, "_REPO_ROOT", Path("/nonexistent"))
+    import providers
+
+    monkeypatch.setattr(providers, "_REPO_ROOT", Path("/nonexistent"))
 
     assert runtime._call_anthropic("claude-x", "hi")[0] == "ab"
     reply["stop_reason"] = "max_tokens"
@@ -193,30 +195,30 @@ def test_call_anthropic_joins_text_blocks_and_flags_truncation(monkeypatch: pyte
 def test_dispatch_gives_implementer_larger_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict = {}
 
-    def _gemini(prompt, model, max_tokens):
+    def _fake(model, prompt, max_tokens=4096, cached_system="", base_url="", api_key_env=""):
         seen["max_tokens"] = max_tokens
         return "x", 0, 0, 0
 
-    monkeypatch.setattr(runtime, "_call_gemini", _gemini)
-    runtime._dispatch("implementer", "p", model_override="gemini-x")
+    monkeypatch.setattr(runtime, "_call_anthropic", _fake)
+    runtime._dispatch("implementer", "p", model_override="claude-x")
     assert seen["max_tokens"] == runtime._ROLE_MAX_TOKENS["implementer"]
 
 
 def test_route_ticket_explores_least_sampled_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     stats = {
-        ("boilerplate", "gemini-best"): {"pass": 10, "fail": 0},
+        ("boilerplate", "claude-best"): {"pass": 10, "fail": 0},
         ("boilerplate", "claude-tried"): {"pass": 3, "fail": 3},
     }
     monkeypatch.setattr(runtime, "_load_empirical_stats", lambda: stats)
     monkeypatch.setattr(runtime, "_empirical_stats_loaded", False)
     monkeypatch.setattr(runtime, "_ROUTING_TABLE", {"boilerplate": "claude-tried"})
-    monkeypatch.setitem(runtime._ROLE_TO_MODEL, "implementer", "gemini-unseen")
+    monkeypatch.setitem(runtime._ROLE_TO_MODEL, "implementer", "claude-unseen")
     rt = runtime.ForgemasterRuntime(None, None)
 
     monkeypatch.setattr(runtime.random, "random", lambda: 0.99)
-    assert rt.route_ticket("boilerplate")[0] == "gemini-best"
+    assert rt.route_ticket("boilerplate")[0] == "claude-best"
     monkeypatch.setattr(runtime.random, "random", lambda: 0.0)
-    assert rt.route_ticket("boilerplate")[0] == "gemini-unseen"
+    assert rt.route_ticket("boilerplate")[0] == "claude-unseen"
 
 
 def test_corroboration_registers_sprint_entity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

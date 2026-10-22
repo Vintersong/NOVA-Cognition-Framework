@@ -28,7 +28,7 @@ How the operator is asked:
                      where it sits; the handler passes the answer in as
                      ``approval=``.
   everything else  — through a broker below. This covers check_capability_tag()
-                     (forgemaster's per-file writes, the Gemini worker) and bare
+                     (forgemaster's per-file writes) and bare
                      CLI use, where there is no MCP client to ask.
 
 HITL broker modes (NOVA_HITL_BROKER env var):
@@ -206,8 +206,8 @@ def _make_broker(mode: str, timeout_s: int) -> _InteractiveBroker | _PolicyBroke
     On the MCP tool path the operator is asked through elicitation, by the
     resolver in ``approval.py``, and the answer is handed to the gate — these
     brokers are never consulted there. They remain for the synchronous
-    ``check_capability_tag`` callers (forgemaster's per-file writes, the Gemini
-    worker) and for bare-CLI use, where there is no client to ask.
+    ``check_capability_tag`` callers (forgemaster's per-file writes)
+    and for bare-CLI use, where there is no client to ask.
     """
     if mode == "policy":
         return _PolicyBroker()

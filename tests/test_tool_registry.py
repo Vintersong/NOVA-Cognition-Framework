@@ -69,7 +69,7 @@ def test_scan_covers_every_module_that_registers_tools():
         "nova_server.py", "shard_tools.py", "graph_tools.py", "session_tools.py",
         "forgemaster_tools.py", "wiki_tools.py", "facts.py", "nidhogg.py",
         "evolve.py", "code_index.py", "huginn_tools.py", "calibrate.py",
-        "external_retrieval.py", "gemini_mcp.py",
+        "external_retrieval.py", 
     }
     assert must_cover <= scanned, f"not scanned: {sorted(must_cover - scanned)}"
 

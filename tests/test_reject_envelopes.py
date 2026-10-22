@@ -94,7 +94,6 @@ TOOL_MODULES = [
     "wiki_tools.py", "facts.py", "nidhogg.py", "evolve.py", "code_index.py",
     "huginn_tools.py", "calibrate.py", "external_retrieval.py",
     "gate_helpers.py", "permissions.py", "nova_server.py",
-    "Gemini/gemini_mcp.py",
 ]
 
 

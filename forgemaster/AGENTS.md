@@ -13,13 +13,12 @@ agent_roles:
   - researcher
 preferred_models:
   claude-sonnet: [architecture, review, ambiguity]
-  gemini-flash: [implementation, boilerplate, structured-output]
+  implementer: [implementation, boilerplate, structured-output]   # FORGEMASTER_IMPLEMENTER_* — Haiku by default
   claude-haiku: [research, documentation, fast-tasks]
 tools_allowed:
   - bash
   - git
   - mcp_nova
-  - mcp_gemini
   - mcp_stitch  # pending — auth blocked, see KNOWN_ISSUES.md
 context_files:
   - forgemaster/AGENTS.md
@@ -44,15 +43,15 @@ Multi-agent orchestration layer built on NOVA cognitive memory.
 | Task | Model |
 |---|---|
 | Architecture decisions, ambiguous requirements | claude-sonnet |
-| Clear spec, 1-3 files, structured output | gemini-flash |
+| Clear spec, 1-3 files, structured output | implementer (claude-haiku by default) |
 | Research, documentation, broad knowledge | claude-haiku |
 | UI/screen design, frontend mockups       | stitch        |
-| Boilerplate, formatting, deterministic output | gemini-flash |
+| Boilerplate, formatting, deterministic output | implementer (claude-haiku by default) |
 | Code review, quality judgment | claude-sonnet |
 
-### Per-role model overrides
+### Per-role agents
 
-The role→model mapping in `mcp/forgemaster_runtime.py:_ROLE_TO_MODEL` resolves through four env vars (`FORGEMASTER_ORCHESTRATOR_MODEL`, `FORGEMASTER_PLANNER_MODEL`, `FORGEMASTER_REVIEWER_MODEL`, `FORGEMASTER_IMPLEMENTER_MODEL`) declared in `mcp/config.py`. Unset, they fall back to `MUNINN_MODEL` (the three Anthropic roles) and `GEMINI_MODEL` (implementer) — i.e. current behavior. Point any role at an Opus alias on high-stakes sprints; the orchestrator and reviewer are the two roles where the cost premium pays for itself most reliably. The HeavySkill stage-2 escalation in `forgemaster/skills/forgemaster-heavyskill.md` is a separate, complementary mechanism — it applies inside K-thinker deliberation, not at the sprint role level.
+Each role resolves to an agent — provider, model, optional base URL and key variable — in `mcp/config.py:FORGEMASTER_AGENTS`, from env vars named `FORGEMASTER_<ROLE>_PROVIDER`, `_MODEL`, `_BASE_URL` and `_API_KEY_ENV` (`<ROLE>` is `ORCHESTRATOR`, `PLANNER`, `IMPLEMENTER` or `REVIEWER`). `mcp/forgemaster_runtime.py:_ROLE_TO_MODEL` is the model-name view of that table. Unset, the orchestrator, planner and reviewer use `MUNINN_MODEL` (Sonnet) and the implementer uses `HUGINN_MODEL` (Haiku). `provider` is `anthropic` (default) or `openai_compatible`, which reaches any local server that speaks the OpenAI chat-completions format. Point any role at an Opus alias on high-stakes sprints; the orchestrator and reviewer are the two roles where the cost premium pays for itself most reliably. The HeavySkill stage-2 escalation in `forgemaster/skills/forgemaster-heavyskill.md` is a separate, complementary mechanism — it applies inside K-thinker deliberation, not at the sprint role level.
 
 ## NOVA Integration
 Every sprint starts with: nova_shard_interact (load project context)

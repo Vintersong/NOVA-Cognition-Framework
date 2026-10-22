@@ -2,22 +2,24 @@
 adversarial.py — NÓTT adversarial contradiction pass.
 
 Takes the top ADVERSARIAL_TOP_N shards by confidence, sends their summaries
-to Gemini Flash (different training distribution from Claude), and hunts for
-contradictions between claims.
+to the model configured as ADVERSARIAL_AGENT (config.py), and hunts for
+contradictions between claims. The model is Claude by default; set
+NOVA_ADVERSARIAL_PROVIDER / _MODEL / _BASE_URL to run the pass on a different
+model, e.g. a local server, so a second training distribution reviews the corpus.
 
 Findings become `contradicts` edges in the knowledge graph. Every edge
 written by this pass carries a `notes` field traceable to the specific run:
   "adversarial_pass:<pass_id>"
 
 Runs at most once per ADVERSARIAL_MIN_INTERVAL_DAYS (stored in graph JSON
-under _adversarial_meta.last_run). Requires GEMINI_API_KEY to be set.
+under _adversarial_meta.last_run). The agent's API key (CLAUDE_API_KEY by
+default) must be set.
 
-If GEMINI_API_KEY is absent, the pass is skipped and logged as such.
+If the key is absent or the call fails, the pass is skipped and logged as such.
 """
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -26,10 +28,11 @@ from pathlib import Path
 from timeutils import parse_iso, now_utc
 
 from config import (
+    ADVERSARIAL_AGENT,
     ADVERSARIAL_MIN_INTERVAL_DAYS,
     ADVERSARIAL_TOP_N,
-    GEMINI_MODEL,
 )
+from providers import call_agent
 
 logger = logging.getLogger(__name__)
 
@@ -90,29 +93,26 @@ def _build_prompt(shards: list[dict]) -> str:
 
 
 # ═══════════════════════════════════════════════════════════
-# GEMINI CALL
+# MODEL CALL
 # ═══════════════════════════════════════════════════════════
 
-def _call_gemini(prompt: str) -> str | None:
-    """
-    Call Gemini Flash with the adversarial prompt.
-    Returns response text or None on failure.
-    """
-    from dotenv import load_dotenv
-    load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=False)
+# One CONTRADICTS line per pair, so the reply is short.
+_MAX_TOKENS = 2048
 
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        logger.info("adversarial: GEMINI_API_KEY not set — pass skipped")
-        return None
 
+def _call_model(prompt: str) -> str | None:
+    """
+    Send the adversarial prompt to ADVERSARIAL_AGENT.
+    Returns response text, or None when the key is missing or the call fails.
+    """
     try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-        return response.text or ""
+        text, _in_tok, _out_tok, _latency_ms = call_agent(
+            ADVERSARIAL_AGENT, prompt, max_tokens=_MAX_TOKENS,
+        )
+        return text
     except Exception as exc:
-        logger.warning("adversarial._call_gemini failed: %s", exc)
+        logger.warning("adversarial._call_model failed (%s/%s): %s",
+                       ADVERSARIAL_AGENT.provider, ADVERSARIAL_AGENT.model, exc)
         return None
 
 
@@ -167,7 +167,7 @@ def run_adversarial_pass(
     Returns a summary dict:
       {
         "pass_id": str,
-        "skipped": bool,       # True if interval not met or no API key
+        "skipped": bool,       # True if interval not met or the model call failed
         "shards_reviewed": int,
         "contradictions_found": int,
         "edges_written": list[dict],
@@ -212,7 +212,7 @@ def run_adversarial_pass(
         }
 
     prompt = _build_prompt(top)
-    response = _call_gemini(prompt)
+    response = _call_model(prompt)
 
     if response is None:
         return {

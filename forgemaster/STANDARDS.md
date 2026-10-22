@@ -89,7 +89,7 @@ name: <AgentName>                    # TitleCase display name
 role: <brief role title>             # e.g. "Senior Frontend Engineer"
 division: engineering                # matches agents/ subdirectory
 tier: specialist                     # specialist | orchestrator | reviewer | researcher
-model_preference: claude-sonnet      # claude-sonnet | claude-haiku | gemini-flash | any
+model_preference: claude-sonnet      # claude-sonnet | claude-haiku | implementer | any
 description: >
   One sentence: what this agent does and its key differentiator.
 emoji: 🛠️                           # single emoji representing the agent
@@ -215,7 +215,7 @@ agent_roles:
   - researcher
 preferred_models:
   claude-sonnet: [architecture, review, complex-reasoning]
-  gemini-flash: [implementation, boilerplate, structured-output]
+  implementer: [implementation, boilerplate, structured-output]
   claude-haiku: [research, documentation, fast-tasks]
 tools_allowed:
   - bash

@@ -2,7 +2,6 @@
 
 ![MCP](https://img.shields.io/badge/MCP-server-6B47ED?style=flat-square&logo=anthropic&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.11--3.12-3776AB?style=flat-square&logo=python&logoColor=white)
-![Gemini](https://img.shields.io/badge/Gemini-Flash-4285F4?style=flat-square&logo=google&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 ![Shard Health](https://github.com/Vintersong/NOVA-Cognition-Framework/actions/workflows/shard-health.yml/badge.svg)
@@ -61,8 +60,8 @@ Agents run in parallel sandboxed lanes. NOVA is Forgemaster's memory backplane: 
 ```
 Architect (you)
     └── Lead (Sonnet)       — orchestration, review, ambiguous tickets
-        └── Mid (Gemini Flash)  — bounded implementation, boilerplate, structured output
-            └── Low (Haiku)     — research, documentation, fast tasks
+        └── Mid (Haiku, configurable)  — bounded implementation, boilerplate, structured output
+            └── Low (Haiku)            — research, documentation, fast tasks
 ```
 
 ---
@@ -78,7 +77,7 @@ You (design doc / feature request)
   ├── decompose into typed tickets
   ├── route by task type
   │       ├── architecture / review / ambiguity  → Sonnet
-  │       ├── implementation / boilerplate        → Gemini Flash
+  │       ├── implementation / boilerplate        → implementer (Haiku by default)
   │       └── research / documentation            → Haiku
   ├── parallel lanes execute
   ├── QA pass + Lead review
@@ -91,7 +90,7 @@ You (design doc / feature request)
 
 ```mermaid
 graph TD
-    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"41 tool calls"| B["nova_server.py\nMCP Adapter"]
+    A["MCP Client\n(Claude Desktop / Claude Code / Cursor)"] -->|"39 tool calls"| B["nova_server.py\nMCP Adapter"]
 
     B --> C
     B -->|"nova_shard_interact"| R
@@ -125,7 +124,7 @@ graph TD
 
     subgraph FM["Forgemaster Model Routing"]
         FM1["Sonnet\nArchitecture / Review"]
-        FM2["Gemini Flash\nImplementation"]
+        FM2["Implementer\n(Haiku by default)"]
         FM3["Haiku\nResearch / Docs"]
     end
 
@@ -160,9 +159,9 @@ Copy `.env.example` to `.env` at the repo root and fill in your keys:
 
 ```
 CLAUDE_API_KEY=sk-ant-...
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.5-flash
 ```
+
+Each Forgemaster role (orchestrator, planner, implementer, reviewer) and the NÓTT adversarial pass resolves to a model and provider from env vars, so any of them can be pointed at another model or at a local server without code changes — see [Environment variables](#environment-variables).
 
 If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN silently fall back to local-only retrieval (token overlap + cosine over local embeddings).
 
@@ -177,8 +176,7 @@ If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN silently fall back to local-onl
       "args": ["path/to/mcp/nova_server.py"],
       "env": {
         "NOVA_SHARD_DIR": "path/to/shards",
-        "CLAUDE_API_KEY": "sk-ant-...",
-        "GEMINI_API_KEY": "..."
+        "CLAUDE_API_KEY": "sk-ant-..."
       }
     }
   }
@@ -204,7 +202,6 @@ Run interactively (seeds one health-check shard on first boot if `nova_data` vol
 ```bash
 docker run --rm -i \
   -e CLAUDE_API_KEY=sk-ant-... \
-  -e GEMINI_API_KEY=... \
   -v nova_data:/app/data \
   nova:latest
 ```
@@ -219,7 +216,6 @@ Register in Claude Desktop / Claude Code (`claude_desktop_config.json`):
       "args": [
         "run", "--rm", "-i",
         "-e", "CLAUDE_API_KEY=sk-ant-...",
-        "-e", "GEMINI_API_KEY=...",
         "-v", "nova_data:/app/data",
         "nova:latest"
       ]
@@ -234,7 +230,7 @@ Or use `docker-compose.yml` (copy your keys into `.env` first):
 docker compose up nova
 ```
 
-`NOVA_HITL_BROKER=policy` is set in the image by default. Note this no longer governs MCP tool calls: the seven destructive tools ask for approval through your MCP client (see [Approval](#approval)), which works fine in a container. The broker only covers paths with no client to ask — forgemaster's per-file writes, the Gemini worker, and bare CLI use — where `policy` denies them.
+`NOVA_HITL_BROKER=policy` is set in the image by default. Note this no longer governs MCP tool calls: the seven destructive tools ask for approval through your MCP client (see [Approval](#approval)), which works fine in a container. The broker only covers paths with no client to ask — forgemaster's per-file writes and bare CLI use — where `policy` denies them.
 
 ---
 
@@ -257,7 +253,7 @@ seven, and they will be refused with `code: "gate_denied"`. Everything else work
 normally.
 
 This is independent of `NOVA_HITL_BROKER`, which now only covers paths with no MCP
-client to ask: forgemaster's per-file writes, the Gemini worker, and bare CLI use.
+client to ask: forgemaster's per-file writes and bare CLI use.
 
 ---
 
@@ -291,7 +287,7 @@ The bench measures each stage independently: SQLite facts pre-filter → HUGINN 
 NOVA-Cognition-Framework/
   mcp/
     # Core server
-    nova_server.py           ← ACTIVE MCP server — bootstrap + wiring (registers all 41 tools)
+    nova_server.py           ← ACTIVE MCP server — bootstrap + wiring (registers all 39 tools)
     server_context.py        ← process-scoped singletons (ravens, NÓTT, hooks, gate, audit, session); all handlers read through ServerContext instead of module globals
     config.py                ← all env vars and defaults (single source of truth)
     schemas.py               ← Pydantic input models
@@ -377,8 +373,7 @@ NOVA-Cognition-Framework/
     # Tests (run with pytest from mcp/ — memory-explorer only, not pytest)
     test_nova.py             ← memory-explorer CLI (not pytest — run directly)
 
-    Gemini/
-      gemini_mcp.py          ← Gemini Flash tools registered into nova_server
+    providers.py             ← LLM provider adapters (anthropic, openai_compatible) shared by forgemaster_runtime + adversarial
 
   tests/                     ← main pytest suite (test_* modules, conftest.py, bench_corpus.py, bench_retrieval.py)
     golden/                  ← tool_manifest.json — golden snapshot of the published MCP surface
@@ -425,7 +420,7 @@ NOVA-Cognition-Framework/
 
 ---
 
-## NOVA MCP Tools (41)
+## NOVA MCP Tools (39)
 
 Every tool is published with a human-readable title and MCP annotations derived
 from its capability tag — `readOnlyHint` (22 tools), `destructiveHint` (the seven
@@ -506,15 +501,6 @@ Nidhogg is non-destructive: it appends a `nidhogg` block to matched shards (atom
 | `nova_evolve` | Run one self-evolution cycle: analyze → verify → commit → govern → plan |
 
 > ⚠ **Side effect:** `nova_evolve` runs `git add` and `git commit` locally when tests pass, staging only allowlisted paths (`EVOLVE_COMMIT_ROOTS`, default `mcp/ forgemaster/ tests/ docs/`). On test failure it rolls the changes back with `git stash push` (recoverable via `git stash list`), not a destructive `checkout`. Nothing is pushed to a remote. It carries a destructive capability, so it asks for your approval on every call regardless of skill verification. Use `dry_run=true` for just the director prompt — a dry run is ungated and mutates nothing. If `mcp/` changed, it writes `.sdd/runtime/restart_requested`.
-
-### Gemini (2)
-
-Registered into `nova_server` via `mcp/Gemini/gemini_mcp.py`:
-
-| Tool | Description |
-|---|---|
-| `gemini_execute_ticket` | Send a structured ticket to Gemini Flash |
-| `gemini_load_file` | Load a file from disk as codebase context (repo-root scoped; refuses credential/secret files such as `.env`, `*.key`, `*.pem`) |
 
 ### Calibrate (1)
 
@@ -658,12 +644,15 @@ prompts would be an unusable menu.
 | `MUNINN_MODEL` | `claude-sonnet-4-6` | Deep rerank pass |
 | `HUGINN_CONFIDENCE_THRESHOLD` | `0.7` | Score ≥ this skips MUNINN |
 | `RAVEN_API_TIMEOUT` | `10` | Per-call LLM timeout (seconds) before local fallback |
-| `GEMINI_API_KEY` | — | Required for Gemini worker |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Implementation lane model |
 | `FORGEMASTER_ORCHESTRATOR_MODEL` | inherits `MUNINN_MODEL` | Override the orchestrator role's model — set to an Opus alias on high-stakes sprints |
 | `FORGEMASTER_PLANNER_MODEL` | inherits `MUNINN_MODEL` | Override the planner role's model |
 | `FORGEMASTER_REVIEWER_MODEL` | inherits `MUNINN_MODEL` | Override the reviewer role's model |
-| `FORGEMASTER_IMPLEMENTER_MODEL` | inherits `GEMINI_MODEL` | Override the implementer role's model; `claude-*` IDs route to Anthropic automatically |
+| `FORGEMASTER_IMPLEMENTER_MODEL` | inherits `HUGINN_MODEL` (Haiku) | Override the implementer role's model |
+| `FORGEMASTER_<ROLE>_PROVIDER` | `anthropic` | `anthropic` or `openai_compatible`. `<ROLE>` is `ORCHESTRATOR`, `PLANNER`, `IMPLEMENTER` or `REVIEWER`. An unsupported value fails at startup |
+| `FORGEMASTER_<ROLE>_BASE_URL` | — | Endpoint root. Required for `openai_compatible` (e.g. `http://127.0.0.1:1234/v1`). For `anthropic` it targets an Anthropic-compatible server such as LM Studio |
+| `FORGEMASTER_<ROLE>_API_KEY_ENV` | `CLAUDE_API_KEY` for hosted Anthropic, none otherwise | Name of the env var that holds the key (not the key itself). Leave unset for local servers |
+| `NOVA_ADVERSARIAL_PROVIDER` / `_MODEL` / `_BASE_URL` / `_API_KEY_ENV` | `anthropic` / inherits `MUNINN_MODEL` | Agent for the NÓTT adversarial contradiction pass; same semantics as the role variables |
+| `NOVA_PROVIDER_TIMEOUT_S` | `300` | Request timeout for `openai_compatible` calls |
 | `NOVA_COMPACT_THRESHOLD` | `30` | Turns before auto-compaction |
 | `NOVA_COMPACT_KEEP` | `15` | Recent turns retained after compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |
@@ -677,7 +666,7 @@ prompts would be an unusable menu.
 | `NOVA_QUARANTINE_HOURS` | `48` | Hours a shard remains quarantined after failing the adversarial pass |
 | `NOVA_QUARANTINE_PENALTY` | `0.5` | Retrieval score multiplier applied to quarantined shards |
 | `NOVA_ADVERSARIAL_INTERVAL_DAYS` | `7` | Minimum days between adversarial passes on the same shard |
-| `NOVA_HITL_BROKER` | `interactive` | Fallback broker only — MCP tool calls ask through elicitation and ignore this. Covers forgemaster per-file writes, the Gemini worker and bare CLI. `interactive` (terminal prompt, denies without a terminal) or `policy` (always-deny — set in the Docker image) |
+| `NOVA_HITL_BROKER` | `interactive` | Fallback broker only — MCP tool calls ask through elicitation and ignore this. Covers forgemaster per-file writes and bare CLI. `interactive` (terminal prompt, denies without a terminal) or `policy` (always-deny — set in the Docker image) |
 | `NOVA_HITL_TIMEOUT_S` | `30` | Seconds before an unanswered *terminal* prompt auto-denies. Elicitation prompts are not bounded by this — the client owns that timeout |
 | `NOVA_DENIED_TOOLS` | — | Comma-separated tool names to block |
 | `NOVA_DENIED_PREFIXES` | — | Comma-separated prefixes to block |

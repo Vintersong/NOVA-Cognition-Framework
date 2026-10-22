@@ -6,6 +6,7 @@ No object construction here — this is pure env-var reading.
 """
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
@@ -110,16 +111,81 @@ NOVA_ACTIVATION_MIN_EDGES = int(os.environ.get("NOVA_ACTIVATION_MIN_EDGES", "10"
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 HUGINN_MODEL      = os.environ.get("HUGINN_MODEL",      "claude-haiku-4-5-20251001")
 MUNINN_MODEL      = os.environ.get("MUNINN_MODEL",      "claude-sonnet-4-6")
-GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-flash")
 
-# Forgemaster per-role model overrides. Default to MUNINN_MODEL for the
-# Anthropic roles and GEMINI_MODEL for the implementer so behavior is unchanged
-# when these are unset. Point a single role at a different model (e.g. an Opus
-# alias for the orchestrator on high-stakes sprints) without rebuilding.
-FORGEMASTER_ORCHESTRATOR_MODEL = os.environ.get("FORGEMASTER_ORCHESTRATOR_MODEL", MUNINN_MODEL)
-FORGEMASTER_PLANNER_MODEL      = os.environ.get("FORGEMASTER_PLANNER_MODEL",      MUNINN_MODEL)
-FORGEMASTER_REVIEWER_MODEL     = os.environ.get("FORGEMASTER_REVIEWER_MODEL",     MUNINN_MODEL)
-FORGEMASTER_IMPLEMENTER_MODEL  = os.environ.get("FORGEMASTER_IMPLEMENTER_MODEL",  GEMINI_MODEL)
+# ── Agent provider table ─────────────────────────────────────────────────────
+# Every LLM "agent" outside retrieval (the four Forgemaster roles, the NÓTT
+# adversarial pass) is described by an AgentSpec and resolved from env vars that
+# share a prefix:
+#
+#   <PREFIX>_PROVIDER     anthropic | openai_compatible   (default: anthropic)
+#   <PREFIX>_MODEL        model name                       (default: per role)
+#   <PREFIX>_BASE_URL     endpoint root; required for openai_compatible. For
+#                         anthropic it points the SDK at an Anthropic-compatible
+#                         server (e.g. LM Studio) instead of api.anthropic.com
+#   <PREFIX>_API_KEY_ENV  NAME of the env var that holds the key (not the key).
+#                         Default CLAUDE_API_KEY for hosted Anthropic; none for a
+#                         custom base_url, which is the usual local-server case
+#
+# Prefixes: FORGEMASTER_ORCHESTRATOR / _PLANNER / _IMPLEMENTER / _REVIEWER and
+# NOVA_ADVERSARIAL. A typo in the provider name or a missing base_url fails at
+# import, not mid-sprint.
+SUPPORTED_PROVIDERS = ("anthropic", "openai_compatible")
+
+
+@dataclass(frozen=True)
+class AgentSpec:
+    """Which model answers for a role, and how to reach it."""
+
+    provider: str = "anthropic"
+    model: str = ""
+    base_url: str = ""
+    api_key_env: str = ""
+
+
+def load_agent_spec(prefix: str, default_model: str) -> AgentSpec:
+    """Resolve an AgentSpec from ``<prefix>_*`` env vars. Raises ValueError on bad config."""
+    provider = os.environ.get(f"{prefix}_PROVIDER", "anthropic").strip().lower() or "anthropic"
+    model = os.environ.get(f"{prefix}_MODEL", "").strip() or default_model
+    base_url = os.environ.get(f"{prefix}_BASE_URL", "").strip()
+    api_key_env = os.environ.get(f"{prefix}_API_KEY_ENV", "").strip()
+
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(
+            f"{prefix}_PROVIDER={provider!r} is not supported; "
+            f"expected one of {', '.join(SUPPORTED_PROVIDERS)}"
+        )
+    if provider == "openai_compatible" and not base_url:
+        raise ValueError(f"{prefix}_BASE_URL is required when {prefix}_PROVIDER=openai_compatible")
+    if provider == "anthropic" and not base_url and not api_key_env:
+        api_key_env = "CLAUDE_API_KEY"
+    return AgentSpec(provider=provider, model=model, base_url=base_url, api_key_env=api_key_env)
+
+
+# Forgemaster roles. Orchestrator, planner and reviewer default to MUNINN_MODEL
+# (Sonnet); the implementer defaults to HUGINN_MODEL (Haiku). Point any role at a
+# different model or provider without rebuilding, e.g. an Opus alias for the
+# orchestrator on a high-stakes sprint, or a local server for the implementer:
+#   FORGEMASTER_IMPLEMENTER_PROVIDER=openai_compatible
+#   FORGEMASTER_IMPLEMENTER_BASE_URL=http://127.0.0.1:1234/v1
+#   FORGEMASTER_IMPLEMENTER_MODEL=my-local-model
+FORGEMASTER_ROLES = ("orchestrator", "planner", "implementer", "reviewer")
+FORGEMASTER_AGENTS: dict[str, AgentSpec] = {
+    "orchestrator": load_agent_spec("FORGEMASTER_ORCHESTRATOR", MUNINN_MODEL),
+    "planner":      load_agent_spec("FORGEMASTER_PLANNER",      MUNINN_MODEL),
+    "implementer":  load_agent_spec("FORGEMASTER_IMPLEMENTER",  HUGINN_MODEL),
+    "reviewer":     load_agent_spec("FORGEMASTER_REVIEWER",     MUNINN_MODEL),
+}
+
+# Model-name views of the table; FORGEMASTER_*_MODEL stay importable.
+FORGEMASTER_ORCHESTRATOR_MODEL = FORGEMASTER_AGENTS["orchestrator"].model
+FORGEMASTER_PLANNER_MODEL      = FORGEMASTER_AGENTS["planner"].model
+FORGEMASTER_REVIEWER_MODEL     = FORGEMASTER_AGENTS["reviewer"].model
+FORGEMASTER_IMPLEMENTER_MODEL  = FORGEMASTER_AGENTS["implementer"].model
+
+# NÓTT adversarial pass. Claude by default; point it at a non-Claude model via
+# NOVA_ADVERSARIAL_PROVIDER=openai_compatible to keep a second training
+# distribution reviewing the corpus.
+ADVERSARIAL_AGENT = load_agent_spec("NOVA_ADVERSARIAL", MUNINN_MODEL)
 
 # A sprint verdict is the reviewer model's PASS/FAIL line; no tests run. Off by
 # default so an unverified model judgment does not write corroborated_by edges
