@@ -86,9 +86,9 @@ def test_no_bare_mcp_tool_decorator_remains():
     )
 
 
-def test_registry_has_41_tools():
+def test_registry_has_39_tools():
     """Sanity floor — catches accidental deletions."""
-    assert len(tool_registry._REGISTRY) == 41
+    assert len(tool_registry._REGISTRY) == 39
 
 
 def test_registry_capabilities_are_known():

@@ -122,12 +122,12 @@ def test_openai_compatible_role_dispatches_to_its_endpoint(monkeypatch: pytest.M
 
 
 def test_unknown_provider_fails_at_import(reload_with_env) -> None:
-    with pytest.raises(ValueError, match="provider"):
+    with pytest.raises(ValueError, match="PROVIDER"):
         reload_with_env({"FORGEMASTER_REVIEWER_PROVIDER": "gemini"})
 
 
 def test_openai_compatible_requires_base_url(reload_with_env) -> None:
-    with pytest.raises(ValueError, match="base"):
+    with pytest.raises(ValueError, match="BASE_URL"):
         reload_with_env({"FORGEMASTER_PLANNER_PROVIDER": "openai_compatible", "FORGEMASTER_PLANNER_MODEL": "m"})
 
 

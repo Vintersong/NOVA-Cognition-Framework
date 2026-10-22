@@ -131,7 +131,7 @@ def test_adversarial_pass_persists_contradicts_edges(tmp_path: Path, monkeypatch
     import adversarial
 
     monkeypatch.setattr(graph, "GRAPH_FILE", str(tmp_path / "graph.json"))
-    monkeypatch.setattr(adversarial, "_call_gemini", lambda prompt: "stub")
+    monkeypatch.setattr(adversarial, "_call_model", lambda prompt: "stub")
     monkeypatch.setattr(
         adversarial, "_parse_contradictions",
         lambda response, ids: [{"source": "a", "target": "b", "reason": "r"}],
