@@ -113,8 +113,9 @@ and the correction generalises.
 - **Cause.** The reviewer skill is prompted in a way that biases toward
   PASS; or the reviewer and implementer share the same model and converge.
 - **Correction.** Force the reviewer onto a different model than the
-  implementer (Sonnet review of Gemini implementation is the intended
-  pairing). Tighten the reviewer's PASS criteria. The pass rate falling
+  implementer (Sonnet reviewing a Haiku implementation is the default
+  pairing; for a different training distribution, point the implementer at an
+  `openai_compatible` model). Tighten the reviewer's PASS criteria. The pass rate falling
   back to the 60–80% band is the healthy signal.
 
 ### Empirical routing locks onto a bad model

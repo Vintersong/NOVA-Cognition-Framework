@@ -75,18 +75,18 @@ orchestrator as a note, do not change routing.
 ### Mode A — Desperation
 > High urgency, low confidence. Highest risk of reward hacking.
 
-- **All `gemini-flash` tickets → escalate to `claude-sonnet`**
+- **All implementer-lane tickets → escalate to `claude-sonnet`**
 - **All `claude-haiku` research tickets → escalate to `claude-sonnet`**
 - Force-enable `forgemaster-verification` after every ticket, no exceptions
 - Add to every ticket spec: `"[EMOTIONAL STATE: DESPERATION — verify all outputs independently]"`
 - Evaluate HeavySkill activation predicate for any `architecture` ticket
 - Cap sprint wave size at 3 tickets (prevents cascade of unverified outputs)
-- Do not dispatch to Gemini at all this wave
+- Do not dispatch to the implementer lane at all this wave
 
 ### Mode B — Urgent
 > High urgency, adequate confidence. Standard routing with tighter guards.
 
-- Keep `gemini-flash` routing for implementation tickets with confidence ≥ 0.75
+- Keep implementer-lane routing for implementation tickets with confidence ≥ 0.75
 - Escalate implementation tickets with confidence < 0.75 to `claude-sonnet`
 - Force `forgemaster-verification` after any ticket touching shared state
 - Add note to ticket record: `urgency: high`
@@ -94,7 +94,7 @@ orchestrator as a note, do not change routing.
 ### Mode C — Reflective
 > Low arousal. Good conditions for architectural work and deliberation.
 
-- Prefer `claude-sonnet` for ambiguous or cross-cutting tickets (don't rush to gemini)
+- Prefer `claude-sonnet` for ambiguous or cross-cutting tickets (don't rush to the implementer lane)
 - Allow HeavySkill for architecture tickets with complexity ≥ MEDIUM (normally requires HIGH)
 - Extend acceptable deliberation depth — a second pass in HeavySkill Stage 2 is appropriate
 - No special guards needed; this is the ideal sprint state

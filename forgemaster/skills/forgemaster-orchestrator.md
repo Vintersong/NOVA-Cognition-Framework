@@ -63,14 +63,16 @@ Before decomposing tickets, consult `forgemaster/SKILL_LIBRARY.md` to identify w
 
 ## Ticket Types and Model Routing
 
+`implementer` is the configurable implementation lane (`FORGEMASTER_IMPLEMENTER_*` in config; Haiku by default).
+
 | Type | Characteristics | Route to |
 |---|---|---|
 | `architecture` | Ambiguous, cross-cutting, requires judgment | claude-sonnet |
 | `review` | Quality gate, spec compliance check | claude-sonnet |
 | `ambiguity` | Underspecified requirements, needs clarification | claude-sonnet |
-| `implementation` | Clear spec, 1–3 files, bounded output | gemini-flash |
-| `boilerplate` | Repetitive structure, templated output | gemini-flash |
-| `structured-output` | Schema-defined JSON/YAML/config generation | gemini-flash |
+| `implementation` | Clear spec, 1–3 files, bounded output | implementer |
+| `boilerplate` | Repetitive structure, templated output | implementer |
+| `structured-output` | Schema-defined JSON/YAML/config generation | implementer |
 | `research` | Broad knowledge, documentation synthesis | claude-haiku |
 | `documentation` | Writing, explanation, README, ADR | claude-haiku |
 
@@ -80,9 +82,9 @@ Each ticket must include:
 ```
 TICKET-[N]
   type: [architecture | implementation | review | research | boilerplate | documentation]
-  model: [claude-sonnet | gemini-flash | claude-haiku]
+  model: [claude-sonnet | implementer | claude-haiku]
   skill: [path to skill file, or 'none']  ← load this before executing
-  confidence: [0.0 - 1.0]  ← required for gemini-flash tickets
+  confidence: [0.0 - 1.0]  ← required for implementer tickets
   title: [one line summary]
   depends_on: [list of ticket IDs, or none]
   context_shards: [list of NOVA shard IDs to load]
@@ -95,17 +97,17 @@ TICKET-[N]
 
 ## Confidence Threshold Routing
 
-Before dispatching any ticket to gemini-flash, assign a confidence score (0.0 - 1.0) based on how clearly the ticket is specified:
+Before dispatching any ticket to the implementer, assign a confidence score (0.0 - 1.0) based on how clearly the ticket is specified:
 
 | Confidence | Meaning | Action |
 |---|---|---|
-| 0.85 - 1.0 | Fully specified, bounded, unambiguous | Dispatch to gemini-flash |
-| 0.65 - 0.84 | Mostly clear but minor ambiguity | Dispatch to gemini-flash with note |
+| 0.85 - 1.0 | Fully specified, bounded, unambiguous | Dispatch to implementer |
+| 0.65 - 0.84 | Mostly clear but minor ambiguity | Dispatch to implementer with note |
 | Below 0.65 | Significant ambiguity or cross-cutting concern | Escalate to claude-sonnet |
 
 For `architecture` tickets with confidence < 0.75, evaluate the HeavySkill activation predicate before dispatching. Load `forgemaster/skills/forgemaster-heavyskill.md` if it triggers.
 
-Pass the confidence score when calling `gemini_execute_ticket`. The Gemini worker will auto-escalate if the score is below its threshold (default 0.65).
+Record the confidence score on the ticket. Below 0.65 the ticket goes to claude-sonnet, as the table above says.
 
 If unsure of the confidence score, default to 0.5 and route to claude-sonnet instead.
 
@@ -117,9 +119,9 @@ If unsure of the confidence score, default to 0.5 and route to claude-sonnet ins
 
 ## Rules
 
-- Never route ambiguous tickets to gemini-flash — resolve ambiguity first with claude-sonnet
-- Never use gpt-4o or any OpenAI model — banned. Use claude-haiku for research and documentation
+- Never route ambiguous tickets to the implementer — resolve ambiguity first with claude-sonnet
+- Never use gpt-4o or any hosted OpenAI model — banned. Use claude-haiku for research and documentation. A local OpenAI-compatible server is allowed only when it is configured as a role's provider
 - Always consult SKILL_LIBRARY.md before dispatching tickets in extended domains
-- Every ticket must have a skill field, acceptance criteria, and confidence score (gemini-flash only)
+- Every ticket must have a skill field, acceptance criteria, and confidence score (implementer tickets only)
 - Maximum 5 tickets in a single sprint wave; break larger work into multiple waves
 - If a ticket cannot be fully specified, create an `ambiguity` ticket first

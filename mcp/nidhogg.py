@@ -535,7 +535,7 @@ def _as_file_result(result: dict) -> NidhoggFileResult:
 
 def register_nidhogg_tools(mcp, ctx: "ServerContext") -> None:
     """Register Nidhogg ingestion tools onto an existing MCPServer instance.
-    Called once in nova_server.py after server init — same pattern as Gemini.
+    Called once in nova_server.py after server init — same pattern as the other tool modules.
 
     Both ingest and scan irreversibly append provenance blocks to matched
     shards, so they route through the capability gate (``gate_check_model``) before

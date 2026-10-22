@@ -54,7 +54,7 @@ ToolPermissionContext.DEFAULT = ToolPermissionContext()
 # Module-level active context.
 #
 # nova_server.py installs its startup-built context via ``set_active`` so that
-# tool handlers registered from external modules (nidhogg, evolve, gemini)
+# tool handlers registered from external modules (nidhogg, evolve)
 # can check permissions without importing nova_server directly.
 # ─────────────────────────────────────────────────────────────────────────────
 

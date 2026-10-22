@@ -33,7 +33,7 @@ Principle Library (reasoning methodology)
 
 ---
 
-## Tools (41 total — verified)
+## Tools (39 total — verified)
 
 ### Core shard + graph + session (23)
 
@@ -79,10 +79,6 @@ Principle Library (reasoning methodology)
 
 `nova_facts_search`, `nova_facts_rebuild` — SQLite-backed `.shard` facts corpus.
 
-### Gemini (2)
-
-`gemini_execute_ticket`, `gemini_load_file`
-
 ### Calibrate (1)
 
 `nova_calibrate_routing` — analyse HUGINN consistency and sprint pass rates to suggest routing threshold adjustments.
@@ -106,7 +102,7 @@ Principle Library (reasoning methodology)
 Every tool takes a single `params` object. Each is published with a human-readable
 `title` and MCP annotations derived from its capability tag:
 
-- `readOnlyHint` — safe reads. 22 of the 41 tools.
+- `readOnlyHint` — safe reads. 21 of the 39 tools.
 - `destructiveHint` — cannot be undone. Exactly the seven tools that ask for
   approval, below.
 - `openWorldHint` — talks to a third-party API.

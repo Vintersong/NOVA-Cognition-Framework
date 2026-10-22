@@ -32,16 +32,13 @@ torch = [
 anthropic = [
     "anthropic>=0.30.0",
 ]
-gemini = [
-    "google-genai>=0.3.0",
-]
 dev = [
     "pytest>=7.0",
     "ruff>=0.4",
     "mypy>=1.8",
 ]
 all = [
-    "nova-cognition-framework[ml,torch,anthropic,gemini,dev]",
+    "nova-cognition-framework[ml,torch,anthropic,dev]",
 ]
 
 [tool.setuptools]

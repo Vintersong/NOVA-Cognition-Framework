@@ -13,7 +13,6 @@ constructs the ``MCPServer`` instance, and calls each tool category's
   * ``facts``              — 2 SQLite-backed fact-corpus handlers
   * ``nidhogg``            — 3 repo-scanner handlers
   * ``evolve``             — 1 self-improvement loop
-  * ``gemini_mcp``         — 2 Gemini Flash worker handlers
   * ``external_retrieval`` — 1 deliberation-pipeline handler
 
 Singletons (ravens, NÓTT, hook bus, permission context, capability gate,
@@ -27,7 +26,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys as _sys
 from pathlib import Path
 
 # Load .env from repo root before importing config (config reads env at import time).
@@ -54,7 +52,6 @@ from wiki import all_wiki_pages, load_wiki_page, load_wiki_schema
 from tool_registry import all_names as _registry_all_names
 
 # Tool-category registration entry points.
-_sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Gemini"))
 from calibrate import register_calibrate_tools
 from code_index import register_code_index_tools
 from evolve import register_evolve_tools
@@ -62,7 +59,6 @@ from huginn_tools import register_huginn_tools
 from external_retrieval import register_external_retrieval_tools
 from facts import register_facts_tools
 from forgemaster_tools import register_forgemaster_tools
-from gemini_mcp import register_gemini_tools
 from graph_tools import register_graph_tools
 from nidhogg import register_nidhogg_tools
 from prompts import register_prompts
@@ -137,7 +133,6 @@ mcp = MCPServer(
 )
 
 # External (non-NOVA-core) tool modules.
-register_gemini_tools(mcp, gate=ctx.capability_gate, audit_log=ctx.skill_audit_log)
 register_nidhogg_tools(mcp, ctx)
 register_evolve_tools(mcp, ctx)
 register_huginn_tools(mcp, ctx)

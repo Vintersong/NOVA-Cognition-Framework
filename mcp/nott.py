@@ -720,8 +720,8 @@ class Nott:
 
     def _adversarial_pass_sync(self, index: dict, dry_run: bool) -> dict:
         """
-        Send top-N highest-confidence shards to Gemini Flash for contradiction
-        hunting. Runs at most once per ADVERSARIAL_MIN_INTERVAL_DAYS.
+        Send top-N highest-confidence shards to the adversarial agent for
+        contradiction hunting. Runs at most once per ADVERSARIAL_MIN_INTERVAL_DAYS.
         Findings become `contradicts` edges with adversarial-pass provenance.
         """
         from adversarial import run_adversarial_pass

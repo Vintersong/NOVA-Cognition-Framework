@@ -8,9 +8,9 @@ ijson>=3.3.0
 pyarrow>=14.0.0               # arrow_cache.py columnar projection (MUNINN + NÓTT fast path)
 numpy>=1.23.0                 # vectorised cosine / decay math (also pulled in by sentence-transformers)
 
-# Model clients — required by ravens.py, Gemini/gemini_mcp.py, utilities/autoresearch.py
-anthropic>=0.30.0       # HUGINN + MUNINN retrieval lanes
-google-genai>=0.3.0     # Gemini Flash implementation lane + autoresearch
+# Model clients — required by ravens.py, providers.py, utilities/autoresearch.py
+# (the openai_compatible provider uses the standard library, no extra package)
+anthropic>=0.30.0       # HUGINN + MUNINN retrieval lanes, Forgemaster roles, autoresearch
 
 # Ternary epistemic memory PoC — mcp/ternary_net.py + utilities/{export,train}_ternary_net.py
 # Optional: tests skip gracefully when torch is absent.

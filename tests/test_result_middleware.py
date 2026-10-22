@@ -4,7 +4,7 @@ isError marking for failed tool calls.
 Every NOVA handler returns a JSON string, so the SDK reported every call as a
 success and `isError` was only ever true for an unintended crash — the inverse
 of what the spec intends. Server middleware now flips it for payloads that
-report a failure, centrally, so all 41 tools behave consistently.
+report a failure, centrally, so all 39 tools behave consistently.
 """
 
 from __future__ import annotations

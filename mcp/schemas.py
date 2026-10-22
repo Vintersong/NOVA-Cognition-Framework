@@ -1,9 +1,9 @@
 """
-schemas.py — Pydantic input models for NOVA's 41 MCP tools.
+schemas.py — Pydantic input models for NOVA's 39 MCP tools.
 
 Extracted from nova_server.py so tool handlers remain a thin adapter layer.
 Holds 31 of the models; the rest live beside their own tool modules
-(facts.py, nidhogg.py, code_index.py, evolve.py, Gemini/gemini_mcp.py).
+(facts.py, nidhogg.py, code_index.py, evolve.py).
 """
 
 from typing import Literal, Optional

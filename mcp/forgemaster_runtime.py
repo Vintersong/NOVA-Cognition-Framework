@@ -8,9 +8,14 @@ Uses NOVA as the shared memory backplane (via SessionStore) and respects
 tool access boundaries via ToolPermissionContext.
 
 Real model dispatch:
-  - orchestrator / planner / reviewer → Anthropic (Sonnet by default)
-  - implementer → Google GenAI (Gemini Flash by default)
-  - provider is picked from the model name prefix (claude-* / gemini-*)
+  - orchestrator / planner / reviewer → Sonnet by default
+  - implementer → Haiku by default
+  - each role resolves to an AgentSpec (provider, model, base_url, api_key_env)
+    from config.FORGEMASTER_AGENTS, so any role can be pointed at another model
+    or at a local OpenAI-compatible server through env vars alone
+  - a model name with no matching role (an empirical-routing override) is
+    dispatched as Anthropic only when it starts with ``claude-``; any other
+    unknown name is not dispatchable and is never routed to
 
 Per-call events are appended to the path in FORGEMASTER_EVENT_LOG
 (environment variable) when set — one JSON object per line.
@@ -32,8 +37,9 @@ from typing import Optional
 from config import (
     HUGINN_MODEL,
     MUNINN_MODEL,
-    GEMINI_MODEL,
     SHARD_DIR,
+    AgentSpec,
+    FORGEMASTER_AGENTS,
     FORGEMASTER_ORCHESTRATOR_MODEL,
     FORGEMASTER_PLANNER_MODEL,
     FORGEMASTER_REVIEWER_MODEL,
@@ -41,6 +47,8 @@ from config import (
     FORGEMASTER_CORROBORATE_ON_REVIEW,
 )
 from atomic_io import atomic_write_text
+from providers import call_anthropic as _call_anthropic
+from providers import call_openai_compatible as _call_openai_compatible
 from permissions import ToolPermissionContext
 from session_store import SessionStore, NovaSession
 from graph import add_corroborated_by, register_external_entity
@@ -60,10 +68,10 @@ _ROUTING_TABLE: dict[str, str] = {
     "architecture": MUNINN_MODEL,
     "review": MUNINN_MODEL,
     "ambiguity": MUNINN_MODEL,
-    # gemini-flash lane
-    "implementation": GEMINI_MODEL,
-    "boilerplate": GEMINI_MODEL,
-    "structured-output": GEMINI_MODEL,
+    # implementer lane — whatever FORGEMASTER_IMPLEMENTER_* resolves to (Haiku by default)
+    "implementation": FORGEMASTER_IMPLEMENTER_MODEL,
+    "boilerplate": FORGEMASTER_IMPLEMENTER_MODEL,
+    "structured-output": FORGEMASTER_IMPLEMENTER_MODEL,
     # claude-haiku lane
     "research": HUGINN_MODEL,
     "documentation": HUGINN_MODEL,
@@ -108,8 +116,9 @@ _EMPIRICAL_MIN_SAMPLES: int = 10  # minimum samples before empirical route overr
 _EMPIRICAL_CACHE_TTL_S: float = float(os.environ.get("NOVA_EMPIRICAL_CACHE_TTL_S", "300"))
 
 # Role-to-model mapping for the 4-turn sprint pipeline. Each role resolves
-# through its FORGEMASTER_*_MODEL env var (see config.py), which falls back
-# to MUNINN_MODEL / GEMINI_MODEL when unset.
+# through its FORGEMASTER_<ROLE>_* env vars (see config.py), which fall back
+# to MUNINN_MODEL (orchestrator, planner, reviewer) / HUGINN_MODEL (implementer)
+# when unset. Provider and endpoint details live in FORGEMASTER_AGENTS.
 _ROLE_TO_MODEL: dict[str, str] = {
     "orchestrator": FORGEMASTER_ORCHESTRATOR_MODEL,
     "planner":      FORGEMASTER_PLANNER_MODEL,
@@ -223,6 +232,35 @@ def _load_empirical_stats() -> dict[tuple[str, str], dict[str, int]]:
     return dict(stats)
 
 
+def _spec_for_model(model: str, role: str = "") -> Optional[AgentSpec]:
+    """
+    Resolve the AgentSpec that can serve *model*, or None when nothing can.
+
+    Order: the role's own spec if it names this model, then any configured role
+    that does (so a routed model keeps its base_url), then a bare ``claude-*``
+    name as hosted Anthropic. Anything else is not dispatchable.
+    """
+    own = FORGEMASTER_AGENTS.get(role)
+    if own is not None and own.model == model:
+        return own
+    for spec in FORGEMASTER_AGENTS.values():
+        if spec.model == model:
+            return spec
+    if model.startswith("claude-"):
+        return AgentSpec(provider="anthropic", model=model, api_key_env="CLAUDE_API_KEY")
+    return None
+
+
+def _provider_for(model: str) -> str:
+    spec = _spec_for_model(model)
+    return spec.provider if spec else "unknown"
+
+
+def _is_dispatchable(model: str) -> bool:
+    """True when the current config can actually send a request to *model*."""
+    return _spec_for_model(model) is not None
+
+
 def _compute_empirical_route(
     task_type: str,
     stats: dict[tuple[str, str], dict[str, int]],
@@ -232,11 +270,15 @@ def _compute_empirical_route(
 
     Only considers models with >= _EMPIRICAL_MIN_SAMPLES outcomes. Returns
     ("", 0.0) if no model has sufficient history for this task_type.
+
+    Models the current config cannot dispatch to are skipped: run logs outlive
+    config changes, and routing a sprint to a model that was removed (or whose
+    provider is no longer configured) would abort it at dispatch.
     """
     candidates = {
         model: counts
         for (tt, model), counts in stats.items()
-        if tt == task_type
+        if tt == task_type and _is_dispatchable(model)
     }
     viable = {
         model: counts
@@ -266,10 +308,12 @@ def _exploration_candidate(
     Return the least-sampled implementer candidate other than *best_model*.
 
     Candidates are every model in the static routing lanes plus any model with
-    history for *task_type*. Returns "" when there is no alternative.
+    history for *task_type*, restricted to models the current config can
+    dispatch to. Returns "" when there is no alternative.
     """
     candidates = set(_ROUTING_TABLE.values()) | {_ROLE_TO_MODEL["implementer"]}
     candidates |= {model for (tt, model) in stats if tt == task_type}
+    candidates = {m for m in candidates if _is_dispatchable(m)}
     candidates.discard(best_model)
     if not candidates:
         return ""
@@ -281,101 +325,6 @@ def _exploration_candidate(
     return min(candidates, key=_samples)
 
 
-def _provider_for(model: str) -> str:
-    if model.startswith("claude-"):
-        return "anthropic"
-    if model.startswith("gemini-"):
-        return "google"
-    return "unknown"
-
-
-def _call_anthropic(
-    model: str,
-    prompt: str,
-    max_tokens: int = 4096,
-    cached_system: str = "",
-) -> tuple[str, int, int, int]:
-    """
-    Call an Anthropic model with a single user message.
-
-    Returns (text, input_tokens, output_tokens, latency_ms).
-    Reads CLAUDE_API_KEY at call time so .env changes are picked up without restart.
-
-    If cached_system is provided it is sent as the system prompt with
-    cache_control so subsequent calls with the same string get cache reads
-    instead of writes (pair with nova_cache_prewarm).
-    """
-    import anthropic
-    from dotenv import load_dotenv
-
-    load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
-    key = os.environ.get("CLAUDE_API_KEY", "")
-    if not key:
-        raise RuntimeError("CLAUDE_API_KEY is not set; cannot dispatch to Anthropic.")
-
-    t0 = time.time()
-    client = anthropic.Anthropic(api_key=key)
-
-    kwargs: dict = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    if cached_system:
-        kwargs["system"] = [{
-            "type": "text",
-            "text": cached_system,
-            "cache_control": {"type": "ephemeral"},
-        }]
-
-    response = client.messages.create(**kwargs)
-    text = "".join(
-        block.text for block in (response.content or [])
-        if getattr(block, "type", "") == "text"
-    )
-    if getattr(response, "stop_reason", None) == "max_tokens":
-        raise RuntimeError(f"{model} output truncated at max_tokens={max_tokens}")
-    in_tok = getattr(response.usage, "input_tokens", 0)
-    out_tok = getattr(response.usage, "output_tokens", 0)
-    latency_ms = int((time.time() - t0) * 1000)
-    return text, in_tok, out_tok, latency_ms
-
-
-def _call_gemini(prompt: str, model: str = GEMINI_MODEL, max_tokens: int = 4096) -> tuple[str, int, int, int]:
-    """
-    Call Gemini with a single prompt.
-
-    Returns (text, input_tokens, output_tokens, latency_ms).
-    Reads GEMINI_API_KEY at call time so .env changes are picked up without restart.
-    """
-    from google import genai
-    from google.genai import types
-    from dotenv import load_dotenv
-
-    load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY is not set; cannot dispatch to Gemini.")
-
-    t0 = time.time()
-    client = genai.Client(api_key=key)
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=max_tokens),
-    )
-    candidates = getattr(response, "candidates", None) or []
-    finish = getattr(candidates[0], "finish_reason", None) if candidates else None
-    if finish is not None and getattr(finish, "name", str(finish)) == "MAX_TOKENS":
-        raise RuntimeError(f"{model} output truncated at max_tokens={max_tokens}")
-    text = response.text or ""
-    usage = getattr(response, "usage_metadata", None)
-    in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
-    out_tok = getattr(usage, "candidates_token_count", 0) if usage else 0
-    latency_ms = int((time.time() - t0) * 1000)
-    return text, in_tok, out_tok, latency_ms
-
-
 def _dispatch(
     role: str,
     prompt: str,
@@ -383,13 +332,14 @@ def _dispatch(
     model_override: str = "",
 ) -> tuple[str, str, int, int, int]:
     """
-    Dispatch a prompt to the model assigned to *role*.
+    Dispatch a prompt to the agent assigned to *role*.
 
     Returns (text, model_used, input_tokens, output_tokens, latency_ms).
-    Raises on unknown role or missing provider config.
+    Raises on a model with no resolvable provider.
 
-    cached_system is forwarded to _call_anthropic for Anthropic lanes so
-    repeated sprint turns benefit from prompt-cache reads.
+    cached_system is forwarded to Anthropic lanes so repeated sprint turns
+    benefit from prompt-cache reads; OpenAI-compatible lanes get it as a plain
+    system message.
 
     model_override, when non-empty, replaces the role's default model. Used by
     run_sprint() to wire route_ticket() decisions into the implementer dispatch
@@ -397,15 +347,21 @@ def _dispatch(
     """
     model = model_override if model_override else _ROLE_TO_MODEL.get(role, MUNINN_MODEL)
     max_tokens = _ROLE_MAX_TOKENS.get(role, _DEFAULT_MAX_TOKENS)
-    provider = _provider_for(model)
-    if provider == "anthropic":
-        text, in_tok, out_tok, lat = _call_anthropic(
-            model, prompt, max_tokens=max_tokens, cached_system=cached_system
-        )
-    elif provider == "google":
-        text, in_tok, out_tok, lat = _call_gemini(prompt, model=model, max_tokens=max_tokens)
-    else:
+    spec = _spec_for_model(model, role)
+    if spec is None:
         raise ValueError(f"Unknown model family for role={role!r}: {model!r}")
+    if spec.provider == "anthropic":
+        text, in_tok, out_tok, lat = _call_anthropic(
+            model, prompt, max_tokens=max_tokens, cached_system=cached_system,
+            base_url=spec.base_url, api_key_env=spec.api_key_env,
+        )
+    elif spec.provider == "openai_compatible":
+        text, in_tok, out_tok, lat = _call_openai_compatible(
+            model, prompt, spec.base_url, max_tokens=max_tokens,
+            cached_system=cached_system, api_key_env=spec.api_key_env,
+        )
+    else:  # pragma: no cover - config.load_agent_spec rejects other providers
+        raise ValueError(f"Unsupported provider {spec.provider!r} for role={role!r}")
     return text, model, in_tok, out_tok, lat
 
 
@@ -804,7 +760,7 @@ class ForgemasterRuntime:
         1. bootstrap — create session, load shards
         2. orchestrator turn — decompose design doc (Sonnet)
         3. planner turn — produce a concrete spec for the first ticket (Sonnet)
-        4. implementer turn — generate code for the target file (Gemini)
+        4. implementer turn — generate code for the target file (implementer role)
                               code is written to disk if the design doc names a target file
         5. reviewer turn — review the implementation against the design doc (Sonnet)
         6. flush session to disk

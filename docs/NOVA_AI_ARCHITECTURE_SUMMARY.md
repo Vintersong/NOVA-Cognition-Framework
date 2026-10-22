@@ -236,7 +236,6 @@ Tool categories include:
 - **Facts** — search and rebuild facts corpus.
 - **Nidhogg** — ingest/scan/status for provenance-aware file ingestion.
 - **Evolve** — self-evolution/health planning loop.
-- **Gemini** — execute implementation tickets and load repo files for Gemini context.
 - **Retrieval** — external retrieval deliberation.
 - **Calibrate** — analyze routing and pass-rate history.
 
@@ -316,7 +315,7 @@ Forgemaster should be viewed as a consumer and producer of NOVA memory, not as a
 `mcp/config.py` centralizes environment variables and path constants. Typical configuration includes:
 
 - shard directory paths
-- API keys for Anthropic/Gemini
+- API keys for Anthropic (and for any other provider configured per role)
 - model names
 - Forgemaster role model overrides
 - NÓTT thresholds

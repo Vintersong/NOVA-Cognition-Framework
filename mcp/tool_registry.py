@@ -34,7 +34,7 @@ _KNOWN_CAPABILITIES: frozenset[str] = frozenset({
 # Valid categories. Each maps 1:1 to a module that registers tools.
 _KNOWN_CATEGORIES: frozenset[str] = frozenset({
     "shard", "graph", "session", "forgemaster",
-    "wiki", "facts", "nidhogg", "evolve", "gemini", "retrieval",
+    "wiki", "facts", "nidhogg", "evolve", "retrieval",
     "calibrate", "code_index",
 })
 
@@ -134,13 +134,6 @@ _REGISTRY: dict[str, ToolSpec] = dict([
     _spec("nidhogg_status",         "fs.read",        "nidhogg", title="Nidhogg Status"),
     # ── Evolve (1) ───────────────────────────────────────────────────────
     _spec("nova_evolve",            "memory.write",   "evolve", irreversible=True, title="Run Self-Improvement Loop"),
-    # ── Gemini (2) ───────────────────────────────────────────────────────
-    # The Gemini tools spawn no process — they call the Gemini API over the
-    # network. execute_ticket always egresses the prompt/context to Google and
-    # may write generated output; the egress can't be unsent → net.egress +
-    # irreversible. load_file only reads a local repo file → fs.read.
-    _spec("gemini_execute_ticket",  "net.egress",     "gemini", irreversible=True, title="Execute Ticket via Gemini"),
-    _spec("gemini_load_file",       "fs.read",        "gemini", title="Load File as Context"),
     # ── External retrieval deliberation (1) ──────────────────────────────
     # net.egress: fires Anthropic API calls (Haiku + Sonnet/Opus).
     # Reversible: shard writes can be undone via nova_shard_archive/forget.
@@ -166,7 +159,7 @@ _REGISTRY: dict[str, ToolSpec] = dict([
 # The spec's tool annotations (readOnlyHint / destructiveHint / idempotentHint /
 # openWorldHint) are the hints a client uses to decide what it may auto-approve.
 # NOVA already states those same facts as capability tags, so the annotations are
-# derived from the registry rather than hand-written per tool: 41 tools stay
+# derived from the registry rather than hand-written per tool: 39 tools stay
 # consistent for free, and re-tagging a capability can't leave a stale hint on
 # the wire.
 #

@@ -1,6 +1,6 @@
 # Forgemaster
 
-Multi-agent orchestration layer for the NOVA Cognition Framework. Forgemaster decomposes design docs into tickets, routes each to the optimal LLM lane (Sonnet / Gemini Flash / Haiku), executes them in parallel, and writes decisions back to NOVA as persistent memory.
+Multi-agent orchestration layer for the NOVA Cognition Framework. Forgemaster decomposes design docs into tickets, routes each to the optimal LLM lane (Sonnet / a configurable implementer / Haiku), executes them in parallel, and writes decisions back to NOVA as persistent memory.
 
 Forgemaster does not think for you — it scaffolds how specialized models collaborate on a sprint, with NOVA as the shared context across sessions.
 
@@ -36,7 +36,7 @@ Every 3 sprints: `nova_shard_consolidate`.
 | Task | Model |
 |---|---|
 | Architecture, ambiguous requirements, code review | `claude-sonnet` |
-| Clear spec, 1–3 files, boilerplate, structured output | `gemini-flash` |
+| Clear spec, 1–3 files, boilerplate, structured output | `implementer` (Haiku by default, set in config) |
 | Research, documentation, fast-read tasks | `claude-haiku` |
 | UI / screen design | `stitch` |
 

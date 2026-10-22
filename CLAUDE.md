@@ -72,6 +72,7 @@ NOVA-Whitepaper/
     # Session & sprint
     session_store.py         ← session persistence
     forgemaster_runtime.py   ← sprint orchestration
+    providers.py             ← LLM adapters: anthropic + openai_compatible, selected by an AgentSpec from config.py
     usage.py                 ← JSONL operation logging
     timeutils.py             ← shared time/date helpers
 
@@ -107,8 +108,7 @@ NOVA-Whitepaper/
     bench_hotpool.py         ← micro-benchmark: Python dict vs C hot pool
 
     Gemini/
-      gemini_mcp.py          ← Gemini Flash tools registered into nova_server
-      output_event_bus.lua   ← Lua event bus for Gemini output routing
+      output_event_bus.lua   ← Lua event bus (output routing; no Python left in this dir)
 
   tests/                     ← main pytest suite (run from repo root)
   utilities/
@@ -156,7 +156,7 @@ NOVA-Whitepaper/
 
 ---
 
-## NOVA MCP Tools (41 total)
+## NOVA MCP Tools (39 total)
 
 Generated from the registry and the handlers' own docstrings — do not edit by
 hand. Regenerate with:
@@ -167,7 +167,7 @@ python utilities/dump_tool_manifest.py --write-table CLAUDE.md
 
 Handlers live in `shard_tools.py` (16), `graph_tools.py` (2), `session_tools.py`
 (3), `forgemaster_tools.py` (2), `wiki_tools.py` (6), `facts.py` (2),
-`nidhogg.py` (3), `evolve.py` (1), `Gemini/gemini_mcp.py` (2),
+`nidhogg.py` (3), `evolve.py` (1),
 `external_retrieval.py` (1), `calibrate.py` (1), `huginn_tools.py` (1),
 `code_index.py` (1). `nova_server.py` registers none of them; it is bootstrap
 and wiring only.
@@ -175,8 +175,6 @@ and wiring only.
 <!-- BEGIN GENERATED TOOL TABLE -->
 | Tool | Title | Purpose |
 |---|---|---|
-| `gemini_execute_ticket` | Execute Ticket via Gemini | Send a structured ticket to Gemini Flash for code generation. |
-| `gemini_load_file` | Load File as Context | Load a file from disk to use as codebase context for ticket execution. _(read-only)_ |
 | `nidhogg_ingest` | Ingest Document (Nidhogg) | Ingest a single document into NOVA's shard graph. _(**asks for approval**)_ |
 | `nidhogg_scan` | Scan Intake Directory | Scan the intake/ directory and ingest all pending files. _(**asks for approval**)_ |
 | `nidhogg_status` | Nidhogg Status | Show the Nidhogg ingestion manifest — what files have been ingested, which shards they matched, and which were flagged as merge candidates. _(read-only)_ |
@@ -338,8 +336,8 @@ Next session starts with `nova_shard_interact(message="[project name] current st
 | `HUGINN_MODEL` | `claude-haiku-4-5-20251001` | Fast retrieval pass |
 | `MUNINN_MODEL` | `claude-sonnet-4-6` | Deep rerank pass |
 | `HUGINN_CONFIDENCE_THRESHOLD` | `0.7` | Score >= this skips MUNINN |
-| `GEMINI_API_KEY` | — | Required for Gemini worker |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Implementation lane model |
+| `FORGEMASTER_<ROLE>_PROVIDER` / `_MODEL` / `_BASE_URL` / `_API_KEY_ENV` | `anthropic` / role default | Per-role agent (ORCHESTRATOR, PLANNER, IMPLEMENTER, REVIEWER). Implementer defaults to `HUGINN_MODEL`, the others to `MUNINN_MODEL`. Provider is `anthropic` or `openai_compatible` |
+| `NOVA_ADVERSARIAL_PROVIDER` / `_MODEL` / `_BASE_URL` / `_API_KEY_ENV` | `anthropic` / `MUNINN_MODEL` | Agent for the NÓTT adversarial pass |
 | `NOVA_COMPACT_THRESHOLD` | `30` | Turns before auto-compaction |
 | `NOVA_DECAY_RATE` | `0.05` | Confidence decay per 7-day period |
 | `NOVA_MERGE_THRESHOLD` | `0.85` | Cosine similarity floor for merge suggestions |
@@ -358,5 +356,5 @@ Next session starts with `nova_shard_interact(message="[project name] current st
 - Do not start implementation without loading NOVA context first
 - Do not skip the handoff when one of the four handoff conditions applies.
 - Do not commit the shards directory — personal data
-- Do not use OpenAI models — Haiku for research/docs, Gemini Flash for implementation, Sonnet for architecture/review
+- Do not use hosted OpenAI models — Haiku for research/docs and implementation, Sonnet for architecture/review. Roles are set in config (`FORGEMASTER_<ROLE>_*`); a local OpenAI-compatible server is allowed only when configured there
 - If `CLAUDE_API_KEY` is absent, HUGINN and MUNINN fall back to local embeddings silently

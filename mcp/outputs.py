@@ -3,7 +3,7 @@ outputs.py — Pydantic output models for NOVA's MCP tools.
 
 Every handler used to be annotated ``-> str`` and return ``json.dumps(...)``.
 The SDK generates an ``outputSchema`` from the return annotation, so that
-published a degenerate ``{"result": string}`` for all 41 tools and put the real
+published a degenerate ``{"result": string}`` for all 39 tools and put the real
 payload into ``structuredContent`` as an *escaped JSON string*. A client got no
 usable schema and had to re-parse text it had already been handed.
 
@@ -16,7 +16,7 @@ emits the text block as well, so ``result_middleware`` keeps working unchanged.
 A handler can also refuse, so its annotation is
 ``ReturnType = Success | RejectPayload``. That publishes a schema describing
 both shapes, discriminated by ``status``, and keeps the refusal envelope as one
-shared model (``reject.RejectPayload``) rather than 41 copies of the same
+shared model (``reject.RejectPayload``) rather than 39 copies of the same
 fields. The cost is that the SDK nests ``structuredContent`` under a ``result``
 key for union returns; schema fidelity is worth that.
 
@@ -994,7 +994,7 @@ CalibrateRoutingResult = Union[CalibrationReport, RejectPayload]
 # ── Passthrough handlers ─────────────────────────────────────────────────────
 #
 # These tools own no shape of their own — the payload belongs to nott, evolve,
-# forgemaster_runtime, wiki_ingest or the Gemini client. The models below
+# forgemaster_runtime or wiki_ingest. The models below
 # describe the producer, so a change there shows up as a schema change here
 # rather than passing silently through an untyped handler.
 
@@ -1216,24 +1216,6 @@ class ExternalDeliberation(NovaOutput):
     rejection_reason: str = ""
 
 
-class GeminiTicketResult(NovaOutput):
-    """``gemini_execute_ticket``."""
-
-    status: Literal["success"] = "success"
-    code: str = Field(description="The generated output, markdown fences stripped.")
-    saved_to: Optional[str] = Field(
-        default=None, description="Set only when output_file was given.",
-    )
-
-
-class GeminiFileLoaded(NovaOutput):
-    """``gemini_load_file``."""
-
-    status: Literal["success"] = "success"
-    filepath: str
-    content: str
-
-
 ForgemasterSprintResult = Union[SprintSummary, RejectPayload, ErrorPayload]
 CachePrewarmResult = Union[CachePrewarmed, RejectPayload, ErrorPayload]
 NidhoggIngestResult = NidhoggFileResult
@@ -1241,5 +1223,3 @@ NidhoggScanResult = Union[NidhoggScanSummary, NidhoggNothingToIngest, RejectPayl
 NidhoggStatusResult = Union[NidhoggStatusReport, NidhoggEmpty, RejectPayload]
 EvolveResult = Union[EvolveCycle, EvolveNotRun, RejectPayload]
 ExternalRetrievalResult = Union[ExternalDeliberation, RejectPayload]
-GeminiTicketOutcome = Union[GeminiTicketResult, RejectPayload, ErrorPayload]
-GeminiLoadFileOutcome = Union[GeminiFileLoaded, RejectPayload, ErrorPayload]

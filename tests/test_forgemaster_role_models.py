@@ -20,11 +20,11 @@ import os
 import pytest
 
 
-_VARS = (
-    "FORGEMASTER_ORCHESTRATOR_MODEL",
-    "FORGEMASTER_PLANNER_MODEL",
-    "FORGEMASTER_REVIEWER_MODEL",
-    "FORGEMASTER_IMPLEMENTER_MODEL",
+_ROLES = ("ORCHESTRATOR", "PLANNER", "REVIEWER", "IMPLEMENTER")
+_VARS = tuple(
+    f"FORGEMASTER_{role}_{suffix}"
+    for role in _ROLES
+    for suffix in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY_ENV")
 )
 
 
@@ -55,14 +55,14 @@ def reload_with_env():
     importlib.reload(runtime)
 
 
-def test_role_models_default_to_muninn_and_gemini(reload_with_env) -> None:
-    """With no FORGEMASTER_*_MODEL env vars set, roles inherit MUNINN/GEMINI."""
+def test_role_models_default_to_muninn_and_huginn(reload_with_env) -> None:
+    """With no FORGEMASTER_*_MODEL env vars set, roles inherit MUNINN (Haiku for the implementer)."""
     runtime = reload_with_env()
 
     assert runtime._ROLE_TO_MODEL["orchestrator"] == runtime.MUNINN_MODEL
     assert runtime._ROLE_TO_MODEL["planner"] == runtime.MUNINN_MODEL
     assert runtime._ROLE_TO_MODEL["reviewer"] == runtime.MUNINN_MODEL
-    assert runtime._ROLE_TO_MODEL["implementer"] == runtime.GEMINI_MODEL
+    assert runtime._ROLE_TO_MODEL["implementer"] == runtime.HUGINN_MODEL
 
 
 def test_orchestrator_model_override_propagates(reload_with_env) -> None:
@@ -72,7 +72,7 @@ def test_orchestrator_model_override_propagates(reload_with_env) -> None:
     assert runtime._ROLE_TO_MODEL["orchestrator"] == "claude-opus-test-alias"
     assert runtime._ROLE_TO_MODEL["planner"] == runtime.MUNINN_MODEL
     assert runtime._ROLE_TO_MODEL["reviewer"] == runtime.MUNINN_MODEL
-    assert runtime._ROLE_TO_MODEL["implementer"] == runtime.GEMINI_MODEL
+    assert runtime._ROLE_TO_MODEL["implementer"] == runtime.HUGINN_MODEL
 
 
 def test_all_four_overrides_propagate(reload_with_env) -> None:
@@ -90,25 +90,48 @@ def test_all_four_overrides_propagate(reload_with_env) -> None:
     assert runtime._ROLE_TO_MODEL["implementer"] == "model-impl"
 
 
-def test_gemini_override_threads_through_to_call_gemini(monkeypatch: pytest.MonkeyPatch, reload_with_env) -> None:
-    """A non-default Gemini model on the implementer role reaches _call_gemini.
+def test_implementer_override_reaches_the_anthropic_adapter(monkeypatch: pytest.MonkeyPatch, reload_with_env) -> None:
+    """A model override on the implementer role is the model actually called."""
+    runtime = reload_with_env({"FORGEMASTER_IMPLEMENTER_MODEL": "claude-test-override"})
+    captured: dict = {}
 
-    Reviewer (codex P2 / gemini-code-assist high) caught that _call_gemini was
-    hardcoded to GEMINI_MODEL — overrides like FORGEMASTER_IMPLEMENTER_MODEL=
-    gemini-2.5-pro would dispatch as Google but actually call the default
-    Flash model. This test guards against regression by capturing the model
-    arg passed into _call_gemini.
-    """
-    runtime = reload_with_env({"FORGEMASTER_IMPLEMENTER_MODEL": "gemini-test-override"})
-
-    captured: dict[str, str] = {}
-
-    def _fake_call_gemini(prompt: str, model: str = runtime.GEMINI_MODEL, max_tokens: int = 4096):
+    def _fake(model, prompt, max_tokens=4096, cached_system="", base_url="", api_key_env=""):
         captured["model"] = model
         return ("ok", 0, 0, 0)
 
-    monkeypatch.setattr(runtime, "_call_gemini", _fake_call_gemini)
-
+    monkeypatch.setattr(runtime, "_call_anthropic", _fake)
     runtime._dispatch("implementer", "hello")
+    assert captured["model"] == "claude-test-override"
 
-    assert captured["model"] == "gemini-test-override"
+
+def test_openai_compatible_role_dispatches_to_its_endpoint(monkeypatch: pytest.MonkeyPatch, reload_with_env) -> None:
+    runtime = reload_with_env({
+        "FORGEMASTER_IMPLEMENTER_PROVIDER": "openai_compatible",
+        "FORGEMASTER_IMPLEMENTER_MODEL": "qwen-local",
+        "FORGEMASTER_IMPLEMENTER_BASE_URL": "http://127.0.0.1:1234/v1",
+    })
+    captured: dict = {}
+
+    def _fake(model, prompt, base_url, max_tokens=4096, cached_system="", api_key_env=""):
+        captured.update(model=model, base_url=base_url, api_key_env=api_key_env)
+        return ("ok", 0, 0, 0)
+
+    monkeypatch.setattr(runtime, "_call_openai_compatible", _fake)
+    runtime._dispatch("implementer", "hello")
+    assert captured == {"model": "qwen-local", "base_url": "http://127.0.0.1:1234/v1", "api_key_env": ""}
+
+
+def test_unknown_provider_fails_at_import(reload_with_env) -> None:
+    with pytest.raises(ValueError, match="PROVIDER"):
+        reload_with_env({"FORGEMASTER_REVIEWER_PROVIDER": "gemini"})
+
+
+def test_openai_compatible_requires_base_url(reload_with_env) -> None:
+    with pytest.raises(ValueError, match="BASE_URL"):
+        reload_with_env({"FORGEMASTER_PLANNER_PROVIDER": "openai_compatible", "FORGEMASTER_PLANNER_MODEL": "m"})
+
+
+def test_undispatchable_model_is_not_routed(reload_with_env) -> None:
+    runtime = reload_with_env()
+    assert runtime._is_dispatchable(runtime.HUGINN_MODEL)
+    assert not runtime._is_dispatchable("gemini-2.5-flash")

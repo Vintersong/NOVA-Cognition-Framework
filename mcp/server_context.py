@@ -184,7 +184,7 @@ class ServerContext:
 
         permission_context = _build_permission_context()
         # Publish so externally-registered tool modules (nidhogg, evolve,
-        # gemini, wiki, facts, external_retrieval) see the same policy.
+        # wiki, facts, external_retrieval) see the same policy.
         _set_active_permissions(permission_context)
 
         skill_audit_log = AuditLog(SKILL_AUDIT_LOG_FILE)

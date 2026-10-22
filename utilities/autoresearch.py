@@ -1,6 +1,6 @@
 """
 Autoresearch Loop
-Primary: Gemini 2.5 Flash with Google Search grounding.
+Primary: Claude (Haiku by default), optionally with Anthropic web search.
 Fallback: local model via LM Studio's Anthropic-compatible endpoint.
 
 Usage:
@@ -8,18 +8,24 @@ Usage:
     python autoresearch.py --topic qa         # run topics tagged 'qa'
     python autoresearch.py --dry-run          # print topics without running
     python autoresearch.py --backend local    # force LM Studio fallback
+    python autoresearch.py --search           # let Claude use web search
 
 Requirements:
-    - GEMINI_API_KEY set in .env or environment  (primary)
+    - CLAUDE_API_KEY set in .env or environment  (primary)
     - LM Studio running at QWEN_BASE_URL          (fallback)
-    - pip install google-genai anthropic
+    - pip install anthropic
 
 Environment:
-    GEMINI_API_KEY  — Gemini primary (required for primary path)
-    GEMINI_MODEL    — default: gemini-2.5-flash
-    QWEN_BASE_URL   — default: http://127.0.0.1:1234  (fallback)
-    QWEN_MODEL      — default: auto-detected from LM Studio
-    NOVA_SHARD_DIR  — default: ../shards
+    CLAUDE_API_KEY           — Claude primary (required for primary path)
+    AUTORESEARCH_MODEL       — default: claude-haiku-4-5-20251001
+    AUTORESEARCH_MAX_TOKENS  — default: 4096
+    AUTORESEARCH_WEB_SEARCH  — 1 to enable web search without the --search flag
+    QWEN_BASE_URL            — default: http://127.0.0.1:1234  (fallback)
+    QWEN_MODEL               — default: auto-detected from LM Studio
+    NOVA_SHARD_DIR           — default: ../shards
+
+Web search is off by default: an organization admin can disable it in the
+Claude Console, and a request that includes the tool then fails with a 400.
 """
 
 import os
@@ -35,7 +41,12 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+CLAUDE_MODEL = os.getenv("AUTORESEARCH_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_MAX_TOKENS = int(os.getenv("AUTORESEARCH_MAX_TOKENS", "4096"))
+CLAUDE_RETRIES = 3  # SDK-level retries with backoff on 429 / 5xx / overloaded
+MAX_PAUSE_CONTINUATIONS = 3  # web search can pause a long turn; resume at most this often
+WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+USE_WEB_SEARCH = os.getenv("AUTORESEARCH_WEB_SEARCH", "").lower() in ("1", "true", "yes")
 QWEN_BASE_URL = os.getenv("QWEN_BASE_URL", "http://127.0.0.1:1234")
 NOVA_SHARD_DIR = Path(os.getenv(
     "NOVA_SHARD_DIR",
@@ -48,7 +59,7 @@ well-structured research findings on technical topics.
 
 Rules:
 - Ground your answers in verifiable facts and published research where possible.
-- Use Google Search to find current, specific information — do not guess or hallucinate citations.
+- When web search is available, use it to find current, specific information. Never guess or invent citations.
 - Be specific and actionable. Avoid generic advice.
 - Format output as structured text (numbered lists, headers) suitable for saving as a knowledge shard.
 - If a paper or source is referenced, include its title and where to find it.
@@ -58,7 +69,7 @@ Rules:
 # Add topics here. Each has:
 #   tag       — filter key for --topic flag
 #   title     — becomes the shard guiding question
-#   prompt    — what to ask Gemini
+#   prompt    — what to ask the model
 #   theme     — NOVA shard theme
 
 RESEARCH_TOPICS = [
@@ -171,63 +182,53 @@ Focus on actionable implications for agent system design.""",
     },
 ]
 
-# ── Gemini Client (primary) ───────────────────────────────────────────────────
+# ── Claude Client (primary) ───────────────────────────────────────────────────
 
-_gemini_client = None
+_claude_client = None
 
 
-def get_gemini_client():
-    global _gemini_client
-    if _gemini_client is None:
-        from google import genai
-        api_key = os.getenv("GEMINI_API_KEY", "")
+def get_claude_client():
+    global _claude_client
+    if _claude_client is None:
+        from anthropic import Anthropic
+        api_key = os.getenv("CLAUDE_API_KEY", "")
         if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set")
-        _gemini_client = genai.Client(api_key=api_key)
-    return _gemini_client
+            raise RuntimeError("CLAUDE_API_KEY not set")
+        _claude_client = Anthropic(api_key=api_key, max_retries=CLAUDE_RETRIES)
+    return _claude_client
 
 
-import re as _re
+def query_claude(prompt: str, web_search: bool = False) -> str:
+    """
+    Ask Claude one research question and return the answer text.
 
-# 2.0 models have free-tier quota=0 (Google migrating to 2.5). Only retry 2.5-flash.
-GEMINI_503_RETRIES = 3
-GEMINI_503_DELAY   = 30  # seconds — 503 is a demand spike, not a quota issue
+    With web_search, only the text after the last search result is kept — the
+    text before it is the model announcing that it is about to search. A turn
+    that web search pauses is resumed by sending it back unchanged.
+    """
+    client = get_claude_client()
+    messages = [{"role": "user", "content": prompt}]
+    kwargs = {"model": CLAUDE_MODEL, "max_tokens": CLAUDE_MAX_TOKENS, "system": SYSTEM_PROMPT}
+    if web_search:
+        kwargs["tools"] = [WEB_SEARCH_TOOL]
 
+    parts: list[str] = []
+    response = None
+    for _ in range(MAX_PAUSE_CONTINUATIONS + 1):
+        response = client.messages.create(messages=messages, **kwargs)
+        for block in response.content:
+            block_type = getattr(block, "type", "")
+            if block_type == "web_search_tool_result":
+                parts = []
+            elif block_type == "text":
+                parts.append(block.text)
+        if response.stop_reason != "pause_turn":
+            break
+        messages.append({"role": "assistant", "content": response.content})
 
-def _parse_retry_delay(err_str: str) -> float | None:
-    """Extract retryDelay seconds from error message if present."""
-    m = _re.search(r"retryDelay['\"]:\s*['\"](\d+)s", err_str)
-    return float(m.group(1)) if m else None
-
-
-def query_gemini(prompt: str) -> str:
-    from google.genai import types
-
-    last_err = None
-    for attempt in range(1, GEMINI_503_RETRIES + 1):
-        try:
-            response = get_gemini_client().models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                ),
-            )
-            return response.text
-        except Exception as e:
-            last_err = e
-            err_str = str(e)
-            if "503" in err_str or "UNAVAILABLE" in err_str:
-                delay = _parse_retry_delay(err_str) or GEMINI_503_DELAY
-                print(f"  [Gemini] 503 demand spike (attempt {attempt}/{GEMINI_503_RETRIES}), retrying in {delay:.0f}s...")
-                time.sleep(delay)
-            else:
-                # 429 with limit:0 → Google zeroed free quota for this model, no point retrying
-                # 404 → model not available in this API version
-                # auth errors → fail immediately
-                raise
-    raise last_err
+    if response is not None and response.stop_reason == "max_tokens":
+        print(f"  [Claude] reply hit max_tokens={CLAUDE_MAX_TOKENS}; output may be cut off")
+    return "".join(parts)
 
 
 # ── LM Studio Fallback (local) ────────────────────────────────────────────────
@@ -261,23 +262,23 @@ def query_local(prompt: str, model: str) -> str:
 
 # ── Unified Query ─────────────────────────────────────────────────────────────
 
-def query(prompt: str, backend: str, local_model: str) -> tuple[str, str]:
+def query(prompt: str, backend: str, local_model: str, web_search: bool = False) -> tuple[str, str]:
     """
     Returns (content, backend_used).
-    backend: 'gemini' | 'local' | 'auto'
-    'auto' tries Gemini first, falls back to local on any error.
+    backend: 'claude' | 'local' | 'auto'
+    'auto' tries Claude first, falls back to local on any error.
     """
     if backend == "local":
         return query_local(prompt, local_model), "local"
 
-    if backend == "gemini":
-        return query_gemini(prompt), "gemini"
+    if backend == "claude":
+        return query_claude(prompt, web_search), "claude"
 
-    # auto — Gemini primary, local fallback
+    # auto — Claude primary, local fallback
     try:
-        return query_gemini(prompt), "gemini"
+        return query_claude(prompt, web_search), "claude"
     except Exception as e:
-        print(f"  [Gemini] All retries exhausted ({e})")
+        print(f"  [Claude] request failed ({e})")
         print(f"  [Fallback] Trying LM Studio @ {QWEN_BASE_URL} ...")
         return query_local(prompt, local_model), "local"
 
@@ -322,18 +323,19 @@ def write_shard_direct(topic: dict, content: str, backend: str) -> str:
 
 # ── Main Loop ─────────────────────────────────────────────────────────────────
 
-def run(topics: list[dict], dry_run: bool = False, backend: str = "auto"):
+def run(topics: list[dict], dry_run: bool = False, backend: str = "auto", web_search: bool = False):
     local_model = detect_loaded_model(QWEN_BASE_URL) if backend in ("local", "auto") else "n/a"
 
     print(f"\n{'='*60}")
     print(f"Autoresearch Loop — {len(topics)} topics")
-    if backend == "gemini":
-        print(f"Backend: Gemini {GEMINI_MODEL} (Google Search grounding)")
+    search_note = " + web search" if web_search else ""
+    if backend == "claude":
+        print(f"Backend: Claude {CLAUDE_MODEL}{search_note}")
     elif backend == "local":
         print(f"Backend: LM Studio — {local_model} @ {QWEN_BASE_URL}")
     else:
-        print(f"Backend: auto (Gemini → LM Studio fallback)")
-        print(f"  Primary:  {GEMINI_MODEL}")
+        print("Backend: auto (Claude → LM Studio fallback)")
+        print(f"  Primary:  {CLAUDE_MODEL}{search_note}")
         print(f"  Fallback: {local_model} @ {QWEN_BASE_URL}")
     print(f"Shard dir: {NOVA_SHARD_DIR}")
     print(f"{'='*60}\n")
@@ -351,7 +353,7 @@ def run(topics: list[dict], dry_run: bool = False, backend: str = "auto"):
 
         try:
             start = time.time()
-            content, backend_used = query(topic["prompt"], backend, local_model)
+            content, backend_used = query(topic["prompt"], backend, local_model, web_search)
             elapsed = time.time() - start
 
             shard_id = write_shard_direct(topic, content, backend_used)
@@ -391,9 +393,14 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="List topics without running")
     parser.add_argument(
         "--backend",
-        choices=["auto", "gemini", "local"],
+        choices=["auto", "claude", "local"],
         default="auto",
-        help="auto=Gemini with LM Studio fallback, gemini=Gemini only, local=LM Studio only (default: auto)",
+        help="auto=Claude with LM Studio fallback, claude=Claude only, local=LM Studio only (default: auto)",
+    )
+    parser.add_argument(
+        "--search",
+        action="store_true",
+        help="Let Claude use Anthropic web search (also: AUTORESEARCH_WEB_SEARCH=1)",
     )
     args = parser.parse_args()
 
@@ -405,4 +412,4 @@ if __name__ == "__main__":
             print(f"Available tags: {sorted(set(t['tag'] for t in RESEARCH_TOPICS))}")
             exit(1)
 
-    run(topics, dry_run=args.dry_run, backend=args.backend)
+    run(topics, dry_run=args.dry_run, backend=args.backend, web_search=args.search or USE_WEB_SEARCH)
