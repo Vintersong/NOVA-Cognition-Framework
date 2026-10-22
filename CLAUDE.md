@@ -147,7 +147,7 @@ NOVA-Whitepaper/
     AGENTS.md                ← orchestration config and model routing
     SKILL_LIBRARY.md         ← index of all skills across 24 categories
     STANDARDS.md             ← authoring standard for all forgemaster content
-    skills/                  ← core orchestration skills (14 files)
+    skills/                  ← core orchestration skills (15 files)
     library/                 ← domain skill library (324 .md files, 24 categories)
     agents/                  ← agent persona definitions (322 .md files, 18 divisions)
   docs/                      ← reference and roadmap documents
@@ -237,6 +237,7 @@ All in `forgemaster/skills/`. Load the relevant one before each operation.
 | `forgemaster-nova-session-handoff` | Persisting state across sessions |
 | `forgemaster-nova-shard-triage` | Corpus hygiene — archive / merge / forget / revive stale or redundant shards |
 | `forgemaster-heavyskill` | Hard verifiable reasoning (math, algorithmic, multi-constraint) — K=3 Haiku thinkers + Sonnet deliberation |
+| `forgemaster-advisor` | Hook: a stronger model reviews a cheap executor's plan before work, when stuck, and before done |
 | `forgemaster-emotional-state-routing` | Routing hook: escalates tickets when session arousal is high + confidence is low (desperation guard) |
 
 For all other domains see `forgemaster/SKILL_LIBRARY.md` (24 categories, 324 skills).

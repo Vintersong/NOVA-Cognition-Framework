@@ -50,6 +50,7 @@ Before decomposing tickets, consult `forgemaster/SKILL_LIBRARY.md` to identify w
 | Git / PR | `forgemaster/skills/forgemaster-git-workflow.md` |
 | Session handoff | `forgemaster/skills/forgemaster-nova-session-handoff.md` |
 | Complex reasoning hook | `forgemaster/skills/forgemaster-heavyskill.md` |
+| Advisor hook (cheap executor, one risky decision) | `forgemaster/skills/forgemaster-advisor.md` |
 | Emotional state / desperation guard | `forgemaster/skills/forgemaster-emotional-state-routing.md` |
 
 **Extended domains** — consult `SKILL_LIBRARY.md` when the task involves:
